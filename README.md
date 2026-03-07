@@ -1,7 +1,7 @@
 # FT8CN
 Developed by BG7YOZ and hosted by N0BOY
 
-Run FT8 natively on Android
+Run FT8 and FT4 natively on Android
 
 Check [Releases](https://github.com/N0BOY/FT8CN/releases) to download the latest apk file.
 
@@ -66,3 +66,4 @@ BG7YOZ
    UB6LUM，帮助解决某型号电台的操作模式设置
    BG5VLI，贡献向Cloudlog和QRZ自动上传日志的代码
 ```
+
