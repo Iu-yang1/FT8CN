@@ -242,7 +242,7 @@ public class FT8TransmitSignal {
         sequential = (toCallsign.sequential + 1) % 2;//发射的时序
         mutableSequential.postValue(sequential);//通知发射时序改变
         generateFun();
-        mutableFunctionOrder.postValue(functionOrder);
+        mutableFunctionOrder.postValue(this.functionOrder);
     }
 
     @SuppressLint("DefaultLocale")
@@ -571,11 +571,26 @@ public class FT8TransmitSignal {
      * @return 是不是
      */
     private boolean checkCallsignIsCallTo(String fromCall, String toCall) {
-        if (toCall.contains("/")) {//当对方的呼号在斜线时，JTDX会把/后面的字符去掉
-            return toCall.contains(fromCall);
-        } else {
-            return fromCall.equals(toCall);
+        if (fromCall == null || toCall == null) {
+            return false;
         }
+
+        fromCall = fromCall.trim().toUpperCase();
+        toCall = toCall.trim().toUpperCase();
+
+        if (fromCall.equals(toCall)) {
+            return true;
+        }
+
+        if (toCall.contains("/")) {
+            return toCall.contains(fromCall);
+        }
+
+        if (fromCall.contains("/")) {
+            return fromCall.contains(toCall);
+        }
+
+        return false;
     }
 
     /**
@@ -588,7 +603,6 @@ public class FT8TransmitSignal {
         int fromCount = 1;
         for (int i = messages.size() - 1; i >= 0; i--) {
             Ft8Message ft8Message = messages.get(i);
-            if (ft8Message.getSequence() == sequential) continue;//同一个时序下的消息不做解析
             if (toCallsign == null) {
                 continue;
             }
@@ -665,7 +679,6 @@ public class FT8TransmitSignal {
      */
     private boolean isExcludeMessage(Ft8Message msg) {
         return msg.getSequence() == sequential
-                || msg.band != GeneralVariables.band
                 || msg.signalFormat != GeneralVariables.getSignalMode()
                 || GeneralVariables.checkIsExcludeCallsign(msg.callsignFrom);
     }
@@ -684,7 +697,7 @@ public class FT8TransmitSignal {
             if (toCallsign == null) break;
 
             if (GeneralVariables.checkIsMyCallsign(msg.getCallsignTo())
-                    && msg.getCallsignFrom().equals(toCallsign.callsign)
+                    && checkCallsignIsCallTo(msg.getCallsignFrom(), toCallsign.callsign)
                     && !GeneralVariables.checkFun5(msg.extraInfo)) {
                 setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
                                 , msg.getSequence(), msg.snr)
@@ -795,16 +808,14 @@ public class FT8TransmitSignal {
         if (GeneralVariables.myCallsign.length() < 3) {
             return;
         }
-        if (msgList.size() == 0) return;//没有消息解析，返回
-
-        if (msgList.get(0).signalFormat != GeneralVariables.getSignalMode()) {
+        if (msgList == null || msgList.size() == 0) {
             return;
         }
 
-        if (msgList.get(0).getSequence() == sequential) {
+        ArrayList<Ft8Message> messages = filterAutoMessages(new ArrayList<>(msgList));
+        if (messages.size() == 0) {
             return;
         }
-        ArrayList<Ft8Message> messages = new ArrayList<>(msgList);//防止线程冲突
 
         int newOrder = checkFunctionOrdFromMessages(messages);//检查消息中对方回复的消息序号，-1为没有收到
         if (newOrder != -1) {//如果有消息序号，说明有回应，复位错误计数器
@@ -853,20 +864,45 @@ public class FT8TransmitSignal {
             return;
         }
 
-        if (!messages.get(0).isWeakSignal) {
+        if (hasUsableMessage(messages)) {
             GeneralVariables.noReplyCount++;
         }
 
         if ((GeneralVariables.noReplyCount > GeneralVariables.noReplyLimit) && (GeneralVariables.noReplyLimit > 0)) {
             if (!getNewTargetCallsign(messages)) {
                 functionOrder = 6;
-                toCallsign.callsign = "CQ";
+                if (toCallsign != null) {
+                    toCallsign.callsign = "CQ";
+                }
             }
             generateFun();
             setCurrentFunctionOrder(functionOrder);
             mutableToCallsign.postValue(toCallsign);
             mutableFunctionOrder.postValue(functionOrder);
         }
+    }
+
+    private ArrayList<Ft8Message> filterAutoMessages(ArrayList<Ft8Message> src) {
+        ArrayList<Ft8Message> result = new ArrayList<>();
+        int currentMode = GeneralVariables.getSignalMode();
+
+        for (Ft8Message msg : src) {
+            if (msg == null) continue;
+            if (msg.signalFormat != currentMode) continue;
+            if (msg.getSequence() == sequential) continue;
+            result.add(msg);
+        }
+        return result;
+    }
+
+    private boolean hasUsableMessage(ArrayList<Ft8Message> messages) {
+        for (Ft8Message msg : messages) {
+            if (msg == null) continue;
+            if (!msg.isWeakSignal) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

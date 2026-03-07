@@ -53,7 +53,7 @@ public class DatabaseOpr extends SQLiteOpenHelper {
 
     public static DatabaseOpr getInstance(@Nullable Context context, @Nullable String databaseName) {
         if (instance == null) {
-            instance = new DatabaseOpr(context, databaseName, null, 15);
+            instance = new DatabaseOpr(context, databaseName, null, 16);
         }
         return instance;
     }
@@ -102,29 +102,17 @@ public class DatabaseOpr extends SQLiteOpenHelper {
 
     @Override
     public void onUpgrade(SQLiteDatabase sqLiteDatabase, int i, int i1) {
-        //创建通联日志表 版本2
         createQSLTable(sqLiteDatabase);
-
-        //创建DXCC表
         createDxccTables(sqLiteDatabase);
-
-        //创建ITU表
         createItuTables(sqLiteDatabase);
-
-        //创建CQZONE表
         createCqZoneTables(sqLiteDatabase);
-
-        //创建呼号与网格对应关系表
         createCallsignQTHTables(sqLiteDatabase);
-
-        //创建SWL相关的表
         createSWLTables(sqLiteDatabase);
-
-        //创建索引
         createIndex(sqLiteDatabase);
 
-        //删除DXCC呼号列表中的等号
-        //deleteDxccPrefixEqual(sqLiteDatabase);
+        // 兼容旧版本数据库：补 RF_FREQ
+        alterTable(sqLiteDatabase, "Messages", "RF_FREQ", "RF_FREQ INTEGER DEFAULT 0");
+        alterTable(sqLiteDatabase, "SWLMessages", "RF_FREQ", "RF_FREQ INTEGER DEFAULT 0");
     }
 
 
@@ -214,11 +202,9 @@ public class DatabaseOpr extends SQLiteOpenHelper {
         } else {
             sqLiteDatabase.execSQL("CREATE TABLE QSLTable (\n" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
-                    "isQSL INTEGER DEFAULT 0,\n" +//是否确认QSL
-                    "isLotW_import INTEGER DEFAULT 0,\n" +//是否是lotw导入
+                    "isQSL INTEGER DEFAULT 0,\n" +
+                    "isLotW_import INTEGER DEFAULT 0,\n" +
                     "isLotW_QSL INTEGER DEFAULT 0,\n" +
-
-
                     "call TEXT,\n" +
                     "gridsquare TEXT,\n" +
                     "mode TEXT,\n" +
@@ -235,7 +221,6 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     "comment TEXT)");
         }
 
-
         if (checkTableExists(sqLiteDatabase, "QslCallsigns")) {
             alterTable(sqLiteDatabase, "QslCallsigns", "isQSL"
                     , "isQSL INTEGER DEFAULT 0");
@@ -251,7 +236,6 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     "isQSL INTEGER DEFAULT 0,\n" +
                     "isLotW_import INTEGER DEFAULT 0,\n" +
                     "isLotW_QSL INTEGER DEFAULT 0,\n" +
-
                     "callsign TEXT, startTime TEXT," +
                     "finishTime TEXT, mode TEXT," +
                     "grid TEXT,\n" +
@@ -267,15 +251,18 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     "UTC INTEGER,\n" +
                     "SNR INTEGER,\n" +
                     "TIME_SEC REAL,\n" +
-                    "FREQ INTEGER,\n" +
+                    "FREQ INTEGER,\n" +      // 音频频率
+                    "RF_FREQ INTEGER,\n" +   // 载波频率
                     "CALL_TO TEXT,\n" +
                     "CALL_FROM TEXT,\n" +
                     "EXTRAL TEXT,\n" +
                     "REPORT INTEGER,\n" +
                     "BAND INTEGER)");
+        } else {
+            alterTable(sqLiteDatabase, "Messages", "RF_FREQ"
+                    , "RF_FREQ INTEGER DEFAULT 0");
         }
     }
-
 
     /**
      * 创建与DXCC有关的数据表：dxccList,dxcc_prefix,dxcc_grid
@@ -366,7 +353,6 @@ public class DatabaseOpr extends SQLiteOpenHelper {
     }
 
     private void createSWLTables(SQLiteDatabase sqLiteDatabase) {
-        //Log.e(TAG,"upgrade database.");
         if (!checkTableExists(sqLiteDatabase, "SWLMessages")) {
             sqLiteDatabase.execSQL("CREATE TABLE SWLMessages (\n" +
                     "\tID INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
@@ -376,7 +362,8 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     "\tUTC TEXT,\n" +
                     "\tSNR INTEGER,\n" +
                     "\tTIME_SEC REAL,\n" +
-                    "\tFREQ INTEGER,\n" +
+                    "\tFREQ INTEGER,\n" +      // 音频频率
+                    "\tRF_FREQ INTEGER,\n" +   // 载波频率
                     "\tCALL_TO TEXT,\n" +
                     "\tCALL_FROM TEXT,\n" +
                     "\tEXTRAL TEXT,\n" +
@@ -386,6 +373,9 @@ public class DatabaseOpr extends SQLiteOpenHelper {
             sqLiteDatabase.execSQL("CREATE INDEX SWLMessages_CALL_TO_IDX " +
                     "ON SWLMessages (CALL_TO,CALL_FROM)");
             sqLiteDatabase.execSQL("CREATE INDEX SWLMessages_UTC_IDX ON SWLMessages (UTC)");
+        } else {
+            alterTable(sqLiteDatabase, "SWLMessages", "RF_FREQ"
+                    , "RF_FREQ INTEGER DEFAULT 0");
         }
 
         if (!checkTableExists(sqLiteDatabase, "SWLQSOTable")) {
@@ -406,12 +396,11 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     "\tmy_gridsquare TEXT,\n" +
                     "\toperator TEXT,\n" +
                     "\tcomment TEXT)");
-        }else {
+        } else {
             alterTable(sqLiteDatabase, "SWLQSOTable", "operator"
                     , "operator TEXT");
         }
     }
-
 
     /**
      * 创建索引，以提高导入速度
@@ -1391,7 +1380,7 @@ public class DatabaseOpr extends SQLiteOpenHelper {
      */
     static class WriteMessages extends AsyncTask<Void, Void, Void> {
         private final SQLiteDatabase db;
-        private ArrayList<Ft8Message> messages;
+        private final ArrayList<Ft8Message> messages;
 
         public WriteMessages(SQLiteDatabase db, ArrayList<Ft8Message> messages) {
             this.db = db;
@@ -1400,21 +1389,34 @@ public class DatabaseOpr extends SQLiteOpenHelper {
 
         @Override
         protected Void doInBackground(Void... voids) {
-            String sql = "INSERT INTO SWLMessages(I3,N3,Protocol,UTC,SNR,TIME_SEC,FREQ,CALL_FROM" +
+            String sql = "INSERT INTO SWLMessages(I3,N3,Protocol,UTC,SNR,TIME_SEC,FREQ,RF_FREQ,CALL_FROM" +
                     ",CALL_TO,EXTRAL,REPORT,BAND)\n" +
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)";
-            for (Ft8Message message : messages) {//只对与我有关的消息做保存
-                db.execSQL(sql, new Object[]{message.i3, message.n3, "FT8"
-                        ,UtcTimer.getDatetimeYYYYMMDD_HHMMSS(message.utcTime)
-                        , message.snr, message.time_sec, Math.round(message.freq_hz)
-                        , message.callsignFrom, message.callsignTo, message.extraInfo
-                        , message.report, message.band});
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
+            for (Ft8Message message : messages) {
+                int audioFreq = Math.round(message.freq_hz);
+                long rfFreq = message.band > 0 ? message.band : GeneralVariables.band;
+                String protocol = FT8Common.modeToString(message.signalFormat);
+
+                db.execSQL(sql, new Object[]{
+                        message.i3,
+                        message.n3,
+                        protocol,
+                        UtcTimer.getDatetimeYYYYMMDD_HHMMSS(message.utcTime),
+                        message.snr,
+                        message.time_sec,
+                        audioFreq,
+                        rfFreq,
+                        message.callsignFrom,
+                        message.callsignTo,
+                        message.extraInfo,
+                        message.report,
+                        rfFreq
+                });
             }
             return null;
         }
     }
-
     /**
      * 把关注的呼号写到数据库
      */
@@ -1589,15 +1591,16 @@ public class DatabaseOpr extends SQLiteOpenHelper {
         @Override
         @SuppressLint({"Range", "DefaultLocale"})
         protected Void doInBackground(Void... voids) {
-            String querySQL = "SELECT BAND ,count(*) as c from SWLMessages m group by BAND order by BAND ";
+            String querySQL = "SELECT CASE WHEN BAND IS NULL OR BAND=0 THEN RF_FREQ ELSE BAND END as RFBAND ," +
+                    "count(*) as c from SWLMessages m group by RFBAND order by RFBAND ";
             Cursor cursor = db.rawQuery(querySQL, new String[]{});
             ArrayList<String> callsigns = new ArrayList<>();
             callsigns.add(GeneralVariables.getStringFromResource(R.string.band_total));
             callsigns.add("---------------------------------------");
             int sum = 0;
             while (cursor.moveToNext()) {
-                long s = cursor.getLong(cursor.getColumnIndex("BAND")); //获取频段
-                int total = cursor.getInt(cursor.getColumnIndex("c")); //获取数量
+                long s = cursor.getLong(cursor.getColumnIndex("RFBAND"));
+                int total = cursor.getInt(cursor.getColumnIndex("c"));
                 callsigns.add(String.format("%.3fMHz \t %d", s / 1000000f, total));
                 sum = sum + total;
             }
@@ -2059,8 +2062,6 @@ public class DatabaseOpr extends SQLiteOpenHelper {
             String querySQL = "select keyName,Value from config ";
             Cursor cursor = db.rawQuery(querySQL, null);
             while (cursor.moveToNext()) {
-                @SuppressLint("Range")
-                //String result = "";
                 String result = cursor.getString(cursor.getColumnIndex("Value"));
                 String name = cursor.getString(cursor.getColumnIndex("KeyName"));
 
@@ -2092,14 +2093,13 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     } catch (Exception e) {
                         Log.e(TAG, "doInBackground: " + e.getMessage());
                     }
-                    //GeneralVariables.setBaseFrequency(result.equals("") ? 1000 : Float.parseFloat(result));
                     GeneralVariables.setBaseFrequency(freq);
                 }
                 if (name.equalsIgnoreCase("synFreq")) {
                     GeneralVariables.synFrequency = !(result.equals("") || result.equals("0"));
                 }
                 if (name.equalsIgnoreCase("transDelay")) {
-                    if (result.matches("^\\d{1,4}$")) {//正则表达式，1-4位长度的数字
+                    if (result.matches("^\\d{1,4}$")) {
                         GeneralVariables.transmitDelay = Integer.parseInt(result);
                     } else {
                         GeneralVariables.transmitDelay = FT8Common.FT8_TRANSMIT_DELAY;
@@ -2118,81 +2118,81 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 }
 
                 if (name.equalsIgnoreCase("msgMode")) {
-                    GeneralVariables.simpleCallItemMode = result.equals("1") ;
+                    GeneralVariables.simpleCallItemMode = result.equals("1");
                 }
 
                 if (name.equalsIgnoreCase("ctrMode")) {
                     GeneralVariables.controlMode = result.equals("") ? ControlMode.VOX : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("model")) {//电台型号
+                if (name.equalsIgnoreCase("model")) {
                     GeneralVariables.modelNo = result.equals("") ? 0 : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("instruction")) {//指令集
+                if (name.equalsIgnoreCase("instruction")) {
                     GeneralVariables.instructionSet = result.equals("") ? 0 : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("launchSupervision")) {//发射监管
+                if (name.equalsIgnoreCase("launchSupervision")) {
                     GeneralVariables.launchSupervision = result.equals("") ?
                             GeneralVariables.DEFAULT_LAUNCH_SUPERVISION : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("noReplyLimit")) {//
+                if (name.equalsIgnoreCase("noReplyLimit")) {
                     GeneralVariables.noReplyLimit = result.equals("") ? 0 : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("autoFollowCQ")) {//自动关注CQ
+                if (name.equalsIgnoreCase("autoFollowCQ")) {
                     GeneralVariables.autoFollowCQ = (result.equals("") || result.equals("1"));
                 }
-                if (name.equalsIgnoreCase("autoCallFollow")) {//自动呼叫关注
+                if (name.equalsIgnoreCase("autoCallFollow")) {
                     GeneralVariables.autoCallFollow = (result.equals("") || result.equals("1"));
                 }
-                if (name.equalsIgnoreCase("pttDelay")) {//ptt延时设置
+                if (name.equalsIgnoreCase("pttDelay")) {
                     GeneralVariables.pttDelay = result.equals("") ? 100 : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("icomIp")) {//IcomIp地址
+                if (name.equalsIgnoreCase("icomIp")) {
                     GeneralVariables.icomIp = result.equals("") ? "255.255.255.255" : result;
                 }
-                if (name.equalsIgnoreCase("icomPort")) {//Icom端口
+                if (name.equalsIgnoreCase("icomPort")) {
                     GeneralVariables.icomUdpPort = result.equals("") ? 50001 : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("icomUserName")) {//Icom用户名
+                if (name.equalsIgnoreCase("icomUserName")) {
                     GeneralVariables.icomUserName = result.equals("") ? "ic705" : result;
                 }
-                if (name.equalsIgnoreCase("icomPassword")) {//Icom密码
+                if (name.equalsIgnoreCase("icomPassword")) {
                     GeneralVariables.icomPassword = result;
                 }
-                if (name.equalsIgnoreCase("volumeValue")) {//输出音量大小
+                if (name.equalsIgnoreCase("volumeValue")) {
                     GeneralVariables.volumePercent = result.equals("") ? 1.0f : Float.parseFloat(result) / 100f;
                 }
-                if (name.equalsIgnoreCase("excludedCallsigns")) {//排除的呼号
+                if (name.equalsIgnoreCase("excludedCallsigns")) {
                     GeneralVariables.addExcludedCallsigns(result);
                 }
-                if (name.equalsIgnoreCase("flexMaxRfPower")) {//指令集
+                if (name.equalsIgnoreCase("flexMaxRfPower")) {
                     GeneralVariables.flexMaxRfPower = result.equals("") ? 10 : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("flexMaxTunePower")) {//指令集
+                if (name.equalsIgnoreCase("flexMaxTunePower")) {
                     GeneralVariables.flexMaxTunePower = result.equals("") ? 10 : Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("saveSWL")) {//保存解码信息
+                if (name.equalsIgnoreCase("saveSWL")) {
                     GeneralVariables.saveSWLMessage = result.equals("1");
                 }
-                if (name.equalsIgnoreCase("saveSWLQSO")) {//保存解码信息
+                if (name.equalsIgnoreCase("saveSWLQSO")) {
                     GeneralVariables.saveSWL_QSO = result.equals("1");
                 }
-                if (name.equalsIgnoreCase("audioBits")) {//输出音频是否32位浮点
+                if (name.equalsIgnoreCase("audioBits")) {
                     GeneralVariables.audioOutput32Bit = result.equals("1");
                 }
-                if (name.equalsIgnoreCase("audioRate")) {//输出音频是否32位浮点
-                    GeneralVariables.audioSampleRate =Integer.parseInt( result);
+                if (name.equalsIgnoreCase("audioRate")) {
+                    GeneralVariables.audioSampleRate = Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("deepMode")) {//是不是深度解码模式
-                    GeneralVariables.deepDecodeMode =result.equals("1");
+                if (name.equalsIgnoreCase("deepMode")) {
+                    GeneralVariables.deepDecodeMode = result.equals("1");
                 }
-                if (name.equalsIgnoreCase("dataBits")) {//串口数据位
-                    GeneralVariables.serialDataBits =Integer.parseInt(result);
+                if (name.equalsIgnoreCase("dataBits")) {
+                    GeneralVariables.serialDataBits = Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("stopBits")) {//串口停止位
-                    GeneralVariables.serialStopBits =Integer.parseInt(result);
+                if (name.equalsIgnoreCase("stopBits")) {
+                    GeneralVariables.serialStopBits = Integer.parseInt(result);
                 }
-                if (name.equalsIgnoreCase("parityBits")) {//串口校验位
-                    GeneralVariables.serialParity =Integer.parseInt(result);
+                if (name.equalsIgnoreCase("parityBits")) {
+                    GeneralVariables.serialParity = Integer.parseInt(result);
                 }
 
                 // cloudlogs
@@ -2209,12 +2209,17 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     GeneralVariables.cloudlogStationID = result;
                 }
 
-                //QRZ
+                // QRZ
                 if (name.equalsIgnoreCase("enableQRZ")) {
                     GeneralVariables.enableQRZ = result.equals("1");
                 }
                 if (name.equalsIgnoreCase("qrzApiKey")) {
                     GeneralVariables.qrzApiKey = result;
+                }
+
+                // PSKReporter
+                if (name.equalsIgnoreCase("enablePskReporter")) {
+                    GeneralVariables.enablePskReporter = result.equals("1");
                 }
 
                 if (name.equalsIgnoreCase("swrSwitch")) {
@@ -2224,11 +2229,67 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     GeneralVariables.alc_switch_on = result.equals("1");
                 }
 
+                // NTP 配置
+                if (name.equalsIgnoreCase("ntpEnable")) {
+                    GeneralVariables.ntpEnable = result.equals("") || result.equals("1");
+                }
+
+                if (name.equalsIgnoreCase("ntpServerIndex")) {
+                    try {
+                        int index = result.equals("") ? GeneralVariables.NTP_SERVER_INDEX_AUTO : Integer.parseInt(result);
+                        if (index < 0 || index >= GeneralVariables.NTP_SERVER_ITEMS.length) {
+                            index = GeneralVariables.NTP_SERVER_INDEX_AUTO;
+                        }
+                        GeneralVariables.ntpServerIndex = index;
+                    } catch (Exception e) {
+                        GeneralVariables.ntpServerIndex = GeneralVariables.NTP_SERVER_INDEX_AUTO;
+                    }
+                }
+
+                if (name.equalsIgnoreCase("ntpCustomServer")) {
+                    GeneralVariables.ntpCustomServer = result == null ? "" : result.trim();
+                }
+
+                // 兼容旧版本配置：如果以前存过 ntpServer，则尽量映射到新索引
+                if (name.equalsIgnoreCase("ntpServer")) {
+                    String server = result == null ? "" : result.trim();
+                    if (server.length() > 0) {
+                        int matchedIndex = -1;
+                        for (int i = 0; i < GeneralVariables.NTP_SERVER_ITEMS.length; i++) {
+                            if (server.equalsIgnoreCase(GeneralVariables.NTP_SERVER_ITEMS[i])) {
+                                matchedIndex = i;
+                                break;
+                            }
+                        }
+
+                        if (matchedIndex >= 0) {
+                            GeneralVariables.ntpServerIndex = matchedIndex;
+                        } else {
+                            GeneralVariables.ntpServerIndex = GeneralVariables.NTP_SERVER_INDEX_CUSTOM;
+                            GeneralVariables.ntpCustomServer = server;
+                        }
+                    }
+                }
+
+                if (name.equalsIgnoreCase("utcAlignedOffset")) {
+                    try {
+                        GeneralVariables.lastNtpAlignedOffset = result.equals("") ? 0 : Integer.parseInt(result);
+                        UtcTimer.delay = GeneralVariables.lastNtpAlignedOffset;
+                    } catch (Exception e) {
+                        GeneralVariables.lastNtpAlignedOffset = 0;
+                        UtcTimer.delay = 0;
+                    }
+                }
+            }
+
+            if (GeneralVariables.ntpServerIndex == GeneralVariables.NTP_SERVER_INDEX_CUSTOM
+                    && GeneralVariables.ntpCustomServer == null) {
+                GeneralVariables.ntpCustomServer = "";
             }
 
             cursor.close();
 
-            GetAllQSLCallsign.get(db);//获取通联过的呼号
+            GetAllQSLCallsign.get(db);
 
             if (onAfterQueryConfig != null) {
                 onAfterQueryConfig.doOnAfterQueryConfig(null, null);

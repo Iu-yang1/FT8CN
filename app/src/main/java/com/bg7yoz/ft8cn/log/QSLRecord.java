@@ -2,6 +2,7 @@ package com.bg7yoz.ft8cn.log;
 
 import android.util.Log;
 
+import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
@@ -13,10 +14,15 @@ import java.util.HashMap;
 import java.util.Objects;
 
 /**
- * 用于记录通联成功信息的类。通联成功是指FT8完成6条消息的通联。并不是互认。
+ * 用于记录通联成功信息的类。通联成功是指FT8/FT4完成6条消息的通联，并不是互认。
  * isLotW_import是指是否是外部的数据导入，因为用户可能使用了JTDX等软件通联，这样可以把通联的结果导入到FT8CN
  * isLotW_QSL是指是否被平台确认。
  * isQSL是指是否被手工确认
+ *
+ * 关键修改：
+ * 1. SWL构造时按Ft8Message.signalFormat保存 FT8/FT4 模式
+ * 2. SWL构造时记录载波频率 bandFreq 与音频频率 wavFrequency
+ * 3. SWL构造时补齐 qso_date/time_on，避免只有结束时间
  *
  * @author BGY70Z
  * @date 2023-03-20
@@ -24,12 +30,11 @@ import java.util.Objects;
 public class QSLRecord {
     private static final String TAG = "QSLRecord";
     public long id = -1;
-    //private long startTime;//起始时间
+
     private String qso_date;
     private String time_on;
     private String qso_date_off;
     private String time_off;
-    //private long endTime;//结束时间
 
     private final String myCallsign;//我的呼号
     private String myMaidenGrid;//我的网格
@@ -39,34 +44,53 @@ public class QSLRecord {
     private int receivedReport;//我收到对方的报告（也就是SNR）
     private String mode = "FT8";
     private String bandLength = "";
-    private long bandFreq;//发射的波段
-    private int wavFrequency;//发射的频率
+    private long bandFreq;//载波频率
+    private int wavFrequency;//音频频率
     private String comment;
+
     public boolean isQSL = false;//手工确认
     public boolean isLotW_import = false;//是否是从外部数据导入的，此项需要在数据库中比对才能设定
     public boolean isLotW_QSL = false;//是否是lotw确认的
 
     public boolean saved = false;//是否被保存到数据库中
 
-    public boolean isInvalid=false;//是否解析出错
-    public String errorMSG="";//如果解析出错，错误的消息
+    public boolean isInvalid = false;//是否解析出错
+    public String errorMSG = "";//如果解析出错，错误的消息
 
     /**
      * 用于SWL QSO记录，记录SWL QSO的条件是收听到双方的信号报告
      *
-     * @param msg FT8消息
+     * @param msg FT8/FT4消息
      */
     public QSLRecord(Ft8Message msg) {
+        // SWL 记录默认起止时间都取当前消息时刻
+        this.qso_date = UtcTimer.getYYYYMMDD(msg.utcTime);
+        this.time_on = UtcTimer.getTimeHHMMSS(msg.utcTime);
         this.qso_date_off = UtcTimer.getYYYYMMDD(msg.utcTime);
         this.time_off = UtcTimer.getTimeHHMMSS(msg.utcTime);
+
         this.myCallsign = msg.callsignFrom;
         this.toCallsign = msg.callsignTo;
-        wavFrequency = Math.round(msg.freq_hz);
-        sendReport = -100;
-        receivedReport = -100;
-        bandLength = BaseRigOperation.getMeterFromFreq(GeneralVariables.band);//获取波长
-        bandFreq = GeneralVariables.band;
-        comment = "SWL By FT8CN";
+
+        this.myMaidenGrid = "";
+        this.toMaidenGrid = msg.maidenGrid;
+
+        this.wavFrequency = Math.round(msg.freq_hz);
+
+        // SWL场景下，对方发给我的报告无法直接作为正常QSO中的rst_sent
+        this.sendReport = -100;
+
+        // 如果当前消息里有report，就优先用report；否则退回snr
+        this.receivedReport = (msg.report != 0) ? msg.report : msg.snr;
+
+        // 关键：模式不再默认FT8，按消息自身模式保存
+        this.mode = msg.getModeStr();
+
+        // 关键：优先使用消息对象自身携带的band，避免模式切换或频率切换时读到全局旧值
+        this.bandFreq = (msg.band > 0) ? msg.band : GeneralVariables.band;
+        this.bandLength = BaseRigOperation.getMeterFromFreq(this.bandFreq);
+
+        this.comment = String.format("SWL by FT8CN (%s)", this.mode);
     }
 
     /**
@@ -80,14 +104,13 @@ public class QSLRecord {
      * @param toMaidenGrid   对方网格
      * @param sendReport     发送的报告
      * @param receivedReport 接收的报告
-     * @param mode           模式 默认FT8
+     * @param mode           模式 默认FT8/FT4
      * @param bandFreq       载波频率
-     * @param wavFrequency   声音频率
+     * @param wavFrequency   音频频率
      */
     public QSLRecord(long startTime, long endTime, String myCallsign, String myMaidenGrid
             , String toCallsign, String toMaidenGrid, int sendReport, int receivedReport
             , String mode, long bandFreq, int wavFrequency) {
-        //this.startTime = startTime;
         this.qso_date = UtcTimer.getYYYYMMDD(startTime);
         this.time_on = UtcTimer.getTimeHHMMSS(startTime);
         this.qso_date_off = UtcTimer.getYYYYMMDD(endTime);
@@ -99,134 +122,170 @@ public class QSLRecord {
         this.sendReport = sendReport;
         this.receivedReport = receivedReport;
         this.mode = mode;
-        this.bandLength = BaseRigOperation.getMeterFromFreq(bandFreq);//获取波长
+        this.bandLength = BaseRigOperation.getMeterFromFreq(bandFreq);
         this.bandFreq = bandFreq;
         this.wavFrequency = wavFrequency;
+
         String distance = "";
-        if (!myMaidenGrid.equals("") && !toMaidenGrid.equals("")) {
+        if (myMaidenGrid != null && toMaidenGrid != null
+                && !myMaidenGrid.equals("") && !toMaidenGrid.equals("")) {
             distance = MaidenheadGrid.getDistStrEN(myMaidenGrid, toMaidenGrid);
         }
-        this.comment =
-                distance.equals("") ? "QSO by FT8CN"
-                        : String.format("Distance: %s, QSO by FT8CN", distance);
+
+        this.comment = distance.equals("")
+                ? String.format("QSO by FT8CN (%s)", mode)
+                : String.format("Distance: %s, QSO by FT8CN (%s)", distance, mode);
     }
 
     public void update(QSLRecord record) {
         this.qso_date_off = record.qso_date_off;
         this.time_off = record.time_off;
         this.toMaidenGrid = record.toMaidenGrid;
-        this.sendReport = record.sendReport;
-        this.receivedReport = record.receivedReport;
+
+        // 只在有效时覆盖，避免把已有值又写回默认值
+        if (record.sendReport > -100) {
+            this.sendReport = record.sendReport;
+        }
+        if (record.receivedReport > -100) {
+            this.receivedReport = record.receivedReport;
+        }
+        if (record.bandFreq > 0) {
+            this.bandFreq = record.bandFreq;
+            this.bandLength = BaseRigOperation.getMeterFromFreq(record.bandFreq);
+        }
+        if (record.wavFrequency > 0) {
+            this.wavFrequency = record.wavFrequency;
+        }
+        if (record.mode != null && record.mode.length() > 0) {
+            this.mode = record.mode;
+        }
     }
 
+    /**
+     * 从ADI/外部导入记录构造
+     */
     public QSLRecord(HashMap<String, String> map) {
         isLotW_import = true;//说明是外部导入的数据
-        if (map.containsKey("CALL")) {//对方呼号
+
+        if (map.containsKey("CALL")) {
             toCallsign = map.get("CALL");
+        } else {
+            toCallsign = "";
         }
-        if (map.containsKey("STATION_CALLSIGN")) {//我的呼号
+
+        if (map.containsKey("STATION_CALLSIGN")) {
             myCallsign = map.get("STATION_CALLSIGN");
         } else {
             myCallsign = "";
         }
-        if (map.containsKey("BAND")) {//载波波长
+
+        if (map.containsKey("BAND")) {
             bandLength = map.get("BAND");
         } else {
             bandLength = "";
         }
 
-        if (map.containsKey("FREQ")) {//载波频率
-            try {//要把float转成Long
+        if (map.containsKey("FREQ")) {
+            try {
                 float freq = Float.parseFloat(Objects.requireNonNull(map.get("FREQ")));
                 bandFreq = Math.round(freq * 1000000);
+                if (bandLength.equals("")) {
+                    bandLength = BaseRigOperation.getMeterFromFreq(bandFreq);
+                }
             } catch (NumberFormatException e) {
-                isInvalid=true;
-                errorMSG="freq:"+e.getMessage();
-                e.printStackTrace();
-                Log.e(TAG, "QSLRecord: freq" + e.getMessage());
+                isInvalid = true;
+                errorMSG = "freq:" + e.getMessage();
+                Log.e(TAG, "QSLRecord: freq " + e.getMessage());
             }
+        } else {
+            bandFreq = 0;
         }
-        if (map.containsKey("MODE")) {//模式
+
+        if (map.containsKey("MODE")) {
             mode = map.get("MODE");
         } else {
             mode = "";
         }
-        if (map.containsKey("QSO_DATE")) {//通联日期
+
+        if (map.containsKey("QSO_DATE")) {
             qso_date = map.get("QSO_DATE");
         } else {
             qso_date = "";
         }
-        if (map.containsKey("TIME_ON")) {//通联起始时间
+
+        if (map.containsKey("TIME_ON")) {
             time_on = map.get("TIME_ON");
         } else {
             time_on = "";
         }
-        if (map.containsKey("QSO_DATE_OFF")) {//通联结束日期，此字段只在JTDX中有。
+
+        if (map.containsKey("QSO_DATE_OFF")) {
             qso_date_off = map.get("QSO_DATE_OFF");
         } else {
             qso_date_off = qso_date;
         }
-        if (map.containsKey("TIME_OFF")) {//通联结束时间，n1mm、Log32、JTDX有，Lotw没有
+
+        if (map.containsKey("TIME_OFF")) {
             time_off = map.get("TIME_OFF");
         } else {
             time_off = "";
         }
-        if (map.containsKey("QSL_RCVD")) {//通联互认，lotw中有。
+
+        if (map.containsKey("QSL_RCVD")) {
             isLotW_QSL = Objects.requireNonNull(map.get("QSL_RCVD")).equalsIgnoreCase("Y");
         }
-        if (map.containsKey("LOTW_QSL_RCVD")) {//通联互认，log32中有。
+        if (map.containsKey("LOTW_QSL_RCVD")) {
             isLotW_QSL = Objects.requireNonNull(map.get("LOTW_QSL_RCVD")).equalsIgnoreCase("Y");
         }
-        if (map.containsKey("QSL_MANUAL")) {//通联互认，lotw中有。
+        if (map.containsKey("QSL_MANUAL")) {
             isQSL = Objects.requireNonNull(map.get("QSL_MANUAL")).equalsIgnoreCase("Y");
         }
 
-        if (map.containsKey("MY_GRIDSQUARE")) {//我的网格（lotw,log32有，lotw根据设置不同，也可能没有）N1MM没有网格
+        if (map.containsKey("MY_GRIDSQUARE")) {
             myMaidenGrid = map.get("MY_GRIDSQUARE");
         } else {
             myMaidenGrid = "";
         }
 
-        if (map.containsKey("GRIDSQUARE")) {//对方的网格（lotw,log32有，lotw根据设置不同，也可能没有）N1MM没有网格
+        if (map.containsKey("GRIDSQUARE")) {
             toMaidenGrid = map.get("GRIDSQUARE");
         } else {
             toMaidenGrid = "";
         }
 
-
-        if (map.containsKey("RST_RCVD")) {//接收到的报告。信号报告n1mm,log32,jtdx有，Lotw没有
-            try {//要把float转成Long
+        if (map.containsKey("RST_RCVD")) {
+            try {
                 receivedReport = Integer.parseInt(Objects.requireNonNull(map.get("RST_RCVD").trim()));
             } catch (NumberFormatException e) {
-                isInvalid=true;
-                errorMSG="RST_RCVD:"+e.getMessage();
-                e.printStackTrace();
-                Log.e(TAG, "QSLRecord: RST_RCVD:" + e.getMessage());
+                isInvalid = true;
+                errorMSG = "RST_RCVD:" + e.getMessage();
+                Log.e(TAG, "QSLRecord: RST_RCVD: " + e.getMessage());
             }
         } else {
             receivedReport = -120;
         }
 
-        if (map.containsKey("RST_SENT")) {//接收到的报告。信号报告n1mm,log32,jtdx有，Lotw没有
-            try {//要把float转成Long
+        if (map.containsKey("RST_SENT")) {
+            try {
                 sendReport = Integer.parseInt(Objects.requireNonNull(map.get("RST_SENT").trim()));
             } catch (NumberFormatException e) {
-                isInvalid=true;
-                errorMSG="RST_SENT:"+e.getMessage();
-                e.printStackTrace();
-                Log.e(TAG, "QSLRecord: RST_SENT:" + e.getMessage());
+                isInvalid = true;
+                errorMSG = "RST_SENT:" + e.getMessage();
+                Log.e(TAG, "QSLRecord: RST_SENT: " + e.getMessage());
             }
         } else {
             sendReport = -120;
         }
-        if (map.containsKey("COMMENT")) {//注释，JTDX中有
+
+        // ADI里一般没有音频频率，这里默认0
+        wavFrequency = 0;
+
+        if (map.containsKey("COMMENT")) {
             comment = map.get("COMMENT");
         } else {
-            comment = String.format(GeneralVariables.getStringFromResource(R.string.qsl_record_import_time)
-                    , UtcTimer.getDatetimeStr(UtcTimer.getSystemTime()));
+            comment = String.format(GeneralVariables.getStringFromResource(R.string.qsl_record_import_time),
+                    UtcTimer.getDatetimeStr(UtcTimer.getSystemTime()));
         }
-
-
     }
 
     /**
@@ -235,7 +294,12 @@ public class QSLRecord {
      * @return 提示
      */
     public String swlQSOInfo() {
-        return String.format("QSO of SWL:%s<--%s", toCallsign, myCallsign);
+        return String.format("QSO of SWL:%s<--%s [%s %.3fMHz/%dHz]",
+                toCallsign,
+                myCallsign,
+                mode,
+                bandFreq / 1000000f,
+                wavFrequency);
     }
 
     @Override
@@ -314,7 +378,6 @@ public class QSLRecord {
         return wavFrequency;
     }
 
-
     public String getMyCallsign() {
         return myCallsign;
     }
@@ -362,7 +425,6 @@ public class QSLRecord {
     public String getComment() {
         return comment;
     }
-
 
     public void setToMaidenGrid(String toMaidenGrid) {
         this.toMaidenGrid = toMaidenGrid;

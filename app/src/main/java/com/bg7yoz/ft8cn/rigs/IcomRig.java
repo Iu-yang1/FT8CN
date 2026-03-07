@@ -12,7 +12,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
 import com.bg7yoz.ft8cn.database.ControlMode;
-import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
+import com.bg7yoz.ft8cn.ft8transmit.GenerateFTx;
 import com.bg7yoz.ft8cn.icom.IComPacketTypes;
 import com.bg7yoz.ft8cn.ui.ToastMessage;
 
@@ -137,14 +137,22 @@ public class IcomRig extends BaseRig {
     }
 
     @Override
-    public void sendWaveData(Ft8Message message) {//发送音频数据到电台，用于网络方式
-        if (getConnector() != null) {//把生成的具体音频数据传递到Connector，
-            float[] data = GenerateFT8.generateFt8(message, GeneralVariables.getBaseFrequency()
-                    , 12000);//此处icom电台发射音频的采样率是12000
+    public void sendWaveData(Ft8Message message) {
+        if (getConnector() != null) {
+            int txMode = message != null ? message.signalFormat : GeneralVariables.getSignalMode();
+
+            float[] data = GenerateFTx.generateFtX(
+                    message,
+                    GeneralVariables.getBaseFrequency(),
+                    12000,
+                    txMode
+            );
+
             if (data == null) {
                 setPTT(false);
                 return;
             }
+
             getConnector().sendWaveData(data);
         }
     }

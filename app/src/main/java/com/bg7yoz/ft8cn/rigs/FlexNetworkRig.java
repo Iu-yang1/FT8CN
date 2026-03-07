@@ -8,7 +8,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.connector.FlexConnector;
 import com.bg7yoz.ft8cn.flex.FlexCommand;
 import com.bg7yoz.ft8cn.flex.FlexRadio;
-import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
+import com.bg7yoz.ft8cn.ft8transmit.GenerateFTx;
 
 public class FlexNetworkRig extends BaseRig {
     private static final String TAG = "FlexNetworkRig";
@@ -85,14 +85,21 @@ public class FlexNetworkRig extends BaseRig {
 
     @Override
     public void sendWaveData(Ft8Message message) {
-
         if (getConnector() != null) {
-            float[] data = GenerateFT8.generateFt8(message, GeneralVariables.getBaseFrequency()
-                    , 24000);//flex音频的采样率是24000
+            int txMode = message != null ? message.signalFormat : GeneralVariables.getSignalMode();
+
+            float[] data = GenerateFTx.generateFtX(
+                    message,
+                    GeneralVariables.getBaseFrequency(),
+                    24000,
+                    txMode
+            );
+
             if (data == null) {
                 setPTT(false);
                 return;
             }
+
             getConnector().sendWaveData(data);
         }
     }

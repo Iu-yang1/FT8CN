@@ -1,8 +1,13 @@
 package com.bg7yoz.ft8cn.ui;
+
 /**
  * 设置界面。
- * @author BGY70Z
- * @date 2023-03-20
+ *
+ * 已修改：
+ * 1. 时间同步按钮走 MainViewModel.syncNtpTime()
+ * 2. UTC 偏移 spinner 显示 alignedOffset
+ * 3. 增加 NTP 开关 / 服务器选择 / 自定义 Host / 状态显示
+ * 4. 修复同步成功后状态被刷回 idle
  */
 
 import android.annotation.SuppressLint;
@@ -15,6 +20,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.CompoundButton;
 
 import androidx.annotation.NonNull;
@@ -22,6 +28,7 @@ import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Observer;
 
 import com.bg7yoz.ft8cn.FAQActivity;
+import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
@@ -36,14 +43,24 @@ import com.bg7yoz.ft8cn.maidenhead.MaidenheadGrid;
 import com.bg7yoz.ft8cn.rigs.InstructionSet;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
-import java.io.IOException;
+import java.util.ArrayList;
 
-/**
- * A simple {@link Fragment} subclass.
- * create an instance of this fragment.
- */
 public class ConfigFragment extends Fragment {
     private static final String TAG = "ConfigFragment";
+
+    private static final String[] NTP_SERVER_ITEMS = new String[]{
+            "自动",
+            "time.windows.com",
+            "time.google.com",
+            "pool.ntp.org",
+            "ntp.aliyun.com",
+            "cn.pool.ntp.org",
+            "自定义"
+    };
+
+    private static final int NTP_SERVER_INDEX_AUTO = 0;
+    private static final int NTP_SERVER_INDEX_CUSTOM = NTP_SERVER_ITEMS.length - 1;
+
     private MainViewModel mainViewModel;
     private FragmentConfigBinding binding;
     private BandsSpinnerAdapter bandsSpinnerAdapter;
@@ -52,10 +69,8 @@ public class ConfigFragment extends Fragment {
     private LaunchSupervisionSpinnerAdapter launchSupervisionSpinnerAdapter;
     private PttDelaySpinnerAdapter pttDelaySpinnerAdapter;
     private NoReplyLimitSpinnerAdapter noReplyLimitSpinnerAdapter;
-    //private SerialPortSpinnerAdapter serialPortSpinnerAdapter;
 
     public ConfigFragment() {
-        // Required empty public constructor
     }
 
     @Override
@@ -63,28 +78,23 @@ public class ConfigFragment extends Fragment {
         super.onCreate(savedInstanceState);
     }
 
-    //我的网格位置
+    // 我的网格位置
     private final TextWatcher onGridEditorChanged = new TextWatcher() {
         @Override
         public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void afterTextChanged(Editable editable) {
-            //String s = "";
-            StringBuilder s=new StringBuilder();
+            StringBuilder s = new StringBuilder();
             for (int j = 0; j < binding.inputMyGridEdit.getText().length(); j++) {
                 if (j < 2) {
-                    //s = s + Character.toUpperCase(binding.inputMyGridEdit.getText().charAt(j));
                     s.append(Character.toUpperCase(binding.inputMyGridEdit.getText().charAt(j)));
                 } else {
-                    //s = s + Character.toLowerCase(binding.inputMyGridEdit.getText().charAt(j));
                     s.append(Character.toLowerCase(binding.inputMyGridEdit.getText().charAt(j)));
                 }
             }
@@ -92,16 +102,15 @@ public class ConfigFragment extends Fragment {
             GeneralVariables.setMyMaidenheadGrid(s.toString());
         }
     };
-    //我的呼号
+
+    // 我的呼号
     private final TextWatcher onMyCallEditorChanged = new TextWatcher() {
         @Override
         public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
@@ -113,19 +122,18 @@ public class ConfigFragment extends Fragment {
                 Ft8Message.hashList.addHash(FT8Package.getHash12(callsign), callsign);
                 Ft8Message.hashList.addHash(FT8Package.getHash10(callsign), callsign);
             }
-            GeneralVariables.myCallsign = (editable.toString().toUpperCase().trim());
+            GeneralVariables.myCallsign = editable.toString().toUpperCase().trim();
         }
     };
-    //发射频率
+
+    // 发射频率
     private final TextWatcher onFreqEditorChanged = new TextWatcher() {
         @Override
         public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
@@ -133,16 +141,15 @@ public class ConfigFragment extends Fragment {
             setfreq(editable.toString());
         }
     };
-    //发射延迟时间
+
+    // 发射延迟时间
     private final TextWatcher onTransDelayEditorChanged = new TextWatcher() {
         @Override
         public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
@@ -157,16 +164,14 @@ public class ConfigFragment extends Fragment {
         }
     };
 
-    //排除的呼号前缀
-    private final TextWatcher onExcludedCallsigns=new TextWatcher() {
+    // 排除的呼号前缀
+    private final TextWatcher onExcludedCallsigns = new TextWatcher() {
         @Override
         public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
@@ -176,41 +181,37 @@ public class ConfigFragment extends Fragment {
         }
     };
 
-    //修饰符
+    // 修饰符
     private final TextWatcher onModifierEditorChanged = new TextWatcher() {
         @Override
         public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void afterTextChanged(Editable editable) {
             if (editable.toString().toUpperCase().trim().matches("[0-9]{3}|[A-Z]{1,4}")
-                    ||editable.toString().trim().length()==0){
+                    || editable.toString().trim().length() == 0) {
                 binding.modifierEdit.setTextColor(requireContext().getColor(R.color.text_view_color));
-                GeneralVariables.toModifier=editable.toString().toUpperCase().trim();
+                GeneralVariables.toModifier = editable.toString().toUpperCase().trim();
                 writeConfig("toModifier", GeneralVariables.toModifier);
-            }else{
+            } else {
                 binding.modifierEdit.setTextColor(requireContext().getColor(R.color.text_view_error_color));
             }
         }
     };
 
-    //CI-V地址
+    // CI-V 地址
     private final TextWatcher onCIVAddressEditorChanged = new TextWatcher() {
         @Override
         public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
         public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-
         }
 
         @Override
@@ -219,7 +220,7 @@ public class ConfigFragment extends Fragment {
                 return;
             }
             String s = "0x" + editable.toString();
-            if (s.matches("\\b0[xX][0-9a-fA-F]+\\b")) {//匹配十六进制
+            if (s.matches("\\b0[xX][0-9a-fA-F]+\\b")) {
                 String temp = editable.toString().substring(0, 2).toUpperCase();
                 writeConfig("civ", temp);
                 GeneralVariables.civAddress = Integer.parseInt(temp, 16);
@@ -228,6 +229,29 @@ public class ConfigFragment extends Fragment {
         }
     };
 
+    // NTP 自定义 host
+    private final TextWatcher onNtpCustomServerChanged = new TextWatcher() {
+        @Override
+        public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+        }
+
+        @Override
+        public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+        }
+
+        @Override
+        public void afterTextChanged(Editable editable) {
+            String host = editable.toString().trim();
+            GeneralVariables.ntpCustomServer = host;
+            writeConfig("ntpCustomServer", host);
+
+            if (binding != null
+                    && binding.ntpServerSpinner != null
+                    && binding.ntpServerSpinner.getSelectedItemPosition() == NTP_SERVER_INDEX_CUSTOM) {
+                updateNtpStatusText(host.length() > 0 ? "NTP Host: " + host : "NTP Host: 未设置");
+            }
+        }
+    };
 
     @SuppressLint("DefaultLocale")
     private void setfreq(String sFreq) {
@@ -240,11 +264,9 @@ public class ConfigFragment extends Fragment {
             if (freq > 2900) {
                 freq = 2900;
             }
-        } catch (Exception e
-        ) {
+        } catch (Exception e) {
             freq = 1000;
         }
-
 
         writeConfig("freq", String.format("%.0f", freq));
         GeneralVariables.setBaseFrequency(freq);
@@ -257,63 +279,59 @@ public class ConfigFragment extends Fragment {
         mainViewModel = MainViewModel.getInstance(this);
         binding = FragmentConfigBinding.inflate(inflater, container, false);
 
-        //只对中国开方问题收集
-//        if (GeneralVariables.isChina) {
-//            binding.faqButton.setVisibility(View.VISIBLE);
-//        } else {
-//            binding.faqButton.setVisibility(View.GONE);
-//        }
-
-
-        //设置时间偏移
+        // 设置时间偏移
         setUtcTimeOffsetSpinner();
 
-        //设置PTT延时
+        // 设置 NTP
+        setNtpConfig();
+
+        // 设置PTT延时
         setPttDelaySpinner();
 
-        //设置操作频段
+        // 设置操作频段
         setBandsSpinner();
 
-        //设置波特率列表
+        // 设置波特率列表
         setBauRateSpinner();
 
-        //设置电台名称，参数列表
+        // 设置电台名称，参数列表
         setRigNameSpinner();
 
-        //设置解码模式
+        // 设置解码模式
         setDecodeMode();
 
-        //设置音频输出的位数
+        // 设置音频输出的位数
         setAudioOutputBitsMode();
 
-        //设置音频输出采样率
+        // 设置音频输出采样率
         setAudioOutputRateMode();
 
-        //设置显示消息模式
+        // 设置显示消息模式
         setMessageMode();
 
-        //设置控制模式 VOX CAT
+        // 设置控制模式
         setControlMode();
 
-        //设置连线的方式
+        // 设置连线方式
         setConnectMode();
 
-        //设置发射监管列表
+        // 设置发射监管列表
         setLaunchSupervision();
 
-        //设置帮助对话框
+        // 设置帮助对话框
         setHelpDialog();
 
-        //设置无回应次数中断
+        // 设置无回应次数中断
         setNoReplyLimitSpinner();
 
-        //显示滚动箭头
+        // 滚动箭头
         new Handler().postDelayed(new Runnable() {
             @Override
             public void run() {
                 setScrollImageVisible();
             }
         }, 1000);
+
         binding.scrollView3.setOnScrollChangeListener(new View.OnScrollChangeListener() {
             @Override
             public void onScrollChange(View view, int i, int i1, int i2, int i3) {
@@ -321,7 +339,7 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-        //FAQ按钮的onClick
+        // FAQ
         binding.faqButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -330,47 +348,45 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-        //梅登海德网格
+        // 梅登海德网格
         binding.inputMyGridEdit.removeTextChangedListener(onGridEditorChanged);
         binding.inputMyGridEdit.setText(GeneralVariables.getMyMaidenheadGrid());
         binding.inputMyGridEdit.addTextChangedListener(onGridEditorChanged);
 
-        //我的呼号
+        // 我的呼号
         binding.inputMycallEdit.removeTextChangedListener(onMyCallEditorChanged);
         binding.inputMycallEdit.setText(GeneralVariables.myCallsign);
         binding.inputMycallEdit.addTextChangedListener(onMyCallEditorChanged);
 
-        //修饰符
+        // 修饰符
         binding.modifierEdit.removeTextChangedListener(onModifierEditorChanged);
         binding.modifierEdit.setText(GeneralVariables.toModifier);
         binding.modifierEdit.addTextChangedListener(onModifierEditorChanged);
 
-        //发射频率
+        // 发射频率
         binding.inputFreqEditor.removeTextChangedListener(onFreqEditorChanged);
         binding.inputFreqEditor.setText(GeneralVariables.getBaseFrequencyStr());
         binding.inputFreqEditor.addTextChangedListener(onFreqEditorChanged);
 
-
-
-        //CIV地址
+        // CIV 地址
         binding.civAddressEdit.removeTextChangedListener(onCIVAddressEditorChanged);
         binding.civAddressEdit.setText(GeneralVariables.getCivAddressStr());
         binding.civAddressEdit.addTextChangedListener(onCIVAddressEditorChanged);
 
-        //发射延迟
+        // 发射延迟
         binding.inputTransDelayEdit.removeTextChangedListener(onTransDelayEditorChanged);
         binding.inputTransDelayEdit.setText(GeneralVariables.getTransmitDelayStr());
         binding.inputTransDelayEdit.addTextChangedListener(onTransDelayEditorChanged);
 
+        // 排除呼号
         binding.excludedCallsignEdit.removeTextChangedListener(onExcludedCallsigns);
         binding.excludedCallsignEdit.setText(GeneralVariables.getExcludeCallsigns());
         binding.excludedCallsignEdit.addTextChangedListener(onExcludedCallsigns);
 
-
-        //设置同频发射开关
+        // 设置同频发射开关
         binding.synFrequencySwitch.setOnCheckedChangeListener(null);
         binding.synFrequencySwitch.setChecked(GeneralVariables.synFrequency);
-        setSyncFreqText();//设置开关的文本
+        setSyncFreqText();
         binding.synFrequencySwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
@@ -386,7 +402,7 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-        //设置PTT延迟
+        // 设置PTT延迟
         binding.pttDelayOffsetSpinner.setOnItemSelectedListener(null);
         binding.pttDelayOffsetSpinner.setSelection(GeneralVariables.pttDelay / 10);
         binding.pttDelayOffsetSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -398,41 +414,36 @@ public class ConfigFragment extends Fragment {
 
             @Override
             public void onNothingSelected(AdapterView<?> adapterView) {
-
             }
         });
 
-
-        //获取操作的波段
+        // 获取操作的波段
         binding.operationBandSpinner.setOnItemSelectedListener(null);
         binding.operationBandSpinner.setSelection(GeneralVariables.bandListIndex);
         binding.operationBandSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
                 GeneralVariables.bandListIndex = i;
-                GeneralVariables.band = OperationBand.getBandFreq(i);//把当前的频段保存下来
+                GeneralVariables.band = OperationBand.getBandFreq(i);
 
-                mainViewModel.databaseOpr.getAllQSLCallsigns();//通联成功的呼号读出来
+                mainViewModel.databaseOpr.getAllQSLCallsigns();
                 writeConfig("bandFreq", String.valueOf(GeneralVariables.band));
-                if (GeneralVariables.controlMode == ControlMode.CAT//CAT、RTS、DTR模式下控制电台
+                if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
-                    //如果在CAT、RTS模式下，修改电台的频率
                     mainViewModel.setOperationBand();
                 }
             }
 
             @Override
             public void onNothingSelected(AdapterView<?> adapterView) {
-
             }
         });
 
-
-        //获取电台型号
+        // 获取电台型号
         binding.rigNameSpinner.setOnItemSelectedListener(null);
         binding.rigNameSpinner.setSelection(GeneralVariables.modelNo);
-        new Handler().postDelayed(new Runnable() {//延迟2秒修改OnItemSelectedListener
+        new Handler().postDelayed(new Runnable() {
             @Override
             public void run() {
                 binding.rigNameSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -442,7 +453,6 @@ public class ConfigFragment extends Fragment {
                         writeConfig("model", String.valueOf(i));
                         setAddrAndBauRate(rigNameSpinnerAdapter.getRigName(i));
 
-                        //指令集
                         GeneralVariables.instructionSet = rigNameSpinnerAdapter.getRigName(i).instructionSet;
                         writeConfig("instruction", String.valueOf(GeneralVariables.instructionSet));
                     }
@@ -454,8 +464,7 @@ public class ConfigFragment extends Fragment {
             }
         }, 2000);
 
-
-        //获取波特率
+        // 获取波特率
         binding.baudRateSpinner.setOnItemSelectedListener(null);
         binding.baudRateSpinner.setSelection(bauRateSpinnerAdapter.getPosition(
                 GeneralVariables.baudRate));
@@ -471,10 +480,11 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-        //设置发射监管
+        // 设置发射监管
         binding.launchSupervisionSpinner.setOnItemSelectedListener(null);
-        binding.launchSupervisionSpinner.setSelection(launchSupervisionSpinnerAdapter
-                .getPosition(GeneralVariables.launchSupervision));
+        binding.launchSupervisionSpinner.setSelection(
+                launchSupervisionSpinnerAdapter.getPosition(GeneralVariables.launchSupervision)
+        );
         binding.launchSupervisionSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
@@ -484,11 +494,10 @@ public class ConfigFragment extends Fragment {
 
             @Override
             public void onNothingSelected(AdapterView<?> adapterView) {
-
             }
         });
 
-        //设置无回应中断
+        // 设置无回应中断
         binding.noResponseCountSpinner.setOnItemSelectedListener(null);
         binding.noResponseCountSpinner.setSelection(GeneralVariables.noReplyLimit);
         binding.noResponseCountSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -500,12 +509,10 @@ public class ConfigFragment extends Fragment {
 
             @Override
             public void onNothingSelected(AdapterView<?> adapterView) {
-
             }
         });
 
-
-        //设置自动关注CQ
+        // 设置自动关注CQ
         binding.followCQSwitch.setOnCheckedChangeListener(null);
         binding.followCQSwitch.setChecked(GeneralVariables.autoFollowCQ);
         setAutoFollowCQText();
@@ -522,9 +529,7 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-
-
-        //设置自动呼叫关注的呼号
+        // 设置自动呼叫关注的呼号
         binding.autoCallfollowSwitch.setOnCheckedChangeListener(null);
         binding.autoCallfollowSwitch.setChecked(GeneralVariables.autoCallFollow);
         setAutoCallFollow();
@@ -541,7 +546,7 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-        //设置保存SWL选项
+        // 设置保存SWL选项
         binding.saveSWLSwitch.setOnCheckedChangeListener(null);
         binding.saveSWLSwitch.setChecked(GeneralVariables.saveSWLMessage);
         setSaveSwl();
@@ -558,9 +563,9 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-        //设置保存SWL选项
+        // 设置保存SWL QSO选项
         binding.saveSWLQSOSwitch.setOnCheckedChangeListener(null);
-        binding.saveSWLQSOSwitch.setChecked(GeneralVariables.saveSWLMessage);
+        binding.saveSWLQSOSwitch.setChecked(GeneralVariables.saveSWL_QSO);
         setSaveSwlQSO();
         binding.saveSWLQSOSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
@@ -575,8 +580,7 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-
-        //获取梅登海德网格
+        // 获取梅登海德网格
         binding.configGetGridImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -587,17 +591,57 @@ public class ConfigFragment extends Fragment {
             }
         });
 
+        observeNtpResult();
 
         return binding.getRoot();
     }
 
+    private void observeNtpResult() {
+        mainViewModel.mutableNtpSyncSuccess.observe(getViewLifecycleOwner(), new Observer<Boolean>() {
+            @Override
+            public void onChanged(Boolean success) {
+                if (Boolean.TRUE.equals(success)) {
+                    int secTime = GeneralVariables.lastNtpOffset;
+                    setUtcTimeOffsetSpinner();
+
+                    String host = GeneralVariables.lastNtpServer;
+                    if (host == null || host.trim().length() == 0) {
+                        host = GeneralVariables.getCurrentNtpServer();
+                    }
+                    updateNtpStatusText("NTP同步成功: " + host + " / offset=" + secTime + " ms");
+
+                    if (secTime > 100) {
+                        ToastMessage.show(String.format(
+                                GeneralVariables.getStringFromResource(R.string.utc_time_sync_delay_slow), secTime));
+                    } else if (secTime < -100) {
+                        ToastMessage.show(String.format(
+                                GeneralVariables.getStringFromResource(R.string.utc_time_sync_delay_faster), -secTime));
+                    } else {
+                        ToastMessage.show(GeneralVariables
+                                .getStringFromResource(R.string.config_clock_is_accurate));
+                    }
+                }
+            }
+        });
+
+        mainViewModel.mutableNtpSyncInfo.observe(getViewLifecycleOwner(), new Observer<String>() {
+            @Override
+            public void onChanged(String info) {
+                if (info == null || info.length() == 0) {
+                    return;
+                }
+                updateNtpStatusText(info);
+                if (info.startsWith("NTP同步失败")) {
+                    ToastMessage.show(info);
+                }
+            }
+        });
+    }
+
     /**
      * 设置地址和波特率，指令集
-     *
-     * @param rigName 电台型号
      */
     private void setAddrAndBauRate(RigNameList.RigName rigName) {
-        //mainViewModel.setCivAddress(rigName.address);
         GeneralVariables.civAddress = rigName.address;
         mainViewModel.setCivAddress();
         GeneralVariables.baudRate = rigName.bauRate;
@@ -605,7 +649,6 @@ public class ConfigFragment extends Fragment {
         binding.baudRateSpinner.setSelection(
                 bauRateSpinnerAdapter.getPosition(rigName.bauRate));
     }
-
 
     /**
      * 设置同频发射开关的显示文本
@@ -629,7 +672,6 @@ public class ConfigFragment extends Fragment {
         }
     }
 
-    //设置自动呼叫关注的呼号
     private void setAutoCallFollow() {
         if (binding.autoCallfollowSwitch.isChecked()) {
             binding.autoCallfollowSwitch.setText(getString(R.string.automatic_call_following));
@@ -637,6 +679,7 @@ public class ConfigFragment extends Fragment {
             binding.autoCallfollowSwitch.setText(getString(R.string.do_not_call_the_following_callsign));
         }
     }
+
     private void setSaveSwl() {
         if (binding.saveSWLSwitch.isChecked()) {
             binding.saveSWLSwitch.setText(getString(R.string.config_save_swl));
@@ -644,6 +687,7 @@ public class ConfigFragment extends Fragment {
             binding.saveSWLSwitch.setText(getString(R.string.config_donot_save_swl));
         }
     }
+
     private void setSaveSwlQSO() {
         if (binding.saveSWLQSOSwitch.isChecked()) {
             binding.saveSWLQSOSwitch.setText(getString(R.string.config_save_swl_qso));
@@ -651,8 +695,9 @@ public class ConfigFragment extends Fragment {
             binding.saveSWLQSOSwitch.setText(getString(R.string.config_donot_save_swl_qso));
         }
     }
+
     /**
-     * 设置UTC时间偏移的spinner
+     * 设置 UTC 时间偏移的 spinner
      */
     private void setUtcTimeOffsetSpinner() {
         UtcOffsetSpinnerAdapter adapter = new UtcOffsetSpinnerAdapter(requireContext());
@@ -662,24 +707,187 @@ public class ConfigFragment extends Fragment {
             public void run() {
                 binding.utcTimeOffsetSpinner.setAdapter(adapter);
                 adapter.notifyDataSetChanged();
-                binding.utcTimeOffsetSpinner.setSelection((UtcTimer.delay / 100 + 75) / 5);
+
+                int alignedDelay = UtcTimer.getAlignedDelay();
+                int position = (alignedDelay / 100 + 75) / 5;
+                if (position < 0) position = 0;
+                if (position >= adapter.getCount()) position = adapter.getCount() - 1;
+
+                binding.utcTimeOffsetSpinner.setSelection(position);
             }
         });
+
         binding.utcTimeOffsetSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
-                UtcTimer.delay = i * 500 - 7500;//设置延迟
+                int alignedDelay = i * 500 - 7500;
+                UtcTimer.delay = alignedDelay;
+                GeneralVariables.lastNtpAlignedOffset = alignedDelay;
+                writeConfig("utcAlignedOffset", String.valueOf(alignedDelay));
             }
 
             @Override
             public void onNothingSelected(AdapterView<?> adapterView) {
-
             }
         });
     }
 
     /**
-     * 设置操作频段的spinner
+     * 设置 NTP 配置
+     */
+    @SuppressLint("SetTextI18n")
+    private void setNtpConfig() {
+        ArrayAdapter<String> ntpAdapter = new ArrayAdapter<String>(
+                requireContext(),
+                android.R.layout.simple_spinner_item,
+                NTP_SERVER_ITEMS
+        ) {
+            @NonNull
+            @Override
+            public View getView(int position, View convertView, @NonNull ViewGroup parent) {
+                View view = super.getView(position, convertView, parent);
+                if (view instanceof android.widget.TextView) {
+                    android.widget.TextView tv = (android.widget.TextView) view;
+                    tv.setTextColor(requireContext().getColor(R.color.text_view_color));
+                    tv.setTextSize(14f);
+                    tv.setSingleLine(true);
+                    tv.setPadding(24, 8, 24, 8);
+                }
+                return view;
+            }
+
+            @Override
+            public View getDropDownView(int position, View convertView, @NonNull ViewGroup parent) {
+                View view = super.getDropDownView(position, convertView, parent);
+                if (view instanceof android.widget.TextView) {
+                    android.widget.TextView tv = (android.widget.TextView) view;
+                    tv.setTextColor(requireContext().getColor(R.color.text_view_color));
+                    tv.setTextSize(14f);
+                    tv.setSingleLine(true);
+                    tv.setPadding(24, 24, 24, 24);
+                }
+                return view;
+            }
+        };
+        ntpAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+
+        binding.ntpServerSpinner.setAdapter(ntpAdapter);
+
+        int serverIndex = GeneralVariables.ntpServerIndex;
+        if (serverIndex < 0 || serverIndex >= NTP_SERVER_ITEMS.length) {
+            serverIndex = NTP_SERVER_INDEX_AUTO;
+        }
+
+        binding.ntpServerSpinner.setOnItemSelectedListener(null);
+        binding.ntpServerSpinner.setSelection(serverIndex, false);
+
+        binding.ntpEnableSwitch.setOnCheckedChangeListener(null);
+        binding.ntpEnableSwitch.setChecked(GeneralVariables.ntpEnable);
+        setNtpEnableText();
+
+        binding.ntpCustomServerEdit.removeTextChangedListener(onNtpCustomServerChanged);
+        binding.ntpCustomServerEdit.setText(
+                GeneralVariables.ntpCustomServer == null ? "" : GeneralVariables.ntpCustomServer
+        );
+        binding.ntpCustomServerEdit.addTextChangedListener(onNtpCustomServerChanged);
+
+        updateNtpCustomHostVisible();
+
+        if (GeneralVariables.lastNtpSyncTime > 0) {
+            String host = GeneralVariables.lastNtpServer;
+            if (host == null || host.trim().length() == 0) {
+                host = GeneralVariables.getCurrentNtpServer();
+            }
+            updateNtpStatusText("NTP同步成功: " + host
+                    + " / offset=" + GeneralVariables.lastNtpOffset + " ms");
+        } else {
+            if (GeneralVariables.ntpEnable) {
+                updateNtpStatusText("NTP: ready");
+            } else {
+                updateNtpStatusText("NTP: disabled");
+            }
+        }
+
+        binding.ntpEnableSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+                GeneralVariables.ntpEnable = checked;
+                writeConfig("ntpEnable", checked ? "1" : "0");
+                setNtpEnableText();
+
+                if (checked) {
+                    if (GeneralVariables.lastNtpSyncTime > 0) {
+                        String host = GeneralVariables.lastNtpServer;
+                        if (host == null || host.trim().length() == 0) {
+                            host = GeneralVariables.getCurrentNtpServer();
+                        }
+                        updateNtpStatusText("NTP同步成功: " + host
+                                + " / offset=" + GeneralVariables.lastNtpOffset + " ms");
+                    } else {
+                        updateNtpStatusText("NTP: ready");
+                    }
+                } else {
+                    updateNtpStatusText("NTP: disabled");
+                }
+            }
+        });
+
+        binding.ntpServerSpinner.setClickable(true);
+        binding.ntpServerSpinner.setEnabled(true);
+
+        binding.ntpServerSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> adapterView, View view, int position, long l) {
+                GeneralVariables.ntpServerIndex = position;
+                writeConfig("ntpServerIndex", String.valueOf(position));
+
+                String serverText = getSelectedNtpServerText(position);
+                writeConfig("ntpServer", serverText);
+
+                updateNtpCustomHostVisible();
+
+                if (position == NTP_SERVER_INDEX_CUSTOM) {
+                    String host = binding.ntpCustomServerEdit.getText().toString().trim();
+                    updateNtpStatusText(host.length() > 0 ? "NTP Host: " + host : "NTP Host: 未设置");
+                } else {
+                    updateNtpStatusText("NTP Host: " + serverText);
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> adapterView) {
+            }
+        });
+
+    }
+
+    private void setNtpEnableText() {
+        if (binding.ntpEnableSwitch.isChecked()) {
+            binding.ntpEnableSwitch.setText("NTP ON");
+        } else {
+            binding.ntpEnableSwitch.setText("NTP OFF");
+        }
+    }
+
+    private String getSelectedNtpServerText(int position) {
+        if (position < 0 || position >= NTP_SERVER_ITEMS.length) {
+            return NTP_SERVER_ITEMS[NTP_SERVER_INDEX_AUTO];
+        }
+        return NTP_SERVER_ITEMS[position];
+    }
+
+    private void updateNtpCustomHostVisible() {
+        boolean custom = binding.ntpServerSpinner.getSelectedItemPosition() == NTP_SERVER_INDEX_CUSTOM;
+        binding.ntpCustomServerTextView.setVisibility(custom ? View.VISIBLE : View.GONE);
+        binding.ntpCustomServerEdit.setVisibility(custom ? View.VISIBLE : View.GONE);
+    }
+
+    private void updateNtpStatusText(String text) {
+        binding.ntpStatusTextView.setText(text);
+    }
+
+    /**
+     * 设置操作频段的 spinner
      */
     private void setBandsSpinner() {
         GeneralVariables.mutableBandChange.observe(getViewLifecycleOwner(), new Observer<Integer>() {
@@ -689,7 +897,6 @@ public class ConfigFragment extends Fragment {
             }
         });
 
-
         bandsSpinnerAdapter = new BandsSpinnerAdapter(requireContext());
         binding.operationBandSpinner.setAdapter(bandsSpinnerAdapter);
         requireActivity().runOnUiThread(new Runnable() {
@@ -698,7 +905,6 @@ public class ConfigFragment extends Fragment {
                 bandsSpinnerAdapter.notifyDataSetChanged();
             }
         });
-
     }
 
     /**
@@ -755,11 +961,10 @@ public class ConfigFragment extends Fragment {
                 rigNameSpinnerAdapter.notifyDataSetChanged();
             }
         });
-
     }
 
     /**
-     * 设置PTT延时
+     * 设置 PTT 延时
      */
     private void setPttDelaySpinner() {
         pttDelaySpinnerAdapter = new PttDelaySpinnerAdapter(requireContext());
@@ -773,7 +978,6 @@ public class ConfigFragment extends Fragment {
         });
     }
 
-
     private void setDecodeMode() {
         binding.decodeModeRadioGroup.clearCheck();
         binding.fastDecodeRadioButton.setChecked(!GeneralVariables.deepDecodeMode);
@@ -782,60 +986,52 @@ public class ConfigFragment extends Fragment {
         View.OnClickListener listener = new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                int buttonId = binding.decodeModeRadioGroup.getCheckedRadioButtonId();
-                GeneralVariables.deepDecodeMode= buttonId ==binding.deepDecodeRadioButton.getId();
-                writeConfig("deepMode", GeneralVariables.deepDecodeMode? "1" : "0");
+                GeneralVariables.deepDecodeMode =
+                        binding.decodeModeRadioGroup.getCheckedRadioButtonId() == binding.deepDecodeRadioButton.getId();
+                writeConfig("deepMode", GeneralVariables.deepDecodeMode ? "1" : "0");
             }
         };
 
         binding.fastDecodeRadioButton.setOnClickListener(listener);
         binding.deepDecodeRadioButton.setOnClickListener(listener);
-
     }
 
-
     /**
-     * 设置音频输出的位数
+     * 设置音频输出位数
      */
     private void setAudioOutputBitsMode() {
-        //binding.controlModeRadioGroup.setOnCheckedChangeListener(null);
         binding.audioBitsRadioGroup.clearCheck();
         binding.audio32BitsRadioButton.setChecked(GeneralVariables.audioOutput32Bit);
         binding.audio16BitsRadioButton.setChecked(!GeneralVariables.audioOutput32Bit);
 
-
-
         View.OnClickListener listener = new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                int buttonId = binding.audioBitsRadioGroup.getCheckedRadioButtonId();
-                GeneralVariables.audioOutput32Bit= buttonId ==binding.audio32BitsRadioButton.getId();
-                writeConfig("audioBits", GeneralVariables.audioOutput32Bit? "1" : "0");
+                GeneralVariables.audioOutput32Bit =
+                        binding.audioBitsRadioGroup.getCheckedRadioButtonId() == binding.audio32BitsRadioButton.getId();
+                writeConfig("audioBits", GeneralVariables.audioOutput32Bit ? "1" : "0");
             }
         };
 
         binding.audio32BitsRadioButton.setOnClickListener(listener);
         binding.audio16BitsRadioButton.setOnClickListener(listener);
-
     }
 
     /**
-     * 输出音频的采样率设置
+     * 输出音频采样率设置
      */
     private void setAudioOutputRateMode() {
         binding.audioRateRadioGroup.clearCheck();
-        binding.audio12kRadioButton.setChecked(GeneralVariables.audioSampleRate==12000);
-        binding.audio24kRadioButton.setChecked(GeneralVariables.audioSampleRate==24000);
-        binding.audio48kRadioButton.setChecked(GeneralVariables.audioSampleRate==48000);
-
-
+        binding.audio12kRadioButton.setChecked(GeneralVariables.audioSampleRate == 12000);
+        binding.audio24kRadioButton.setChecked(GeneralVariables.audioSampleRate == 24000);
+        binding.audio48kRadioButton.setChecked(GeneralVariables.audioSampleRate == 48000);
 
         View.OnClickListener listener = new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                if (binding.audio12kRadioButton.isChecked()) GeneralVariables.audioSampleRate=12000;
-                if (binding.audio24kRadioButton.isChecked()) GeneralVariables.audioSampleRate=24000;
-                if (binding.audio48kRadioButton.isChecked()) GeneralVariables.audioSampleRate=48000;
+                if (binding.audio12kRadioButton.isChecked()) GeneralVariables.audioSampleRate = 12000;
+                if (binding.audio24kRadioButton.isChecked()) GeneralVariables.audioSampleRate = 24000;
+                if (binding.audio48kRadioButton.isChecked()) GeneralVariables.audioSampleRate = 48000;
                 writeConfig("audioRate", String.valueOf(GeneralVariables.audioSampleRate));
             }
         };
@@ -843,33 +1039,25 @@ public class ConfigFragment extends Fragment {
         binding.audio12kRadioButton.setOnClickListener(listener);
         binding.audio24kRadioButton.setOnClickListener(listener);
         binding.audio48kRadioButton.setOnClickListener(listener);
-
     }
-
-
 
     /**
      * 设置消息列表显示模式
      */
     private void setMessageMode() {
         binding.messageModeRadioGroup.clearCheck();
-        if (GeneralVariables.simpleCallItemMode){
+        if (GeneralVariables.simpleCallItemMode) {
             binding.msgSimpleRadioButton.setChecked(true);
-        }else {
+        } else {
             binding.msgStandardRadioButton.setChecked(true);
         }
-
-
 
         View.OnClickListener listener = new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                int buttonId = binding.messageModeRadioGroup.getCheckedRadioButtonId();
-                GeneralVariables.simpleCallItemMode=
-                        binding.messageModeRadioGroup.getCheckedRadioButtonId()
-                                ==binding.msgSimpleRadioButton.getId();
-
-                writeConfig("msgMode", GeneralVariables.simpleCallItemMode?"1":"0");
+                GeneralVariables.simpleCallItemMode =
+                        binding.messageModeRadioGroup.getCheckedRadioButtonId() == binding.msgSimpleRadioButton.getId();
+                writeConfig("msgMode", GeneralVariables.simpleCallItemMode ? "1" : "0");
             }
         };
 
@@ -877,14 +1065,10 @@ public class ConfigFragment extends Fragment {
         binding.msgSimpleRadioButton.setOnClickListener(listener);
     }
 
-
-
-
     /**
-     * 设置控制模式VOX CAT
+     * 设置控制模式
      */
     private void setControlMode() {
-        //binding.controlModeRadioGroup.setOnCheckedChangeListener(null);
         binding.controlModeRadioGroup.clearCheck();
 
         switch (GeneralVariables.controlMode) {
@@ -902,7 +1086,6 @@ public class ConfigFragment extends Fragment {
                 binding.ctrVOXradioButton.setChecked(true);
         }
 
-
         View.OnClickListener listener = new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -910,15 +1093,14 @@ public class ConfigFragment extends Fragment {
 
                 if (buttonId == binding.ctrVOXradioButton.getId()) {
                     GeneralVariables.controlMode = ControlMode.VOX;
-                } else if (buttonId == binding.ctrCATradioButton.getId()) {//CAT模式
+                } else if (buttonId == binding.ctrCATradioButton.getId()) {
                     GeneralVariables.controlMode = ControlMode.CAT;
-                } else if (buttonId == binding.ctrRTSradioButton.getId()) {//RTS模式
+                } else if (buttonId == binding.ctrRTSradioButton.getId()) {
                     GeneralVariables.controlMode = ControlMode.RTS;
-                } else if (buttonId == binding.ctrDTRradioButton.getId()) {//RTS模式
+                } else if (buttonId == binding.ctrDTRradioButton.getId()) {
                     GeneralVariables.controlMode = ControlMode.DTR;
                 }
-                mainViewModel.setControlMode();//通知一下电台控制模式改变
-                //无论CAT还是RTS，CI-V指令还是有效的，都是串口
+                mainViewModel.setControlMode();
                 if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
@@ -940,13 +1122,10 @@ public class ConfigFragment extends Fragment {
     }
 
     /**
-     * 设置连线的方式，可以是USB，也可以是BLUE_TOOTH
+     * 设置连线方式
      */
     private void setConnectMode() {
-        if (GeneralVariables.controlMode == ControlMode.CAT
-                //&& BluetoothConstants.checkBluetoothIsOpen()
-            ) {
-            //此处要改成VISIBLE
+        if (GeneralVariables.controlMode == ControlMode.CAT) {
             binding.connectModeLayout.setVisibility(View.VISIBLE);
         } else {
             binding.connectModeLayout.setVisibility(View.GONE);
@@ -963,6 +1142,7 @@ public class ConfigFragment extends Fragment {
                 binding.networkConnectRadioButton.setChecked(true);
                 break;
         }
+
         View.OnClickListener listener = new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -971,29 +1151,25 @@ public class ConfigFragment extends Fragment {
                     GeneralVariables.connectMode = ConnectMode.USB_CABLE;
                 } else if (buttonId == binding.bluetoothConnectRadioButton.getId()) {
                     GeneralVariables.connectMode = ConnectMode.BLUE_TOOTH;
-                }else if (buttonId==binding.networkConnectRadioButton.getId()){
-                    GeneralVariables.connectMode=ConnectMode.NETWORK;
+                } else if (buttonId == binding.networkConnectRadioButton.getId()) {
+                    GeneralVariables.connectMode = ConnectMode.NETWORK;
                 }
-                //------显示蓝牙列表，并选择，然后建立蓝牙连接
+
                 if (GeneralVariables.connectMode == ConnectMode.BLUE_TOOTH) {
-                    //根据安卓12，要判断一下蓝牙权限：
                     new SelectBluetoothDialog(requireContext(), mainViewModel).show();
                 }
 
-                //-----显示网络上的电台，目前是flex电台，-------------------
-                if (GeneralVariables.connectMode==ConnectMode.NETWORK){
-                    //打开网络电台列表对话框
-                    if (GeneralVariables.instructionSet== InstructionSet.FLEX_NETWORK) {
+                if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
+                    if (GeneralVariables.instructionSet == InstructionSet.FLEX_NETWORK) {
                         new SelectFlexRadioDialog(requireContext(), mainViewModel).show();
-                    }else if(GeneralVariables.instructionSet== InstructionSet.ICOM
-                            ||GeneralVariables.instructionSet== InstructionSet.XIEGU_6100
-                            ||GeneralVariables.instructionSet== InstructionSet.XIEGUG90S) {
+                    } else if (GeneralVariables.instructionSet == InstructionSet.ICOM
+                            || GeneralVariables.instructionSet == InstructionSet.XIEGU_6100
+                            || GeneralVariables.instructionSet == InstructionSet.XIEGUG90S) {
                         new LoginIcomRadioDialog(requireContext(), mainViewModel).show();
-                    }else {
+                    } else {
                         ToastMessage.show(GeneralVariables.getStringFromResource(R.string.only_flex_supported));
                     }
                 }
-
             }
         };
         binding.cableConnectRadioButton.setOnClickListener(listener);
@@ -1001,269 +1177,244 @@ public class ConfigFragment extends Fragment {
         binding.networkConnectRadioButton.setOnClickListener(listener);
     }
 
-
     /**
      * 把配置信息写到数据库
-     *
-     * @param KeyName 关键词
-     * @param Value   值
      */
     private void writeConfig(String KeyName, String Value) {
         mainViewModel.databaseOpr.writeConfig(KeyName, Value, null);
     }
 
     private void setHelpDialog() {
-        //呼号帮助
         binding.callsignHelpImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.callsign_help)
-                            , true).show();
-            }
-        });
-        //梅登海德网格的帮助
-        binding.maidenGridImageButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.maidenhead_help)
-                            , true).show();
-            }
-        });
-        //发射频率的帮助
-        binding.frequencyImageButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.frequency_help)
-                            , true).show();
-            }
-        });
-        //延迟发射帮助
-        binding.transDelayImageButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.transDelay_help)
-                            , true).show();
-            }
-        });
-        //时间偏移帮助
-        binding.timeOffsetImageButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.timeoffset_help)
-                            , true).show();
-            }
-        });
-        //PTT延时帮助
-        binding.pttDelayImageButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.pttdelay_help)
-                            , true).show();
-            }
-        });
-        //显示列表方式
-        binding.messageModeeHelpImageButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                new HelpDialog(requireContext(),requireActivity()
-                        ,GeneralVariables.getStringFromResource(R.string.message_mode_help)
-                        ,true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.callsign_help), true).show();
             }
         });
 
-        //设置ABOUT
+        binding.maidenGridImageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.maidenhead_help), true).show();
+            }
+        });
+
+        binding.frequencyImageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.frequency_help), true).show();
+            }
+        });
+
+        binding.transDelayImageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.transDelay_help), true).show();
+            }
+        });
+
+        binding.timeOffsetImageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.timeoffset_help), true).show();
+            }
+        });
+
+        binding.pttDelayImageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.pttdelay_help), true).show();
+            }
+        });
+
+        binding.messageModeeHelpImageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.message_mode_help), true).show();
+            }
+        });
+
         binding.aboutButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 new HelpDialog(requireContext(), requireActivity(), "readme.txt", true).show();
             }
         });
-        //设置操作频段
+
         binding.operationHelpImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.operationBand_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.operationBand_help), true).show();
             }
         });
-        //设置操作模式
+
         binding.controlModeHelpImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.controlMode_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.controlMode_help), true).show();
             }
         });
-        //设置CI-V地址和波特率帮助
+
         binding.baudRateHelpImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.civ_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.civ_help), true).show();
             }
         });
-        //电台型号列表
+
         binding.rigNameHelpImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.rig_model_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.rig_model_help), true).show();
             }
         });
-        //发射监管
+
         binding.launchSupervisionImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.launch_supervision_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.launch_supervision_help), true).show();
             }
         });
-        //无回应次数
+
         binding.noResponseCountButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.no_response_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.no_response_help), true).show();
             }
         });
-        //自动呼叫
+
         binding.autoFollowCountButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.auto_follow_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.auto_follow_help), true).show();
             }
         });
-        //连接模式
+
         binding.connectModeHelpImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.connectMode_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.connectMode_help), true).show();
             }
         });
-        //排除选项
+
         binding.excludedHelpButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.excludeCallsign_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.excludeCallsign_help), true).show();
             }
         });
 
         binding.swlHelpButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.swlMode_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.swlMode_help), true).show();
             }
         });
 
-        //解码模式
         binding.decodeModeHelpButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                new HelpDialog(requireContext(),requireActivity()
-                        ,GeneralVariables.getStringFromResource(R.string.deep_mode_help)
-                        ,true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.deep_mode_help), true).show();
             }
         });
 
-        //音频输出帮助
         binding.audioOutputImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.audio_output_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.audio_output_help), true).show();
             }
         });
 
-        //清除缓存
         binding.clearCacheHelpButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , GeneralVariables.getStringFromResource(R.string.clear_cache_data_help)
-                            , true).show();
+                new HelpDialog(requireContext(), requireActivity(),
+                        GeneralVariables.getStringFromResource(R.string.clear_cache_data_help), true).show();
             }
         });
+
         binding.clearFollowButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                new ClearCacheDataDialog(requireContext(), requireActivity()
-                        ,mainViewModel.databaseOpr
-                        ,ClearCacheDataDialog.CACHE_MODE.FOLLOW_DATA).show();
+                new ClearCacheDataDialog(requireContext(), requireActivity(),
+                        mainViewModel.databaseOpr,
+                        ClearCacheDataDialog.CACHE_MODE.FOLLOW_DATA).show();
             }
         });
+
         binding.clearLogCacheButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                new ClearCacheDataDialog(requireContext(), requireActivity()
-                        ,mainViewModel.databaseOpr
-                        ,ClearCacheDataDialog.CACHE_MODE.SWL_MSG).show();
+                new ClearCacheDataDialog(requireContext(), requireActivity(),
+                        mainViewModel.databaseOpr,
+                        ClearCacheDataDialog.CACHE_MODE.SWL_MSG).show();
             }
         });
+
         binding.clearSWlQsoButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                new ClearCacheDataDialog(requireContext(), requireActivity()
-                        ,mainViewModel.databaseOpr
-                        ,ClearCacheDataDialog.CACHE_MODE.SWL_QSO).show();
+                new ClearCacheDataDialog(requireContext(), requireActivity(),
+                        mainViewModel.databaseOpr,
+                        ClearCacheDataDialog.CACHE_MODE.SWL_QSO).show();
             }
         });
 
+        // 时间同步按钮
         binding.synTImeButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                UtcTimer.syncTime(new UtcTimer.AfterSyncTime() {
-                    @Override
-                    public void doAfterSyncTimer(int secTime) {
-                        setUtcTimeOffsetSpinner();
-                        if (secTime>100) {//正数时慢了
-                            ToastMessage.show(String.format(GeneralVariables
-                                    .getStringFromResource(R.string.utc_time_sync_delay_slow), secTime));
-                        }else if (secTime<-100){
-                            ToastMessage.show(String.format(GeneralVariables
-                                    .getStringFromResource(R.string.utc_time_sync_delay_faster), -secTime));
-                        }else {
-                            ToastMessage.show(GeneralVariables
-                                    .getStringFromResource(R.string.config_clock_is_accurate));
-                        }
-                    }
+                if (!binding.ntpEnableSwitch.isChecked()) {
+                   ToastMessage.show("NTP 已关闭");
+                    updateNtpStatusText("NTP: disabled");
+                    return;
+                }
 
-                    @Override
-                    public void syncFailed(IOException e) {
-                        ToastMessage.show(e.getMessage());
-                    }
-                });
+                GeneralVariables.ntpEnable = binding.ntpEnableSwitch.isChecked();
+                GeneralVariables.ntpServerIndex = binding.ntpServerSpinner.getSelectedItemPosition();
+                GeneralVariables.ntpCustomServer = binding.ntpCustomServerEdit.getText().toString().trim();
 
+                writeConfig("ntpEnable", GeneralVariables.ntpEnable ? "1" : "0");
+                writeConfig("ntpServerIndex", String.valueOf(GeneralVariables.ntpServerIndex));
+                writeConfig("ntpServer", getSelectedNtpServerText(GeneralVariables.ntpServerIndex));
+                writeConfig("ntpCustomServer", GeneralVariables.ntpCustomServer);
+
+                if (GeneralVariables.ntpServerIndex == NTP_SERVER_INDEX_CUSTOM
+                        && GeneralVariables.ntpCustomServer.length() == 0) {
+                    ToastMessage.show("请输入自定义 NTP Host");
+                    updateNtpStatusText("NTP: custom host empty");
+                    return;
+                }
+
+                updateNtpStatusText("NTP: syncing...");
+                mainViewModel.syncNtpTime();
             }
         });
-
     }
 
     /**
-     * 设置界面的上下滚动的图标
+     * 设置界面的上下滚动图标
      */
     private void setScrollImageVisible() {
-
         if (binding.scrollView3.getScrollY() == 0) {
             binding.configScrollUpImageView.setVisibility(View.GONE);
         } else {
@@ -1277,6 +1428,4 @@ public class ConfigFragment extends Fragment {
             binding.configScrollDownImageView.setVisibility(View.GONE);
         }
     }
-
-
 }

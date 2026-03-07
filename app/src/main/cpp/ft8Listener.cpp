@@ -1,12 +1,15 @@
 //
 // Created by jmsmf on 2022/6/2.
-// 已修改：ReBuildSignal_doSubtractSignal 增加 mode 参数，支持 FT8 / FT4
+// 已修改：
+// 1. ReBuildSignal_doSubtractSignal 增加 mode 参数，支持 FT8 / FT4
+// 2. DecoderFt8Analysis 增加可选 FT4 SNR 显示补偿
 //
 
 #include <jni.h>
 #include <string>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 
 extern "C" {
 #include "common/debug.h"
@@ -14,6 +17,27 @@ extern "C" {
 #include "ft8Encoder.h"
 #include "ft8/constants.h"
 #include "ft8/encode.h"
+}
+
+static const int SIGNAL_MODE_FT8 = 0;
+static const int SIGNAL_MODE_FT4 = 1;
+
+/**
+ * 这里先做“显示层补偿”：
+ * 当前 FT4 解码内容正常，但 snr 普遍偏小，先把 FT4 单独抬高。
+ * 后面如果你在 decoder_ft8_analysis 内部修正了原始 snr，这里可直接改回 return rawSnr;
+ */
+static inline int normalize_decode_snr_for_display(int rawSnr, int signalMode) {
+    int snr = rawSnr;
+
+    if (signalMode == SIGNAL_MODE_FT4) {
+        // 经验补偿，先给 FT4 抬高 4 dB
+        snr += 4;
+    }
+
+    if (snr > 20) snr = 20;
+    if (snr < -30) snr = -30;
+    return snr;
 }
 
 extern "C"
@@ -37,7 +61,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DeleteDecoder(JNIEnv *env, j
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *env, jobject,
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *env, jobject thiz,
                                                                        jint idx,
                                                                        jlong decoder,
                                                                        jobject ft8Message) {
@@ -55,6 +79,10 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *e
     jfieldID score = env->GetFieldID(objectClass, "score", "I");
     jfieldID snr = env->GetFieldID(objectClass, "snr", "I");
     jfieldID messageHash = env->GetFieldID(objectClass, "messageHash", "I");
+
+    // 读取 Java 层 signalFormat，用于决定是否做 FT4 补偿
+    jfieldID signalFormat = env->GetFieldID(objectClass, "signalFormat", "I");
+
     env->SetBooleanField(ft8Message, isValid, message.isValid);
 
     jfieldID i3 = env->GetFieldID(objectClass, "i3", "I");
@@ -76,7 +104,15 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *e
         env->SetFloatField(ft8Message, time_sec, message.time_sec);
         env->SetFloatField(ft8Message, freq_hz, message.freq_hz);
         env->SetIntField(ft8Message, score, message.candidate.score);
-        env->SetIntField(ft8Message, snr, message.snr);
+
+        int mode = SIGNAL_MODE_FT8;
+        if (signalFormat != nullptr) {
+            mode = env->GetIntField(ft8Message, signalFormat);
+        }
+
+        int displaySnr = normalize_decode_snr_for_display(message.snr, mode);
+        env->SetIntField(ft8Message, snr, displaySnr);
+
         env->SetIntField(ft8Message, messageHash, message.message.hash);
 
         env->SetIntField(ft8Message, i3, message.message.i3);
@@ -86,18 +122,19 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *e
         env->SetObjectField(ft8Message, extraInfo, env->NewStringUTF(message.message.extra));
         env->SetObjectField(ft8Message, maidenGrid, env->NewStringUTF(message.message.maidenGrid));
         env->SetIntField(ft8Message, report, message.message.report);
+
         env->SetLongField(ft8Message, callFromHash10,
-                          (long long) message.message.call_de_hash.hash10);
+                          (jlong) message.message.call_de_hash.hash10);
         env->SetLongField(ft8Message, callFromHash12,
-                          (long long) message.message.call_de_hash.hash12);
+                          (jlong) message.message.call_de_hash.hash12);
         env->SetLongField(ft8Message, callFromHash22,
-                          (long long) message.message.call_de_hash.hash22);
+                          (jlong) message.message.call_de_hash.hash22);
         env->SetLongField(ft8Message, callToHash10,
-                          (long long) message.message.call_to_hash.hash10);
+                          (jlong) message.message.call_to_hash.hash10);
         env->SetLongField(ft8Message, callToHash12,
-                          (long long) message.message.call_to_hash.hash12);
+                          (jlong) message.message.call_to_hash.hash12);
         env->SetLongField(ft8Message, callToHash22,
-                          (long long) message.message.call_to_hash.hash22);
+                          (jlong) message.message.call_to_hash.hash22);
     }
     return message.isValid;
 }
@@ -121,7 +158,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderMonitorPress(JNIEnv *
 
     int arr_len = env->GetArrayLength(buffer);
     auto *c_array = (jint *) malloc(arr_len * sizeof(jint));
-    (*env).GetIntArrayRegion(buffer, 0, arr_len, c_array);
+    env->GetIntArrayRegion(buffer, 0, arr_len, c_array);
 
     auto *raw_data = (float_t *) malloc(sizeof(float_t) * arr_len);
     for (int i = 0; i < arr_len; i++) {
@@ -135,10 +172,10 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderMonitorPress(JNIEnv *
 
 extern "C"
 JNIEXPORT jlong JNICALL
-Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_InitDecoder(JNIEnv *env, jobject, jlong utcTime,
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_InitDecoder(JNIEnv *env, jobject thiz, jlong utcTime,
                                                                 jint sampleRate, jint num_samples,
                                                                 jboolean isFt8) {
-    return (long) init_decoder(utcTime, sampleRate, num_samples, isFt8);
+    return (jlong) init_decoder(utcTime, sampleRate, num_samples, isFt8);
 }
 
 extern "C"
@@ -152,7 +189,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderMonitorPressFloat(JNI
 
     int arr_len = env->GetArrayLength(buffer);
     auto *c_array = (jfloat *) malloc(arr_len * sizeof(jfloat));
-    (*env).GetFloatArrayRegion(buffer, 0, arr_len, c_array);
+    env->GetFloatArrayRegion(buffer, 0, arr_len, c_array);
     decoder_monitor_press(c_array, dd);
     free(c_array);
 }
@@ -164,8 +201,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetA91(JNIEnv *env, j
     decoder_t *dd;
     dd = (decoder_t *) decoder;
 
-    jbyteArray array;
-    array = env->NewByteArray(FTX_LDPC_K_BYTES);
+    jbyteArray array = env->NewByteArray(FTX_LDPC_K_BYTES);
 
     jbyte buf[FTX_LDPC_K_BYTES];
     memcpy(buf, dd->a91, FTX_LDPC_K_BYTES);
@@ -190,7 +226,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_setDecodeMode(JNIEnv *env, j
 /**
  * 把频率减去
  */
-void setMagToZero(decoder_t *dd, int index, int max_block_size) {
+static inline void setMagToZero(decoder_t *dd, int index, int max_block_size) {
     if (index > 0 && index < max_block_size) {
         dd->mon.wf.mag[index] = 0;
     }
@@ -210,13 +246,13 @@ Java_com_bg7yoz_ft8cn_ft8listener_ReBuildSignal_doSubtractSignal(JNIEnv *env, jc
 
     int arr_len = env->GetArrayLength(payload);
     auto *c_array = (jbyte *) malloc(arr_len * sizeof(jbyte));
-    (*env).GetByteArrayRegion(payload, 0, arr_len, c_array);
+    env->GetByteArrayRegion(payload, 0, arr_len, c_array);
 
     int nn;
     float symbol_period;
     float slot_time;
 
-    if (mode == 1) {
+    if (mode == SIGNAL_MODE_FT4) {
         nn = FT4_NN;
         symbol_period = FT4_SYMBOL_PERIOD;
         slot_time = FT4_SLOT_TIME;
@@ -229,13 +265,12 @@ Java_com_bg7yoz_ft8cn_ft8listener_ReBuildSignal_doSubtractSignal(JNIEnv *env, jc
     auto *tones = (uint8_t *) malloc(nn);
     memset(tones, 0, nn);
 
-    if (mode == 1) {
+    if (mode == SIGNAL_MODE_FT4) {
         ft4_encode((uint8_t *) c_array, tones);
     } else {
         ft8_encode((uint8_t *) c_array, tones);
     }
 
-    // 相当于二维数组，freq优先
     int max_block_size = (int) (slot_time / symbol_period) * kTime_osr * kFreq_osr
                          * (int) (sample_rate * symbol_period / 2);
     int block_size = (int) (symbol_period * dd->mon_cfg.sample_rate);

@@ -3,6 +3,11 @@ package com.bg7yoz.ft8cn.ft8listener;
  * 用于监听音频的类。监听通过时钟UtcTimer来控制周期，通过OnWaveDataListener接口来读取音频数据。
  * 支持 FT8 / FT4 模式切换。
  *
+ * 1. 每一轮解码先固定 decodeMode，避免解码过程中用户切模式造成混乱
+ * 2. FT4 允许进入深度解码
+ * 3. subtractSignal / sequential / Ft8Message.signalFormat 全部按本轮 decodeMode 统一
+ * 4. FT4 / FT8 深解采用有限轮 subtract 重解，避免误码扩散
+ *
  * @author BGY70Z
  * @date 2023-03-20
  */
@@ -55,12 +60,14 @@ public class FT8SignalListener {
     private void buildUtcTimer() {
         utcTimer = new UtcTimer(FT8Common.getSlotTimeM(GeneralVariables.getSignalMode()), false, new OnUtcTimer() {
             @Override
-            public void doHeartBeatTimer(long utc) {//不触发时的时钟信息
+            public void doHeartBeatTimer(long utc) {
             }
 
             @Override
-            public void doOnSecTimer(long utc) {//当指定间隔时触发时
-                Log.d(TAG, String.format("触发录音,%d,mode=%s", utc, FT8Common.modeToString(GeneralVariables.getSignalMode())));
+            public void doOnSecTimer(long utc) {
+                Log.d(TAG, String.format("触发录音,%d,mode=%s",
+                        utc,
+                        FT8Common.modeToString(GeneralVariables.getSignalMode())));
                 runRecorde(utc);
             }
         });
@@ -96,8 +103,6 @@ public class FT8SignalListener {
 
     /**
      * 获取当前时间的偏移量，这里包括总的时钟偏移，也包括本实例的偏移
-     *
-     * @return int
      */
     public int time_Offset() {
         return utcTimer.getTime_sec() + UtcTimer.delay;
@@ -105,43 +110,107 @@ public class FT8SignalListener {
 
     /**
      * 录音。在后台以多线程的方式录音。
-     *
-     * @param utc 当前解码的UTC时间
      */
     private void runRecorde(long utc) {
         Log.d(TAG, "开始录音...");
 
         if (onWaveDataListener != null) {
+            final int recordMode = GeneralVariables.getSignalMode();
+            final int duration = FT8Common.getSlotTimeMillisecond(recordMode);
+
             onWaveDataListener.getVoiceData(
-                    FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode()),
+                    duration,
                     true,
                     new OnGetVoiceDataDone() {
                         @Override
                         public void onGetDone(float[] data) {
                             Log.d(TAG, String.format("开始解码...###,数据长度：%d,mode=%s",
-                                    data.length, FT8Common.modeToString(GeneralVariables.getSignalMode())));
-                            decodeFt8(utc, data);
+                                    data.length,
+                                    FT8Common.modeToString(recordMode)));
+                            decodeFt8(utc, data, recordMode);
                         }
                     });
         }
     }
 
     /**
-     * 启动一次解码流程
+     * 兼容旧调用：如果外部还有旧入口，仍按当前模式跑
      */
     public void decodeFt8(long utc, float[] voiceData) {
+        decodeFt8(utc, voiceData, GeneralVariables.getSignalMode());
+    }
+
+    /**
+     * FT4 更保守，FT8 可略宽松
+     */
+    private int getMaxSubtractRounds(int decodeMode) {
+        if (decodeMode == FT8Common.FT4_MODE) {
+            return 1;
+        }
+        return 2;
+    }
+
+    /**
+     * 判断消息是否允许进入 subtract 列表
+     * 普通解码可略宽松，深解后更严格，避免误码扩散
+     */
+    private boolean shouldAddToSubtractList(Ft8Message msg, boolean isDeep, int decodeMode) {
+        if (msg == null || !msg.isValid) {
+            return false;
+        }
+
+        if (!isDeep) {
+            if (decodeMode == FT8Common.FT4_MODE) {
+                return msg.snr >= -21 && msg.score >= 12;
+            } else {
+                return msg.snr >= -28 && msg.score >= 10;
+            }
+        }
+
+        if (decodeMode == FT8Common.FT4_MODE) {
+            return msg.snr >= -19 && msg.score >= 14;
+        } else {
+            return msg.snr >= -26 && msg.score >= 12;
+        }
+    }
+
+    /**
+     * 当前轮结果中是否存在足够高质量的消息可继续 subtract
+     */
+    private boolean hasQualifiedSubtractMsg(ArrayList<Ft8Message> msgs, int decodeMode) {
+        if (msgs == null || msgs.size() == 0) {
+            return false;
+        }
+
+        for (Ft8Message msg : msgs) {
+            if (shouldAddToSubtractList(msg, true, decodeMode)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 启动一次解码流程
+     *
+     * @param utc        当前UTC
+     * @param voiceData  当前周期的音频数据
+     * @param decodeMode 本轮固定模式，避免线程运行过程中模式切换导致同一轮解码混用 FT8 / FT4
+     */
+    public void decodeFt8(long utc, float[] voiceData, int decodeMode) {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 long time = System.currentTimeMillis();
+                final int slotTimeM = FT8Common.getSlotTimeM(decodeMode);
 
                 if (onFt8Listen != null) {
                     onFt8Listen.beforeListen(utc);
                 }
 
-                boolean isFt8 = GeneralVariables.isFt8Mode();
+                boolean isFt8 = (decodeMode == FT8Common.FT8_MODE);
 
-                // 初始化解码器，按当前模式选择 FT8 / FT4
+                // 初始化解码器，按本轮固定模式选择 FT8 / FT4
                 long ft8Decoder = InitDecoder(
                         utc,
                         FT8Common.SAMPLE_RATE,
@@ -153,7 +222,7 @@ public class FT8SignalListener {
                 DecoderMonitorPressFloat(voiceData, ft8Decoder);
 
                 ArrayList<Ft8Message> allMsg = new ArrayList<>();
-                ArrayList<Ft8Message> msgs = runDecode(ft8Decoder, utc, false);
+                ArrayList<Ft8Message> msgs = runDecode(ft8Decoder, utc, false, decodeMode);
                 addMsgToList(allMsg, msgs);
 
                 timeSec = System.currentTimeMillis() - time;
@@ -163,15 +232,15 @@ public class FT8SignalListener {
                     onFt8Listen.afterDecode(
                             utc,
                             averageOffset(allMsg),
-                            UtcTimer.sequential(utc, GeneralVariables.getCurrentSlotTimeM()),
+                            UtcTimer.sequential(utc, slotTimeM),
                             msgs,
                             false
                     );
                 }
 
-                // FT4 初期不进入 subtractSignal 深度减码
-                if (GeneralVariables.deepDecodeMode && GeneralVariables.isFt8Mode()) {
-                    msgs = runDecode(ft8Decoder, utc, true);
+                // FT8 / FT4 都允许进入深度解码，但使用有限轮重解
+                if (GeneralVariables.deepDecodeMode && ReBuildSignal.supportSubtract(decodeMode)) {
+                    msgs = runDecode(ft8Decoder, utc, true, decodeMode);
                     addMsgToList(allMsg, msgs);
 
                     timeSec = System.currentTimeMillis() - time;
@@ -181,21 +250,32 @@ public class FT8SignalListener {
                         onFt8Listen.afterDecode(
                                 utc,
                                 averageOffset(allMsg),
-                                UtcTimer.sequential(utc, GeneralVariables.getCurrentSlotTimeM()),
+                                UtcTimer.sequential(utc, slotTimeM),
                                 msgs,
                                 true
                         );
                     }
 
-                    do {
+                    int maxRounds = getMaxSubtractRounds(decodeMode);
+                    int round = 0;
+
+                    while (round < maxRounds) {
                         if (timeSec > FT8Common.DEEP_DECODE_TIMEOUT) {
                             break;
                         }
 
-                        // FT8 深度减码
-                        ReBuildSignal.subtractSignal(ft8Decoder, a91List);
+                        if (!hasQualifiedSubtractMsg(msgs, decodeMode)) {
+                            break;
+                        }
 
-                        msgs = runDecode(ft8Decoder, utc, true);
+                        // 按本轮固定模式做 subtract，避免中途切模式
+                        ReBuildSignal.subtractSignal(ft8Decoder, a91List, decodeMode);
+
+                        msgs = runDecode(ft8Decoder, utc, true, decodeMode);
+                        if (msgs.size() == 0) {
+                            break;
+                        }
+
                         addMsgToList(allMsg, msgs);
 
                         timeSec = System.currentTimeMillis() - time;
@@ -205,34 +285,40 @@ public class FT8SignalListener {
                             onFt8Listen.afterDecode(
                                     utc,
                                     averageOffset(allMsg),
-                                    UtcTimer.sequential(utc, GeneralVariables.getCurrentSlotTimeM()),
+                                    UtcTimer.sequential(utc, slotTimeM),
                                     msgs,
                                     true
                             );
                         }
 
-                    } while (msgs.size() > 0);
+                        round++;
+                    }
                 }
 
                 DeleteDecoder(ft8Decoder);
 
                 Log.d(TAG, String.format("解码耗时:%d毫秒,mode=%s",
                         System.currentTimeMillis() - time,
-                        FT8Common.modeToString(GeneralVariables.getSignalMode())));
+                        FT8Common.modeToString(decodeMode)));
             }
         }).start();
     }
 
     /**
      * 执行单轮同步与解码
+     *
+     * @param ft8Decoder 解码器
+     * @param utc        UTC
+     * @param isDeep     是否深度解码
+     * @param decodeMode 本轮固定模式
      */
-    private ArrayList<Ft8Message> runDecode(long ft8Decoder, long utc, boolean isDeep) {
+    private ArrayList<Ft8Message> runDecode(long ft8Decoder, long utc, boolean isDeep, int decodeMode) {
         ArrayList<Ft8Message> ft8Messages = new ArrayList<>();
-        Ft8Message ft8Message = new Ft8Message(GeneralVariables.getSignalMode());
+        Ft8Message ft8Message = new Ft8Message(decodeMode);
 
         ft8Message.utcTime = utc;
         ft8Message.band = GeneralVariables.band;
-        ft8Message.signalFormat = GeneralVariables.getSignalMode();
+        ft8Message.signalFormat = decodeMode;
 
         a91List.clear();
 
@@ -243,15 +329,12 @@ public class FT8SignalListener {
 
         for (int idx = 0; idx < num_candidates; ++idx) {
             try {
-                ft8Message.signalFormat = GeneralVariables.getSignalMode();
+                ft8Message.signalFormat = decodeMode;
 
                 if (DecoderFt8Analysis(idx, ft8Decoder, ft8Message)) {
                     if (ft8Message.isValid) {
                         Ft8Message msg = new Ft8Message(ft8Message);
-                        msg.signalFormat = GeneralVariables.getSignalMode();
-
-                        byte[] a91 = DecoderGetA91(ft8Decoder);
-                        a91List.add(a91, ft8Message.freq_hz, ft8Message.time_sec);
+                        msg.signalFormat = decodeMode;
 
                         if (checkMessageSame(ft8Messages, msg)) {
                             continue;
@@ -259,6 +342,11 @@ public class FT8SignalListener {
 
                         msg.isWeakSignal = isDeep;//是不是弱信号
                         ft8Messages.add(msg);
+
+                        if (shouldAddToSubtractList(msg, isDeep, decodeMode)) {
+                            byte[] a91 = DecoderGetA91(ft8Decoder);
+                            a91List.add(a91, msg.freq_hz, msg.time_sec, msg.snr, msg.score, decodeMode);
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -271,9 +359,6 @@ public class FT8SignalListener {
 
     /**
      * 计算平均时间偏移值
-     *
-     * @param messages 消息列表
-     * @return 偏移值
      */
     private float averageOffset(ArrayList<Ft8Message> messages) {
         if (messages.size() == 0) return 0f;
@@ -286,9 +371,6 @@ public class FT8SignalListener {
 
     /**
      * 把消息添加到列表中
-     *
-     * @param allMsg 消息列表
-     * @param newMsg 新的消息
      */
     private void addMsgToList(ArrayList<Ft8Message> allMsg, ArrayList<Ft8Message> newMsg) {
         for (int i = newMsg.size() - 1; i >= 0; i--) {
@@ -303,10 +385,6 @@ public class FT8SignalListener {
     /**
      * 检查消息列表里同样的内容是否存在
      * FT8 / FT4 视为不同模式，不互相去重
-     *
-     * @param ft8Messages 消息列表
-     * @param ft8Message  消息
-     * @return boolean
      */
     private boolean checkMessageSame(ArrayList<Ft8Message> ft8Messages, Ft8Message ft8Message) {
         for (Ft8Message msg : ft8Messages) {

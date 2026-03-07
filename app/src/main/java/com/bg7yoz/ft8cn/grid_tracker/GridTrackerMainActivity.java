@@ -2,6 +2,11 @@ package com.bg7yoz.ft8cn.grid_tracker;
 /**
  * 网格追踪的主窗口。
  *
+ * 已修改：
+ * 1. 顶部时间条支持 FT8 / FT4 周期切换
+ * 2. 顶部时间条改为连续刷新，而不是步进刷新
+ * 3. 发射时隙高亮按当前模式实时判断
+ *
  * @author BGY70Z
  * @date 2023-03-20
  */
@@ -77,27 +82,36 @@ public class GridTrackerMainActivity extends AppCompatActivity {
     private MutableLiveData<ArrayList<QSLRecordStr>> qslRecordList = new MutableLiveData<>();
     public static final int DRAW_LINE = 1;
 
+    /**
+     * 连续刷新顶部进度条
+     */
+    private final Handler progressHandler = new Handler(Looper.getMainLooper());
+    private final Runnable progressRunnable = new Runnable() {
+        @Override
+        public void run() {
+            updateUtcProgressBarSmooth();
+            progressHandler.postDelayed(this, 40); // 约25fps
+        }
+    };
+
     @SuppressLint("NotifyDataSetChanged")
     protected void doAfterCreate() {
-        //设置消息列表
         callingListAdapter.notifyDataSetChanged();
         callMessagesRecyclerView.scrollToPosition(callingListAdapter.getItemCount() - 1);
 
-        setTipsRadioGroupClickerListener();//显示模式Group radio动作
-        setShowTipsSwitchClickerListener();//显示提示开关动作
+        setTipsRadioGroupClickerListener();
+        setShowTipsSwitchClickerListener();
         readConfig();
 
-        //读取调用本activity的参数，如果不为空，说明要画参数中的消息
-        //画在日志界面中被选择的消息
         Intent intentGet = getIntent();
         qlsRecorder = (QSLRecordStr) intentGet.getSerializableExtra("qslList");
         if (qlsRecorder != null) {
-            GridOsmMapView.GridPolyLine line = drawMessage(qlsRecorder);//在地图上画每一个消息
+            GridOsmMapView.GridPolyLine line = drawMessage(qlsRecorder);
             if (line != null) {
                 line.showInfoWindow();
             }
         }
-        //画日志界面查询出的全部消息
+
         String queryKey = intentGet.getStringExtra("qslAll");
         int queryFilter = intentGet.getIntExtra("queryFilter", 0);
         if (queryKey != null) {
@@ -173,7 +187,6 @@ public class GridTrackerMainActivity extends AppCompatActivity {
             }
         });
 
-        //设置消息列表滑动，用于快速呼叫
         initRecyclerViewAction();
 
         //观察解码数量
@@ -201,6 +214,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                 if (mainViewModel.currentMessages == null) return;
                 ArrayList<Ft8Message> tempMsg = new ArrayList<>(mainViewModel.currentMessages);
                 callingListAdapter.notifyDataSetChanged();
+
                 if (callMessagesRecyclerView.computeVerticalScrollRange()
                         - callMessagesRecyclerView.computeVerticalScrollExtent()
                         - callMessagesRecyclerView.computeVerticalScrollOffset() < 500) {
@@ -214,10 +228,8 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                                 getString(R.string.decoding_takes_milliseconds)
                                 , mainViewModel.ft8SignalListener.decodeTimeSec.getValue())));
 
-                //画电台之间的连线
-                //对CQ的电台打点
                 for (Ft8Message msg : tempMsg) {
-                    drawMessage(msg);//在地图上画每一个消息
+                    drawMessage(msg);
                 }
                 gridOsmMapView.showInfoWindows();
             }
@@ -250,6 +262,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                         } else {
                             binding.transmittingLayout.setVisibility(View.GONE);
                         }
+                        updateUtcProgressBarSmooth();
                     }
                 });
 
@@ -262,23 +275,14 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                     }
                 });
 
-        //观察时钟的变化，显示进度条（支持 FT8 / FT4）
+        /**
+         * 原来的 timerSec.observe 只保留为触发刷新，
+         * 实际进度显示由连续刷新任务负责。
+         */
         mainViewModel.timerSec.observe(this, new Observer<Long>() {
             @Override
             public void onChanged(Long aLong) {
-                int slotTimeM = GeneralVariables.getCurrentSlotTimeM();       // 0.1秒单位
-                int slotTimeMs = GeneralVariables.getCurrentSlotTimeMillisecond(); // 毫秒
-
-                if (mainViewModel.ft8TransmitSignal.sequential
-                        == UtcTimer.getNowSequential(slotTimeM)
-                        && mainViewModel.ft8TransmitSignal.isActivated()) {
-                    binding.utcProgressBar.setBackgroundColor(getColor(R.color.calling_list_isMyCall_color));
-                } else {
-                    binding.utcProgressBar.setBackgroundColor(getColor(R.color.progresss_bar_back_color));
-                }
-
-                binding.utcProgressBar.setMax(slotTimeM);
-                binding.utcProgressBar.setProgress((int) ((aLong % slotTimeMs) / 100));
+                updateUtcProgressBarSmooth();
             }
         });
 
@@ -286,10 +290,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         GeneralVariables.mutableSignalMode.observe(this, new Observer<Integer>() {
             @Override
             public void onChanged(Integer integer) {
-                int slotTimeM = GeneralVariables.getCurrentSlotTimeM();
-                int slotTimeMs = GeneralVariables.getCurrentSlotTimeMillisecond();
-                binding.utcProgressBar.setMax(slotTimeM);
-                binding.utcProgressBar.setProgress((int) ((UtcTimer.getSystemTime() % slotTimeMs) / 100));
+                updateUtcProgressBarSmooth();
             }
         });
 
@@ -345,7 +346,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
             @Override
             public void onChanged(ArrayList<QSLRecordStr> qslRecordStrs) {
                 for (QSLRecordStr record : qslRecordStrs) {
-                    drawMessage(record);//在地图上画每一个消息
+                    drawMessage(record);
                 }
                 gridOsmMapView.mapUpdate();
             }
@@ -361,6 +362,46 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         }, 1000);
 
         setContentView(binding.getRoot());
+
+        // 启动顶部连续进度刷新
+        progressHandler.removeCallbacks(progressRunnable);
+        progressHandler.post(progressRunnable);
+    }
+
+    /**
+     * 连续刷新顶部时间条
+     */
+    private void updateUtcProgressBarSmooth() {
+        if (binding == null || mainViewModel == null) {
+            return;
+        }
+
+        int slotTimeM = GeneralVariables.getCurrentSlotTimeM();
+        int slotTimeMs = GeneralVariables.getCurrentSlotTimeMillisecond();
+        long nowUtc = UtcTimer.getSystemTime();
+
+        if (slotTimeMs <= 0) {
+            return;
+        }
+
+        boolean isMyTxSlot = mainViewModel.ft8TransmitSignal.sequential
+                == UtcTimer.getNowSequential(slotTimeM)
+                && mainViewModel.ft8TransmitSignal.isActivated();
+
+        if (isMyTxSlot) {
+            binding.utcProgressBar.setBackgroundColor(getColor(R.color.calling_list_isMyCall_color));
+        } else {
+            binding.utcProgressBar.setBackgroundColor(getColor(R.color.progresss_bar_back_color));
+        }
+
+        final int progressMax = 1000;
+        int progress = (int) ((nowUtc % slotTimeMs) * progressMax / (float) slotTimeMs);
+
+        if (progress < 0) progress = 0;
+        if (progress > progressMax) progress = progressMax;
+
+        binding.utcProgressBar.setMax(progressMax);
+        binding.utcProgressBar.setProgress(progress);
     }
 
     /**
@@ -581,7 +622,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                             mainViewModel.ft8TransmitSignal.restTransmitting();
                         }
                         mainViewModel.ft8TransmitSignal.setActivated(!mainViewModel.ft8TransmitSignal.isActivated());
-                        GeneralVariables.resetLaunchSupervision();//复位自动监管
+                        GeneralVariables.resetLaunchSupervision();
                     }
                 });
 
@@ -638,7 +679,6 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                     transButton.setImageResource(R.drawable.ic_baseline_send_red_48);
                     transButton.setAnimation(AnimationUtils.loadAnimation(getBaseContext(), R.anim.view_blink));
                 } else {
-                    //录音对象也要处于启动状态才可以有发射的状态
                     if (mainViewModel.ft8TransmitSignal.isActivated() && mainViewModel.hamRecorder.isRunning()) {
                         transButton.setImageResource(R.drawable.ic_baseline_send_white_48);
                     } else {
@@ -646,9 +686,11 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                     }
                     transButton.setAnimation(null);
                 }
+
+                updateUtcProgressBarSmooth();
             }
         };
-        //显示发射状态
+
         mainViewModel.ft8TransmitSignal.mutableIsTransmitting.observe(this, transmittingObserver);
         mainViewModel.ft8TransmitSignal.mutableIsActivated.observe(this, transmittingObserver);
 
@@ -719,14 +761,14 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         mainViewModel.addFollowCallsign(message.getCallsignFrom());
         if (!mainViewModel.ft8TransmitSignal.isActivated()) {
             mainViewModel.ft8TransmitSignal.setActivated(true);
-            GeneralVariables.transmitMessages.add(message);//把消息添加到关注列表中
+            GeneralVariables.transmitMessages.add(message);
         }
-        //呼叫发启者
+
         mainViewModel.ft8TransmitSignal.setTransmit(message.getFromCallTransmitCallsign()
                 , 1, message.extraInfo);
         mainViewModel.ft8TransmitSignal.transmitNow();
 
-        GeneralVariables.resetLaunchSupervision();//复位自动监管
+        GeneralVariables.resetLaunchSupervision();
     }
 
     /**
@@ -747,7 +789,6 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                 if (direction == ItemTouchHelper.START) {
                     Ft8Message message = callingListAdapter.getMessageByViewHolder(viewHolder);
                     if (message != null) {
-                        //呼叫的目标不能是自己
                         if (!message.getCallsignFrom().equals("<...>")
                                 && !GeneralVariables.checkIsMyCallsign(message.getCallsignFrom())
                                 && !(message.i3 == 0 && message.n3 == 0)) {
@@ -756,7 +797,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                     }
                     callingListAdapter.notifyDataSetChanged();
                 }
-                if (direction == ItemTouchHelper.END) {//删除
+                if (direction == ItemTouchHelper.END) {
                     callingListAdapter.deleteMessage(viewHolder.getAdapterPosition());
                     callingListAdapter.notifyItemRemoved(viewHolder.getAdapterPosition());
                 }
@@ -773,7 +814,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                 if (message == null) {
                     return;
                 }
-                if (message.getCallsignFrom().equals("<...>")) {//如果属于不能呼叫的消息，就不显示图标
+                if (message.getCallsignFrom().equals("<...>")) {
                     return;
                 }
                 Drawable icon;
@@ -826,9 +867,9 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         Ft8Message ft8Message = callingListAdapter.getMessageByPosition(position);
         if (ft8Message == null) return super.onContextItemSelected(item);
 
-        GeneralVariables.resetLaunchSupervision();//复位自动监管
+        GeneralVariables.resetLaunchSupervision();
         switch (item.getItemId()) {
-            case 1://时序与发送者相反
+            case 1:
                 Log.d(TAG, "呼叫：" + ft8Message.getCallsignTo());
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
@@ -843,14 +884,13 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                 doCallNow(ft8Message);
                 break;
 
-            case 4://回复
+            case 4:
                 Log.d(TAG, "回复：" + ft8Message.getCallsignFrom());
                 mainViewModel.addFollowCallsign(ft8Message.getCallsignFrom());
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
-                    GeneralVariables.transmitMessages.add(ft8Message);//把消息添加到关注列表中
+                    GeneralVariables.transmitMessages.add(ft8Message);
                 }
-                //呼叫发启者
                 mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getFromCallTransmitCallsign()
                         , -1, ft8Message.extraInfo);
                 mainViewModel.ft8TransmitSignal.transmitNow();
@@ -864,11 +904,20 @@ public class GridTrackerMainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         binding.osmMap.onResume();
+        progressHandler.removeCallbacks(progressRunnable);
+        progressHandler.post(progressRunnable);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         binding.osmMap.onPause();
+        progressHandler.removeCallbacks(progressRunnable);
+    }
+
+    @Override
+    protected void onDestroy() {
+        progressHandler.removeCallbacks(progressRunnable);
+        super.onDestroy();
     }
 }

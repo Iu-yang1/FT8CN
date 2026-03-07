@@ -10,7 +10,9 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
 import com.bg7yoz.ft8cn.database.ControlMode;
+import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
+import com.bg7yoz.ft8cn.ft8transmit.GenerateFTx;
 import com.bg7yoz.ft8cn.ui.ToastMessage;
 
 import java.util.Timer;
@@ -253,20 +255,31 @@ public class XieGu6100Rig extends BaseRig {
     }
 
     @Override
-    public void sendWaveData(Ft8Message message) {//发送音频数据到电台，用于网络方式
-        if (getConnector() != null) {//把生成的具体音频数据传递到Connector，
-            //判断如果是ft8cns，就传输a19数据包
-            if (GeneralVariables.instructionSet == InstructionSet.XIEGU_6100_FT8CNS) {
-                //Log.e(TAG,"generate A91");
-                getConnector().sendFt8A91(GenerateFT8.generateA91(message, true)
-                        , GeneralVariables.getBaseFrequency());
-            } else {//否则正常传输音频数据
-                float[] data = GenerateFT8.generateFt8(message, GeneralVariables.getBaseFrequency()
-                        , 12000);//此处icom电台发射音频的采样率是12000
+    public void sendWaveData(Ft8Message message) {
+        if (getConnector() != null) {
+            int txMode = message != null ? message.signalFormat : GeneralVariables.getSignalMode();
+
+            // X6100 FT8CNS 设备专有 A91 通道目前只保留给 FT8。
+            // FT4 一律走普通 PCM 音频路径，避免设备端仍按 FT8 调制。
+            if (GeneralVariables.instructionSet == InstructionSet.XIEGU_6100_FT8CNS
+                    && txMode == FT8Common.FT8_MODE) {
+                getConnector().sendFt8A91(
+                        GenerateFT8.generateA91(message, true),
+                        GeneralVariables.getBaseFrequency()
+                );
+            } else {
+                float[] data = GenerateFTx.generateFtX(
+                        message,
+                        GeneralVariables.getBaseFrequency(),
+                        12000,
+                        txMode
+                );
+
                 if (data == null) {
                     setPTT(false);
                     return;
                 }
+
                 getConnector().sendWaveData(data);
             }
         }

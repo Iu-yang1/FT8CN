@@ -1,7 +1,7 @@
 package com.bg7yoz.ft8cn;
 /**
- * 常用变量。关于mainContext有内存泄漏的风险，以后解决。
- * mainContext
+ * 常用变量。
+ * 1. mainContext 改为保存 ApplicationContext，降低内存泄露风险
  */
 
 import android.annotation.SuppressLint;
@@ -28,24 +28,39 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-
 public class GeneralVariables {
     private static final String TAG = "GeneralVariables";
 
-    public static String VERSION = BuildConfig.VERSION_NAME;//版本号"0.62（Beta 4）";
-    public static String BUILD_DATE = BuildConfig.apkBuildTime;//编译的时间
+    public static String VERSION = BuildConfig.VERSION_NAME;
+    public static String BUILD_DATE = BuildConfig.apkBuildTime;
 
-    public static int MESSAGE_COUNT = 3000;//消息的最大缓存数量
-    public static boolean saveSWLMessage = false;//保存解码消息开关
-    public static boolean saveSWL_QSO = false;//保存解码消息消息中的QSO开关
-    public static boolean enableCloudlog = false;//是否启用Cloudlog自动同步
-    public static boolean enableQRZ = false;//是否启用qrz自动同步
+    public static int MESSAGE_COUNT = 3000;
+    public static boolean saveSWLMessage = false;
+    public static boolean saveSWL_QSO = false;
+    public static boolean enableCloudlog = false;
+    public static boolean enableQRZ = false;
+
+    /**
+     * PSKreporter
+     */
+
+    /**
+     * PSKReporter 配置
+     * enablePskReporter: 前端设置页开关
+     * pskReporterHost / Port: 默认官方接收地址
+     * pskReporterFlushIntervalMs: sender tickle 周期，默认 30 秒
+     */
+    public static boolean enablePskReporter = false;
+    public static String pskReporterHost = "report.pskreporter.info";
+    public static int pskReporterPort = 4739;
+    public static String pskReporterAntennaInfo = "";
+    public static int pskReporterFlushIntervalMs = 30000;
 
     /**
      * 是否开启深度解码
      * 建议：FT8 可开启，FT4 在 subtractSignal 完全适配前建议关闭
      */
-    public static boolean deepDecodeMode = false;
+    public static boolean deepDecodeMode = true;
 
     /**
      * 当前数字模式
@@ -60,24 +75,31 @@ public class GeneralVariables {
     public static MutableLiveData<Integer> mutableSignalMode =
             new MutableLiveData<>(FT8Common.FT8_MODE);
 
-    public static boolean audioOutput32Bit = true;//音频输出类型true=float,false=int16
-    public static int audioSampleRate = 12000;//发射音频的采样率
+    public static boolean audioOutput32Bit = true;
+    public static int audioSampleRate = 12000;
 
     public static MutableLiveData<Float> mutableVolumePercent = new MutableLiveData<>();
-    public static float volumePercent = 0.5f;//播放音频的音量,是百分比
+    public static float volumePercent = 0.5f;
 
-    public static int flexMaxRfPower = 10;//flex电台的最大发射功率
-    public static int flexMaxTunePower = 10;//flex电台的最大调谐功率
+    public static int flexMaxRfPower = 10;
+    public static int flexMaxTunePower = 10;
 
+    /**
+     * 使用 ApplicationContext，降低持有 Activity Context 的风险
+     */
     private Context mainContext;
     public static CallsignDatabase callsignDatabase = null;
 
     public void setMainContext(Context context) {
-        mainContext = context;
+        if (context == null) {
+            mainContext = null;
+        } else {
+            mainContext = context.getApplicationContext();
+        }
     }
 
-    public static boolean isChina = true;//语言是不是中国
-    public static boolean isTraditionalChinese = true;//语言是不是繁体中文
+    public static boolean isChina = true;
+    public static boolean isTraditionalChinese = true;
 
     //各已经通联的分区列表
     public static final Map<String, String> dxccMap = new HashMap<>();
@@ -85,6 +107,59 @@ public class GeneralVariables {
     public static final Map<Integer, Integer> ituMap = new HashMap<>();
 
     private static final Map<String, Integer> excludedCallsigns = new HashMap<>();
+
+    /**
+     * NTP 配置与结果
+     */
+    public static final String[] NTP_SERVER_ITEMS = new String[]{
+            "自动",
+            "time.windows.com",
+            "time.google.com",
+            "pool.ntp.org",
+            "ntp.aliyun.com",
+            "cn.pool.ntp.org",
+            "自定义"
+    };
+
+    public static final int NTP_SERVER_INDEX_AUTO = 0;
+    public static final int NTP_SERVER_INDEX_CUSTOM = NTP_SERVER_ITEMS.length - 1;
+
+    /**
+     * 是否启用 NTP 同步
+     */
+    public static boolean ntpEnable = true;
+
+    /**
+     * 当前服务器选择下标
+     * 0=自动
+     * 1=time.windows.com
+     * 2=time.google.com
+     * 3=pool.ntp.org
+     * 4=ntp.aliyun.com
+     * 5=cn.pool.ntp.org
+     * 6=自定义
+     */
+    public static int ntpServerIndex = NTP_SERVER_INDEX_AUTO;
+
+    /**
+     * 自定义服务器
+     */
+    public static String ntpCustomServer = "";
+
+    /**
+     * 最近一次同步实际使用的服务器
+     */
+    public static String lastNtpServer = "";
+
+    /**
+     * 最近一次同步结果
+     */
+    public static int lastNtpOffset = 0;          // 真实 offset(ms)
+    public static int lastNtpAlignedOffset = 0;   // 内部对齐后 offset(ms)
+    public static long lastNtpDelay = -1;         // round-trip delay(ms)
+    public static long lastNtpSyncTime = 0;       // 本地同步完成时间戳
+
+    public static MutableLiveData<Integer> mutableNtpConfigChanged = new MutableLiveData<>();
 
     /**
      * 添加排除的字头
@@ -110,6 +185,7 @@ public class GeneralVariables {
      * @return 是否
      */
     public static synchronized boolean checkIsExcludeCallsign(String callsign) {
+        if (callsign == null) return false;
         Iterator<String> iterator = excludedCallsigns.keySet().iterator();
         while (iterator.hasNext()) {
             String key = iterator.next();
@@ -144,7 +220,6 @@ public class GeneralVariables {
     //通联记录列表，包括成功与不成功的
     public static QslRecordList qslRecordList = new QslRecordList();
 
-    //此处有内存泄露警告，但Application Context不应该会内存泄露，所以注释掉
     @SuppressLint("StaticFieldLeak")
     private static GeneralVariables generalVariables = null;
 
@@ -160,26 +235,26 @@ public class GeneralVariables {
     }
 
     public static MutableLiveData<String> mutableDebugMessage = new MutableLiveData<>();
-    public static int QUERY_FREQ_TIMEOUT = 2000;//轮询频率变化的时间间隔。2秒
-    public static int START_QUERY_FREQ_DELAY = 2000;//开始轮询频率的时间延迟
+    public static int QUERY_FREQ_TIMEOUT = 2000;
+    public static int START_QUERY_FREQ_DELAY = 2000;
 
-    public static final int DEFAULT_LAUNCH_SUPERVISION = 10 * 60 * 1000;//发射监管默认值,10分钟
+    public static final int DEFAULT_LAUNCH_SUPERVISION = 10 * 60 * 1000;
     private static String myMaidenheadGrid = "";
     public static MutableLiveData<String> mutableMyMaidenheadGrid = new MutableLiveData<>();
 
-    public static int connectMode = ConnectMode.USB_CABLE;//连接方式USB==0,BLUE_TOOTH==1
+    public static int connectMode = ConnectMode.USB_CABLE;
 
     //用于记录呼号于网格的对应关系
     public static final Map<String, String> callsignAndGrids = new ConcurrentHashMap<>();
 
-    public static String myCallsign = "";//我的呼号
-    public static String toModifier = "";//呼叫的修饰符
-    private static float baseFrequency = 1000;//声音频率
+    public static String myCallsign = "";
+    public static String toModifier = "";
+    private static float baseFrequency = 1000;
 
-    public static boolean simpleCallItemMode = false;//紧凑型消息
+    public static boolean simpleCallItemMode = false;
 
-    public static boolean swr_switch_on = true;//swr告警开关
-    public static boolean alc_switch_on = true;//alc告警开关
+    public static boolean swr_switch_on = true;
+    public static boolean alc_switch_on = true;
 
     public static MutableLiveData<Float> mutableBaseFrequency = new MutableLiveData<>();
 
@@ -189,28 +264,27 @@ public class GeneralVariables {
      */
     public static MutableLiveData<Integer> mutableSignalModeChanged = new MutableLiveData<>();
 
-    public static String cloudlogServerAddress = "";//cloudlog的服务器地址
-    public static String cloudlogApiKey = "";//cloudlog的APIKEY
-    public static String cloudlogStationID = "";//cloudlog的站点ID
-    public static String qrzApiKey = ""; //qrz的key
-    public static boolean synFrequency = false;//同频发射
-    public static int transmitDelay = 500;//发射延迟时间，这个时间也是给上一个周期的解码时间
-    public static int pttDelay = 100;//PTT的响应时间，在给电台PTT指令后，一般电台会有一个响应时间，此处默认是100毫秒
-    public static int civAddress = 0xa4;//civ地址
-    public static int baudRate = 19200;//波特率
-    public static long band = 14074000;//载波频段
-    public static int serialDataBits = 8;//默认是8
-    public static int serialParity = 0;//UsbSerialPort.PARITY_NONE默认是0，即：无
-    public static int serialStopBits = 1;//停止位的对应关系：1=1,2=3,3=1.5
-    public static int instructionSet = 0;//指令集，0:icom，1:yaesu 2 代，2:yaesu 3代。
-    public static int bandListIndex = -1;//电台波段的索引值
-    public static MutableLiveData<Integer> mutableBandChange = new MutableLiveData<>();//波段索引值变化
+    public static String cloudlogServerAddress = "";
+    public static String cloudlogApiKey = "";
+    public static String cloudlogStationID = "";
+    public static String qrzApiKey = "";
+    public static boolean synFrequency = false;
+    public static int transmitDelay = 500;
+    public static int pttDelay = 100;
+    public static int civAddress = 0xa4;
+    public static int baudRate = 19200;
+    public static long band = 14074000;
+    public static int serialDataBits = 8;
+    public static int serialParity = 0;
+    public static int serialStopBits = 1;
+    public static int instructionSet = 0;
+    public static int bandListIndex = -1;
+    public static MutableLiveData<Integer> mutableBandChange = new MutableLiveData<>();
     public static int controlMode = ControlMode.VOX;
     public static int modelNo = 0;
-    public static int launchSupervision = DEFAULT_LAUNCH_SUPERVISION;//发射监管
-    public static long launchSupervisionStart = UtcTimer.getSystemTime();//自动发射的起始时间
-    public static int noReplyLimit = 0;//呼叫无回应次数0==忽略
-
+    public static int launchSupervision = DEFAULT_LAUNCH_SUPERVISION;
+    public static long launchSupervisionStart = UtcTimer.getSystemTime();
+    public static int noReplyLimit = 0;
     public static int noReplyCount = 0;
 
     //下面4个参数是ICOM网络方式连接的参数
@@ -219,14 +293,14 @@ public class GeneralVariables {
     public static String icomUserName = "ic705";
     public static String icomPassword = "";
 
-    public static boolean autoFollowCQ = true;//自动关注CQ
-    public static boolean autoCallFollow = true;//自动呼叫关注的呼号
-    public static ArrayList<String> QSL_Callsign_list = new ArrayList<>();//QSL成功的呼号
-    public static ArrayList<String> QSL_Callsign_list_other_band = new ArrayList<>();//在其它波段QSL成功的呼号
+    public static boolean autoFollowCQ = true;
+    public static boolean autoCallFollow = true;
+    public static ArrayList<String> QSL_Callsign_list = new ArrayList<>();
+    public static ArrayList<String> QSL_Callsign_list_other_band = new ArrayList<>();
 
-    public static final ArrayList<String> followCallsign = new ArrayList<>();//关注的呼号
+    public static final ArrayList<String> followCallsign = new ArrayList<>();
 
-    public static ArrayList<Ft8Message> transmitMessages = new ArrayList<>();//放在呼叫界面，关注的列表
+    public static ArrayList<Ft8Message> transmitMessages = new ArrayList<>();
 
     public static void setMyMaidenheadGrid(String grid) {
         myMaidenheadGrid = grid;
@@ -348,6 +422,62 @@ public class GeneralVariables {
     }
 
     /**
+     * 获取当前实际应使用的 NTP 服务器
+     */
+    public static String getCurrentNtpServer() {
+        if (!ntpEnable) {
+            return "";
+        }
+
+        if (ntpServerIndex == NTP_SERVER_INDEX_CUSTOM) {
+            if (ntpCustomServer != null && ntpCustomServer.trim().length() > 0) {
+                return ntpCustomServer.trim();
+            }
+            return "pool.ntp.org";
+        }
+
+        if (ntpServerIndex <= NTP_SERVER_INDEX_AUTO) {
+            return "time.windows.com";
+        }
+
+        if (ntpServerIndex >= 0 && ntpServerIndex < NTP_SERVER_ITEMS.length) {
+            String server = NTP_SERVER_ITEMS[ntpServerIndex];
+            if (!"自动".equals(server) && !"自定义".equals(server)) {
+                return server;
+            }
+        }
+
+        return "time.windows.com";
+    }
+
+    public static void setNtpEnable(boolean enable) {
+        ntpEnable = enable;
+        mutableNtpConfigChanged.postValue(1);
+    }
+
+    public static void setNtpServerIndex(int index) {
+        if (index < 0 || index >= NTP_SERVER_ITEMS.length) {
+            index = NTP_SERVER_INDEX_AUTO;
+        }
+        ntpServerIndex = index;
+        mutableNtpConfigChanged.postValue(1);
+    }
+
+    public static void setNtpCustomServer(String server) {
+        ntpCustomServer = server == null ? "" : server.trim();
+        mutableNtpConfigChanged.postValue(1);
+    }
+
+    public static void updateNtpSyncResult(String server, int realOffset, int alignedOffset,
+                                           long roundTripDelay, long syncTime) {
+        lastNtpServer = server == null ? "" : server;
+        lastNtpOffset = realOffset;
+        lastNtpAlignedOffset = alignedOffset;
+        lastNtpDelay = roundTripDelay;
+        lastNtpSyncTime = syncTime;
+    }
+
+    /**
      * 查有没有通联成功的呼号
      *
      * @param callsign 呼号
@@ -374,6 +504,7 @@ public class GeneralVariables {
      * @return boolean
      */
     static public boolean checkIsMyCallsign(String callsign) {
+        if (callsign == null) return false;
         if (GeneralVariables.myCallsign.length() == 0) return false;
         String temp = getShortCallsign(GeneralVariables.myCallsign);
         return callsign.contains(temp);
@@ -385,6 +516,7 @@ public class GeneralVariables {
      * @return 呼号
      */
     static public String getShortCallsign(String callsign) {
+        if (callsign == null) return "";
         if (callsign.contains("/")) {
             String[] temp = callsign.split("/");
             int max = 0;
@@ -446,7 +578,7 @@ public class GeneralVariables {
     }
 
     public static boolean isLaunchSupervisionTimeout() {
-        if (launchSupervision == 0) return false;//0是不监管
+        if (launchSupervision == 0) return false;
         return launchSupervisionCount() > launchSupervision;
     }
 
@@ -457,6 +589,7 @@ public class GeneralVariables {
      * @return 返回消息序号
      */
     public static int checkFunOrderByExtraInfo(String extraInfo) {
+        if (extraInfo == null) return -1;
         if (checkFun5(extraInfo)) return 5;
         if (checkFun4(extraInfo)) return 4;
         if (checkFun3(extraInfo)) return 3;
@@ -478,12 +611,14 @@ public class GeneralVariables {
 
     //是不是网格报告
     public static boolean checkFun1(String extraInfo) {
+        if (extraInfo == null) return false;
         return (extraInfo.trim().matches("[A-Z][A-Z][0-9][0-9]") && !extraInfo.equals("RR73"))
                 || (extraInfo.trim().length() == 0);
     }
 
     //是不是信号报告,如-10
     public static boolean checkFun2(String extraInfo) {
+        if (extraInfo == null) return false;
         if (extraInfo.trim().length() < 2) {
             return false;
         }
@@ -496,6 +631,7 @@ public class GeneralVariables {
 
     //是不是带R的信号报告,如R-10
     public static boolean checkFun3(String extraInfo) {
+        if (extraInfo == null) return false;
         if (extraInfo.trim().length() < 3) {
             return false;
         }
@@ -513,11 +649,13 @@ public class GeneralVariables {
 
     //是不是RRR或RR73值
     public static boolean checkFun4(String extraInfo) {
+        if (extraInfo == null) return false;
         return extraInfo.trim().equals("RR73") || extraInfo.trim().equals("RRR");
     }
 
     //是不是73值
     public static boolean checkFun5(String extraInfo) {
+        if (extraInfo == null) return false;
         return extraInfo.trim().equals("73");
     }
 
@@ -528,6 +666,7 @@ public class GeneralVariables {
      * @return 信号报告值, 没找到是-100
      */
     public static int checkFun2_3(String extraInfo) {
+        if (extraInfo == null) return -100;
         if (extraInfo.equals("73")) return -100;
         if (extraInfo.matches("[R]?[+-]?[0-9]{1,2}")) {
             try {
@@ -546,6 +685,7 @@ public class GeneralVariables {
      * @return 信号报告
      */
     public static boolean checkFun1_6(String extraInfo) {
+        if (extraInfo == null) return false;
         return extraInfo.trim().matches("[A-Z][A-Z][0-9][0-9]")
                 && !extraInfo.trim().equals("RR73");
     }
@@ -557,6 +697,7 @@ public class GeneralVariables {
      * @return 是否
      */
     public static boolean checkFun4_5(String extraInfo) {
+        if (extraInfo == null) return false;
         return extraInfo.trim().equals("RR73")
                 || extraInfo.trim().equals("RRR")
                 || extraInfo.trim().equals("73");
@@ -637,12 +778,13 @@ public class GeneralVariables {
     public static MutableLiveData<String> mutableNewGrid = new MutableLiveData<>();
 
     /**
-     * 把呼号与网格的对应关系添加到呼号--网格对应表，
+     * 把呼号与网格的对应关系添加到呼号--网格对应表
      *
      * @param callsign 呼号
      * @param grid     网格
      */
     public static void addCallsignAndGrid(String callsign, String grid) {
+        if (callsign == null || grid == null) return;
         if (grid.length() >= 4) {
             callsignAndGrids.put(callsign, grid);
             mutableNewGrid.postValue(grid);
@@ -651,7 +793,6 @@ public class GeneralVariables {
 
     /**
      * 呼号--网格对应表。以呼号查网格
-     * 如果内存中没有，应当到数据库中查一下。
      *
      * @param callsign 呼号
      * @return 是否有对应的网格
