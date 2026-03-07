@@ -4,6 +4,7 @@ package com.bg7yoz.ft8cn;
  * 已修改：
  * 1. 顶部时间条支持 FT8 / FT4 周期切换
  * 2. 发射时序高亮按当前模式判断
+ * 3. 顶部时间条改为连续刷新，而不是步进刷新
  *
  * @author BG7YOZ
  * @date 2022.5.6
@@ -24,6 +25,8 @@ import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
@@ -88,6 +91,18 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int PERMISSION_REQUEST = 1;
 
+    /**
+     * 连续刷新顶部进度条
+     */
+    private final Handler progressHandler = new Handler(Looper.getMainLooper());
+    private final Runnable progressRunnable = new Runnable() {
+        @Override
+        public void run() {
+            updateUtcProgressBarSmooth();
+            progressHandler.postDelayed(this, 40); // 约25fps，足够顺滑
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
 
@@ -104,6 +119,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         checkPermission();
+
         //全屏
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN
                 , WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -111,6 +127,7 @@ public class MainActivity extends AppCompatActivity {
         //禁止休眠
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                 , WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         super.onCreate(savedInstanceState);
         GeneralVariables.getInstance().setMainContext(getApplicationContext());
 
@@ -145,6 +162,7 @@ public class MainActivity extends AppCompatActivity {
                 binding.debugMessageTextView.setText(s);
             }
         });
+
         binding.debugLayout.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -163,24 +181,14 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        //观察时钟的变化，显示进度条（支持 FT8 / FT4）
+        /**
+         * 原来的 timerSec 观察只作为“触发刷新”的辅助，
+         * 实际显示由 progressRunnable 连续刷新。
+         */
         mainViewModel.timerSec.observe(this, new Observer<Long>() {
             @Override
             public void onChanged(Long aLong) {
-                int slotTimeM = GeneralVariables.getCurrentSlotTimeM(); // 0.1秒单位
-                int slotTimeMs = GeneralVariables.getCurrentSlotTimeMillisecond(); // 毫秒
-
-                if (mainViewModel.ft8TransmitSignal.sequential
-                        == UtcTimer.getNowSequential(slotTimeM)
-                        && mainViewModel.ft8TransmitSignal.isActivated()) {
-                    binding.utcProgressBar.setBackgroundColor(getColor(R.color.calling_list_isMyCall_color));
-                } else {
-                    binding.utcProgressBar.setBackgroundColor(getColor(R.color.progresss_bar_back_color));
-                }
-
-                // 用 0.1 秒作为进度单位，FT8=150，FT4=75
-                binding.utcProgressBar.setMax(slotTimeM);
-                binding.utcProgressBar.setProgress((int) ((aLong % slotTimeMs) / 100));
+                updateUtcProgressBarSmooth();
             }
         });
 
@@ -188,10 +196,7 @@ public class MainActivity extends AppCompatActivity {
         GeneralVariables.mutableSignalMode.observe(this, new Observer<Integer>() {
             @Override
             public void onChanged(Integer integer) {
-                int slotTimeM = GeneralVariables.getCurrentSlotTimeM();
-                int slotTimeMs = GeneralVariables.getCurrentSlotTimeMillisecond();
-                binding.utcProgressBar.setMax(slotTimeM);
-                binding.utcProgressBar.setProgress((int) ((UtcTimer.getSystemTime() % slotTimeMs) / 100));
+                updateUtcProgressBarSmooth();
             }
         });
 
@@ -205,11 +210,10 @@ public class MainActivity extends AppCompatActivity {
 
         //用于Fragment的导航。
         NavHostFragment navHostFragment = (NavHostFragment) getSupportFragmentManager().findFragmentById(R.id.fragmentContainerView);
-        assert navHostFragment != null;//断言不为空
+        assert navHostFragment != null;
         navController = navHostFragment.getNavController();
 
         NavigationUI.setupWithNavController(binding.navView, navController);
-        //此处增加回调是因为当APP主动navigation后，无法回到解码的界面
         binding.navView.setOnNavigationItemSelectedListener(new BottomNavigationView.OnNavigationItemSelectedListener() {
             @Override
             public boolean onNavigationItemSelected(@NonNull MenuItem item) {
@@ -218,7 +222,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        //FT8CN Ver %s\nBG7YOZ\n%s
         binding.welcomTextView.setText(String.format(getString(R.string.version_info)
                 , GeneralVariables.VERSION, GeneralVariables.BUILD_DATE));
 
@@ -303,6 +306,7 @@ public class MainActivity extends AppCompatActivity {
                         } else {
                             binding.transmittingLayout.setVisibility(View.GONE);
                         }
+                        updateUtcProgressBarSmooth();
                     }
                 });
 
@@ -322,6 +326,53 @@ public class MainActivity extends AppCompatActivity {
             //读取共享的文件
             doReceiveShareFile(getIntent());
         }
+
+        // 启动顶部连续进度刷新
+        progressHandler.removeCallbacks(progressRunnable);
+        progressHandler.post(progressRunnable);
+    }
+
+    /**
+     * 连续刷新顶部时间条
+     *
+     * 逻辑：
+     * 1. 按当前模式决定 FT8/FT4 周期
+     * 2. 使用 UtcTimer.getSystemTime()，保证跟应用内部时钟偏移保持一致
+     * 3. 进度条 max 固定为 1000，progress 按比例连续变化，视觉更顺滑
+     * 4. 发射高亮仍按当前模式下的时序判断
+     */
+    private void updateUtcProgressBarSmooth() {
+        if (binding == null || mainViewModel == null) {
+            return;
+        }
+
+        int slotTimeM = GeneralVariables.getCurrentSlotTimeM(); // 0.1秒单位
+        int slotTimeMs = GeneralVariables.getCurrentSlotTimeMillisecond(); // 毫秒
+        long nowUtc = UtcTimer.getSystemTime();
+
+        if (slotTimeMs <= 0) {
+            return;
+        }
+
+        boolean isMyTxSlot = mainViewModel.ft8TransmitSignal.sequential
+                == UtcTimer.getNowSequential(slotTimeM)
+                && mainViewModel.ft8TransmitSignal.isActivated();
+
+        if (isMyTxSlot) {
+            binding.utcProgressBar.setBackgroundColor(getColor(R.color.calling_list_isMyCall_color));
+        } else {
+            binding.utcProgressBar.setBackgroundColor(getColor(R.color.progresss_bar_back_color));
+        }
+
+        // 固定最大值，连续按比例显示
+        final int progressMax = 1000;
+        int progress = (int) ((nowUtc % slotTimeMs) * progressMax / (float) slotTimeMs);
+
+        if (progress < 0) progress = 0;
+        if (progress > progressMax) progress = progressMax;
+
+        binding.utcProgressBar.setMax(progressMax);
+        binding.utcProgressBar.setProgress(progress);
     }
 
     /**
@@ -333,7 +384,6 @@ public class MainActivity extends AppCompatActivity {
 
         if (uri != null) {
             ImportSharedLogs importSharedLogs;
-            //先显示导入log的对话框
             showShareDialog();
             try {
                 importSharedLogs = new ImportSharedLogs(mainViewModel);
@@ -463,16 +513,14 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void doOnAfterQueryConfig(String KeyName, String Value) {
                 mainViewModel.configIsLoaded = true;
-                //此处梅登海德已经通过数据库得到了，但是如果GPS能获取到，还是用GPS的
                 String grid = MaidenheadGrid.getMyMaidenheadGrid(getApplicationContext());
                 if (!grid.equals("")) {
                     GeneralVariables.setMyMaidenheadGrid(grid);
-                    //写到数据库中
                     mainViewModel.databaseOpr.writeConfig("grid", grid, null);
                 }
 
                 mainViewModel.ft8TransmitSignal.setTimer_sec(GeneralVariables.transmitDelay);
-                //如果呼号、网格为空，就进入设置界面
+
                 if (GeneralVariables.getMyMaidenheadGrid().equals("")
                         || GeneralVariables.myCallsign.equals("")) {
                     runOnUiThread(new Runnable() {
@@ -485,12 +533,10 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        //把历史中通联成功的呼号与网格的对应关系
         new com.bg7yoz.ft8cn.database.DatabaseOpr.GetCallsignMapGrid(mainViewModel.databaseOpr.getDb()).execute();
 
         mainViewModel.getFollowCallsignsFromDataBase();
 
-        //打开呼号位置信息的数据库，目前是以内存数据库方式。
         if (GeneralVariables.callsignDatabase == null) {
             GeneralVariables.callsignDatabase = CallsignDatabase.getInstance(getBaseContext(), null, 1);
         }
@@ -516,14 +562,12 @@ public class MainActivity extends AppCompatActivity {
     private void checkPermission() {
         mPermissionList.clear();
 
-        //判断哪些权限未授予
         for (String permission : permissions) {
             if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
                 mPermissionList.add(permission);
             }
         }
 
-        //判断是否为空
         if (!mPermissionList.isEmpty()) {
             String[] permissions = mPermissionList.toArray(new String[0]);
             ActivityCompat.requestPermissions(MainActivity.this, permissions, PERMISSION_REQUEST);
@@ -532,7 +576,6 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * 响应授权
-     * 这里不管用户是否拒绝，都进入首页，不再重复申请权限
      */
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
@@ -561,14 +604,12 @@ public class MainActivity extends AppCompatActivity {
             layout.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    //连接电台并做电台的频率设置等操作
                     mainViewModel.connectCableRig(getApplicationContext(), ports.get(view.getId()));
                     binding.selectSerialPortLayout.setVisibility(View.GONE);
                 }
             });
         }
 
-        //选择串口设备弹框
         if ((ports.size() >= 1) && (!mainViewModel.isRigConnected())) {
             binding.selectSerialPortLayout.setVisibility(View.VISIBLE);
         } else {
@@ -596,6 +637,7 @@ public class MainActivity extends AppCompatActivity {
                 binding.initDataLayout.setVisibility(View.GONE);
                 binding.utcProgressBar.setVisibility(View.VISIBLE);
                 InitFloatView();//显示浮窗
+                updateUtcProgressBarSmooth();
             }
 
             @Override
@@ -610,13 +652,12 @@ public class MainActivity extends AppCompatActivity {
         animatorSet.start();
     }
 
-    //此方法只有在android:launchMode="singleTask"模式下起作用
     @Override
     protected void onNewIntent(Intent intent) {
         if ("android.hardware.usb.action.USB_DEVICE_ATTACHED".equals(intent.getAction())) {
             mainViewModel.getUsbDevice();
         } else {
-            setIntent(intent);//因为处于单例模式，所以要更新一下intent
+            setIntent(intent);
             doReceiveShareFile(getIntent());
         }
         super.onNewIntent(intent);
@@ -634,7 +675,7 @@ public class MainActivity extends AppCompatActivity {
                                     if (mainViewModel.ft8TransmitSignal.isActivated()) {
                                         mainViewModel.ft8TransmitSignal.setActivated(false);
                                     }
-                                    closeThisApp();//退出APP
+                                    closeThisApp();
                                 }
                             }).setNegativeButton(getString(R.string.cancel)
                             , new DialogInterface.OnClickListener() {
@@ -698,8 +739,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        progressHandler.removeCallbacks(progressRunnable);
+
         unregisterBluetoothReceiver();
-        //保证屏幕方向切换后，不会因为对话框导致闪退
         if (Boolean.TRUE.equals(mainViewModel.mutableImportShareRunning.getValue())) {
             if (dialog != null) {
                 dialog.dismiss();

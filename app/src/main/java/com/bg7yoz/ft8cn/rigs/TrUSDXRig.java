@@ -1,4 +1,3 @@
-
 /**
  * (tr)uSDX, fork from KENWOOD TS590.
  * 基于0.9版，增加TrSDXRig的支持。
@@ -18,7 +17,7 @@ import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.database.ControlMode;
-import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
+import com.bg7yoz.ft8cn.ft8transmit.GenerateFTx;
 import com.bg7yoz.ft8cn.ui.ToastMessage;
 import com.bg7yoz.ft8cn.wave.FT8Resample;
 
@@ -37,6 +36,7 @@ public class TrUSDXRig extends BaseRig {
     private static final String TAG = "TrUSDXRig";
     private static final int rxSampling = 7812;
     private static final int txSampling = 11520;
+
     private final StringBuilder buffer = new StringBuilder();
     private final ByteArrayOutputStream rxStreamBuffer = new ByteArrayOutputStream();
 
@@ -61,9 +61,8 @@ public class TrUSDXRig extends BaseRig {
                     if (isPttOn()) {
                         clearBufferData();
                     } else {
-                        readFreqFromRig();//读频率
+                        readFreqFromRig();
                     }
-
                 } catch (Exception e) {
                     Log.e(TAG, "readFreq error:" + e.getMessage());
                 }
@@ -123,8 +122,8 @@ public class TrUSDXRig extends BaseRig {
     public void onReceiveData(byte[] data) {
         byte[] remain = data;
         String s = new String(data);
-        while (s.contains(";")) { // ;
-            // TODO apply effective way
+
+        while (s.contains(";")) {
             int idx = s.indexOf(";");
             byte[] cutted = Arrays.copyOf(remain, idx);
             remain = Arrays.copyOfRange(remain, idx + 1, remain.length);
@@ -135,17 +134,18 @@ public class TrUSDXRig extends BaseRig {
                 rxStreaming = false;
             } else {
                 buffer.append(new String(cutted));
-                //开始分析数据
+
                 Yaesu3Command yaesu3Command = Yaesu3Command.getCommand(buffer.toString());
-                clearBufferData();//清一下缓存
+                clearBufferData();
 
                 if (yaesu3Command == null) {
                     continue;
                 }
+
                 String cmd = yaesu3Command.getCommandID();
-                if (cmd.equalsIgnoreCase("FA")) {//频率
+                if (cmd.equalsIgnoreCase("FA")) {
                     long tempFreq = Yaesu3Command.getFrequency(yaesu3Command);
-                    if (tempFreq != 0) {//如果tempFreq==0，说明频率不正常
+                    if (tempFreq != 0) {
                         setFreq(Yaesu3Command.getFrequency(yaesu3Command));
                     }
                 } else if (cmd.equalsIgnoreCase("US")) {
@@ -155,12 +155,14 @@ public class TrUSDXRig extends BaseRig {
                 }
             }
         }
+
         if (remain.length <= 0) {
             return;
         }
+
         if (rxStreaming) {
             onReceivedWaveData(remain);
-        } else if (remain.length >= 2 && remain[0] == 0x55 && remain[1] == 0x53) {// US
+        } else if (remain.length >= 2 && remain[0] == 0x55 && remain[1] == 0x53) {
             clearBufferData();
             rxStreaming = true;
             byte[] wave = Arrays.copyOfRange(remain, 2, remain.length);
@@ -180,8 +182,9 @@ public class TrUSDXRig extends BaseRig {
         } else {
             swrAlert = false;
         }
+
         if ((alc > KenwoodTK90RigConstant.ts_590_alc_alert_max)
-                && GeneralVariables.alc_switch_on) {//网络模式下不警告ALC
+                && GeneralVariables.alc_switch_on) {
             if (!alcMaxAlert) {
                 alcMaxAlert = true;
                 ToastMessage.show(GeneralVariables.getStringFromResource(R.string.alc_high_alert));
@@ -189,14 +192,12 @@ public class TrUSDXRig extends BaseRig {
         } else {
             alcMaxAlert = false;
         }
-
     }
 
     @Override
     public void readFreqFromRig() {
         if (getConnector() != null) {
-            clearBufferData();//清空一下缓存
-            // force reset
+            clearBufferData();
             getConnector().sendData(KenwoodTK90RigConstant.setTrUSDXPTTState(false));
             getConnector().sendData(KenwoodTK90RigConstant.setTS590ReadOperationFreq());
         }
@@ -220,7 +221,6 @@ public class TrUSDXRig extends BaseRig {
         }
     }
 
-
     /**
      * 当接收到音频数据后，把音频数据的采样率7812Hz转换为12000Hz，发送给Connector。
      *
@@ -229,7 +229,6 @@ public class TrUSDXRig extends BaseRig {
     public void onReceivedWaveData(byte[] data) {
         onReceivedWaveData(data, false);
     }
-
 
     /**
      * 当接收到音频数据后，把音频数据的采样率7812Hz转换为12000Hz，发送给Connector。
@@ -244,18 +243,18 @@ public class TrUSDXRig extends BaseRig {
         if (getConnector() == null) {
             return;
         }
-        //Resample rxResample = new Resample(Resample.ConverterType.SRC_LINEAR, 1
-        //        , rxSampling, 12000);
 
         rxStreamBuffer.write(data, 0, data.length);
-        if (rxStreamBuffer.size() >= 256 || force) {//8位转16位，7812Hz转12000Hz
-            //byte[] resampled = rxResample.processCopy(toWaveSamples8To16(rxStreamBuffer.toByteArray()));
+        if (rxStreamBuffer.size() >= 256 || force) {
             float[] resampled = FT8Resample.get32Resample16(
-                    toWaveSamples8To16Int(rxStreamBuffer.toByteArray()), rxSampling, 12000, 1);
+                    toWaveSamples8To16Int(rxStreamBuffer.toByteArray()),
+                    rxSampling,
+                    12000,
+                    1
+            );
             rxStreamBuffer.reset();
             getConnector().receiveWaveData(resampled);
         }
-        //rxResample.close();
     }
 
     @Override
@@ -263,32 +262,36 @@ public class TrUSDXRig extends BaseRig {
         if (getConnector() == null) {
             return;
         }
-        float[] wave = GenerateFT8.generateFt8(message, GeneralVariables.getBaseFrequency()
-                , 24000);
+
+        int txMode = message != null ? message.signalFormat : GeneralVariables.getSignalMode();
+
+        float[] wave = GenerateFTx.generateFtX(
+                message,
+                GeneralVariables.getBaseFrequency(),
+                24000,
+                txMode
+        );
 
         if (wave == null) {
             setPTT(false);
             return;
         }
-        //调整信号强度
+
+        // 调整信号强度
         for (int i = 0; i < wave.length; i++) {
             wave[i] = wave[i] * GeneralVariables.volumePercent;
         }
 
-//
-//        byte[] pcm16 = toWaveFloatToPCM16(wave);
-//        Resample txResample = new Resample(Resample.ConverterType.SRC_SINC_FASTEST, 1
-//                , 24000, txSampling);
-//        byte[] resampled = txResample.processCopy(pcm16);
-//        txResample.close();
-//        byte[] pcm8 = toWaveSamples16To8(resampled);
-
+        // 直接从 float 重采样到 8bit，保持原 tr(u)SDX CAT 音频发送链路
         byte[] pcm8 = FT8Resample.get8Resample32(wave, 24000, txSampling, 1);
 
-
+        // 避免 0x3B(';') 干扰 CAT 数据流分隔
         for (int i = 0; i < pcm8.length; i++) {
-            if (pcm8[i] == 0x3B) pcm8[i] = 0x3A; // ; to :
+            if (pcm8[i] == 0x3B) {
+                pcm8[i] = 0x3A;
+            }
         }
+
         while (pcm8.length > 0) {
             if (pcm8.length <= 256) {
                 getConnector().sendData(pcm8);
@@ -316,7 +319,7 @@ public class TrUSDXRig extends BaseRig {
     }
 
     /**
-     * 音频8bitcaiyang转换为16bit采样位深
+     * 音频8bit采样转换为16bit采样位深
      *
      * @param in 8 bit 数据
      * @return 16 bit 数据（short类型）
@@ -379,7 +382,6 @@ public class TrUSDXRig extends BaseRig {
             public void run() {
                 if (getConnector() != null) {
                     getConnector().sendData(KenwoodTK90RigConstant.setTS590VFOMode());
-                    //改成设置usb模式
                     getConnector().sendData(KenwoodTK90RigConstant.setTS590OperationUSBMode());
                     getConnector().sendData(KenwoodTK90RigConstant.setTrUSDXStreaming(true));
                 }
@@ -400,5 +402,4 @@ public class TrUSDXRig extends BaseRig {
         return (short) ((short) data[start] & 0xff
                 | ((short) data[start + 1] & 0xff) << 8);
     }
-
 }

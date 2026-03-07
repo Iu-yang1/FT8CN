@@ -659,6 +659,26 @@ public class ConfigFragment extends Fragment {
             }
         });
 
+        // PSKReporter 开关：仅控制是否允许后台 sender 从队列发包。
+        binding.enablePskReporterSwitch.setOnCheckedChangeListener(null);
+        binding.enablePskReporterSwitch.setChecked(GeneralVariables.enablePskReporter);
+        binding.enablePskReporterSwitch.setText(
+                GeneralVariables.getStringFromResource(R.string.config_enable_pskreporter)
+                        +(GeneralVariables.enablePskReporter?"(On)":"(Off)"));
+        binding.enablePskReporterSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
+                GeneralVariables.enablePskReporter = binding.enablePskReporterSwitch.isChecked();
+                if (GeneralVariables.enablePskReporter) {
+                    mainViewModel.databaseOpr.writeConfig("enablePskReporter", "1", null);
+                } else {
+                    mainViewModel.databaseOpr.writeConfig("enablePskReporter", "0", null);
+                }
+                binding.enablePskReporterSwitch.setText(
+                        GeneralVariables.getStringFromResource(R.string.config_enable_pskreporter)
+                                +(GeneralVariables.enablePskReporter?"(On)":"(Off)"));
+            }
+        });
 
         //获取梅登海德网格
         binding.configGetGridImageButton.setOnClickListener(new View.OnClickListener() {

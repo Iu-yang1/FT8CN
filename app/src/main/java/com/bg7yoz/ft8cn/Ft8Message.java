@@ -273,6 +273,13 @@ public class Ft8Message {
     }
 
     /**
+     * 兼容其他类调用的模式字符串接口
+     */
+    public String getModeStr() {
+        return FT8Common.modeToString(signalFormat);
+    }
+
+    /**
      * 返回解码消息的文本内容
      *
      * @return String
@@ -555,16 +562,21 @@ public class Ft8Message {
         return result;
     }
 
-    // 获取发送对象，注意与发送者时序相反
+    /**
+     * 获取接收对象，注意与发送者时序相反
+     * 不再固定 %2，而是按当前模式周期切换
+     */
     public TransmitCallsign getToCallTransmitCallsign() {
+        int nextSequence = (this.getSequence() + 1) % getSlotSequenceCount();
         TransmitCallsign result;
+
         if (report == -100) {
             result = new TransmitCallsign(
                     this.i3,
                     this.n3,
                     this.callsignTo,
                     freq_hz,
-                    (this.getSequence() + 1) % 2,
+                    nextSequence,
                     snr
             );
         } else {
@@ -573,12 +585,21 @@ public class Ft8Message {
                     this.n3,
                     this.callsignTo,
                     freq_hz,
-                    (this.getSequence() + 1) % 2,
+                    nextSequence,
                     report
             );
         }
+
         result.signalFormat = this.signalFormat;
         return result;
+    }
+
+    /**
+     * 当前模式下双时隙轮换数量
+     * 目前 FT8 / FT4 都仍然是双时隙交替，只是周期长度不同
+     */
+    public int getSlotSequenceCount() {
+        return 2;
     }
 
     @SuppressLint("DefaultLocale")

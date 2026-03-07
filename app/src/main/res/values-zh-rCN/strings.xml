@@ -543,5 +543,6 @@
     <string name="config_enable_qrz">自动上传至QRZ.com</string>
     <string name="qrz_help">qrz.txt</string>
     <string name="alram_switch">告警开关</string>
+    <string name="config_enable_pskreporter">PSKReporter</string> <!-- PSK -->
 
 </resources>
