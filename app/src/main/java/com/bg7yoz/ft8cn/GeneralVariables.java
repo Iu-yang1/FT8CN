@@ -618,32 +618,24 @@ public class GeneralVariables {
     //是不是信号报告,如-10
     public static boolean checkFun2(String extraInfo) {
         if (extraInfo == null) return false;
-        if (extraInfo.trim().length() < 2) {
+        String value = extraInfo.trim().toUpperCase();
+        if (value.equals("73")) {
             return false;
         }
-        try {
-            return Integer.parseInt(extraInfo.trim()) != 73;
-        } catch (Exception e) {
-            return false;
-        }
+        return value.matches("[+-]?[0-9]{1,2}");
     }
 
     //是不是带R的信号报告,如R-10
     public static boolean checkFun3(String extraInfo) {
         if (extraInfo == null) return false;
-        if (extraInfo.trim().length() < 3) {
+        String value = extraInfo.trim().toUpperCase();
+        if (value.length() < 2) {
             return false;
         }
-        if ((extraInfo.trim().charAt(0) != 'R') || (extraInfo.trim().charAt(1) == 'R')) {
+        if (value.startsWith("RR")) {
             return false;
         }
-
-        try {
-            Integer.parseInt(extraInfo.trim().substring(1));
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        return value.matches("R[+-]?[0-9]{1,2}");
     }
 
     //是不是RRR或RR73值
