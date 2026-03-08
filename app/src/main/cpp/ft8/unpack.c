@@ -255,7 +255,8 @@ int unpack_type1_(const uint8_t *a77, message_t *message) {
         if (ir > 0) {
             // In case of ir=1 add an "R" before grid
             dst = strcpy(dst, "R ");
-            dst += 3;
+            // "R " 只有两个可见字符，偏移 2 才不会在中间留下 '\0' 造成字符串被截断。
+            dst += 2;
         }
 
         uint16_t n = igrid4;

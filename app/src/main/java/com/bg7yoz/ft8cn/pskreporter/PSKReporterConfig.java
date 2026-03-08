@@ -5,11 +5,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 /**
  * PSKReporterConfig
  *
- * 统一收口 PSKReporter 发送参数。
- * 这里先保证：
- * 1. 编译完整
- * 2. sender / builder 能共用同一份配置
- * 3. 不影响解码线程
+ * 统一收口 PSKReporter 发送参数
  */
 public class PSKReporterConfig {
 
@@ -42,8 +38,7 @@ public class PSKReporterConfig {
     public int port = 4739;
 
     /**
-     * 每个包最多携带多少条记录
-     * 先保守一点，避免包太大
+     * 每个包携带记录条数
      */
     public int maxRecordsPerPacket = 8;
 
