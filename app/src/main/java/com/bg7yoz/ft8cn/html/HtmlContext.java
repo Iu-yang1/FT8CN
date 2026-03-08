@@ -13,7 +13,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
 
 public class HtmlContext {
-    private static final String HTML_HEAD = "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\"> <html><head><title>FT8CN</title>\n" +
+    private static final String HTML_HEAD = "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\"> <html><head><title>FT8CN FT4</title>\n" +
             " <meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\">\n" +
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=2.0, user-scalable=yes\" /> "+
             "<style type=\"text/css\">\n" +
@@ -51,7 +51,7 @@ public class HtmlContext {
             "</head>\n" +
             "\n";
     private static final String HTML_TITLE = "<table bgcolor=#a1a1a1 border=\"0\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\"><tr><td class=\"title\" colspan=\"15\">" +
-            "Welcome to FT8CN "+ BuildConfig.VERSION_NAME+"</a></td></tr><tr><td class=\"default\" colspan=\"15\"><a href=/>"
+            "Welcome to FT8CN FT4 "+ BuildConfig.VERSION_NAME+"</a></td></tr><tr><td class=\"default\" colspan=\"15\"><a href=/>"
                     +GeneralVariables.getStringFromResource(R.string.html_return)
             +"</a></td></tr></table>\n";
     private static final String HTML_FOOTER = "<table bgcolor=#a1a1a1 border=\"0\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">" +

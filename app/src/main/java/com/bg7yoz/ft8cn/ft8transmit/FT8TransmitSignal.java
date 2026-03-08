@@ -591,22 +591,56 @@ public class FT8TransmitSignal {
             return false;
         }
 
-        fromCall = fromCall.trim().toUpperCase();
-        toCall = toCall.trim().toUpperCase();
+        String from = normalizeCallsignForMatch(fromCall);
+        String to = normalizeCallsignForMatch(toCall);
 
-        if (fromCall.equals(toCall)) {
+        if (from.isEmpty() || to.isEmpty()) {
+            return false;
+        }
+
+        if (from.equals(to)) {
             return true;
         }
 
-        if (toCall.contains("/")) {
-            return toCall.contains(fromCall);
+        // Match by the main callsign part to support compact replies like K1ABC <-> K1ABC/P.
+        return getMainCallsign(from).equals(getMainCallsign(to));
+    }
+
+    private String normalizeCallsignForMatch(String callsign) {
+        return callsign.trim()
+                .toUpperCase()
+                .replace("<", "")
+                .replace(">", "");
+    }
+
+    private String getMainCallsign(String callsign) {
+        int len = callsign.length();
+        if (len == 0) {
+            return "";
         }
 
-        if (fromCall.contains("/")) {
-            return fromCall.contains(toCall);
+        int bestStart = 0;
+        int bestLen = 0;
+        int start = 0;
+
+        while (start <= len) {
+            int slash = callsign.indexOf('/', start);
+            int end = (slash >= 0) ? slash : len;
+            int tokenLen = end - start;
+            if (tokenLen > bestLen) {
+                bestLen = tokenLen;
+                bestStart = start;
+            }
+            if (slash < 0) {
+                break;
+            }
+            start = slash + 1;
         }
 
-        return false;
+        if (bestLen == 0) {
+            return callsign;
+        }
+        return callsign.substring(bestStart, bestStart + bestLen);
     }
 
     /**
@@ -616,12 +650,12 @@ public class FT8TransmitSignal {
      * @return 0：有目标呼叫我的，1：没有任何目标呼号发出的消息，>1：有目标呼号呼叫别人的消息
      */
     private int checkTargetCallMe(ArrayList<Ft8Message> messages) {
+        if (toCallsign == null) {
+            return 1;
+        }
+
         int fromCount = 1;
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Ft8Message ft8Message = messages.get(i);
-            if (toCallsign == null) {
-                continue;
-            }
+        for (Ft8Message ft8Message : messages) {
             if (GeneralVariables.checkIsMyCallsign(ft8Message.getCallsignTo())
                     && checkCallsignIsCallTo(ft8Message.getCallsignFrom(), toCallsign.callsign)) {
                 return 0;
@@ -640,12 +674,12 @@ public class FT8TransmitSignal {
      * @return 消息的序号
      */
     private int checkFunctionOrdFromMessages(ArrayList<Ft8Message> messages) {
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Ft8Message ft8Message = messages.get(i);
+        if (toCallsign == null) {
+            return -1;
+        }
+
+        for (Ft8Message ft8Message : messages) {
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;//模式不同不处理
-            if (toCallsign == null) {
-                continue;
-            }
             boolean isDirectReply = GeneralVariables.checkIsMyCallsign(ft8Message.getCallsignTo())
                     && checkCallsignIsCallTo(ft8Message.getCallsignFrom(), toCallsign.callsign);
 
@@ -665,7 +699,7 @@ public class FT8TransmitSignal {
                         receivedReport = ft8Message.report;
                     }
                 }
-                sendReport = messages.get(i).snr;//把接收到的信号保存下来
+                sendReport = ft8Message.snr;//把接收到的信号保存下来
 
                 int order = GeneralVariables.checkFunOrder(ft8Message);//检查消息的序号
                 if (order != -1) return order;//说明成功解析出序号
@@ -710,9 +744,14 @@ public class FT8TransmitSignal {
      * @return 是/否
      */
     private boolean isExcludeMessage(Ft8Message msg) {
-        return msg.getSequence() == sequential
+        return isSameSequenceButNotCallToMe(msg)
                 || msg.signalFormat != GeneralVariables.getSignalMode()
                 || GeneralVariables.checkIsExcludeCallsign(msg.callsignFrom);
+    }
+
+    private boolean isSameSequenceButNotCallToMe(Ft8Message msg) {
+        return msg.getSequence() == sequential
+                && !GeneralVariables.checkIsMyCallsign(msg.getCallsignTo());
     }
 
     /**
@@ -723,8 +762,7 @@ public class FT8TransmitSignal {
      */
     private boolean checkCQMeOrFollowCQMessage(ArrayList<Ft8Message> messages) {
         //检查CQ我，不是73，且是我呼叫的目标
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Ft8Message msg = messages.get(i);
+        for (Ft8Message msg : messages) {
             if (isExcludeMessage(msg)) continue;
             if (toCallsign == null) break;
 
@@ -739,9 +777,12 @@ public class FT8TransmitSignal {
             }
         }
 
+        if (toCallsign != null && toCallsign.haveTargetCallsign() && functionOrder != 6) {
+            return false;
+        }
+
         //检查CQ我，不是73
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Ft8Message msg = messages.get(i);
+        for (Ft8Message msg : messages) {
             if (isExcludeMessage(msg)) continue;
             if ((GeneralVariables.checkIsMyCallsign(msg.getCallsignTo())
                     && !GeneralVariables.checkFun5(msg.extraInfo))) {
@@ -764,8 +805,7 @@ public class FT8TransmitSignal {
             return false;
         }
 
-        for (int i = GeneralVariables.transmitMessages.size() - 1; i >= 0; i--) {
-            Ft8Message msg = GeneralVariables.transmitMessages.get(i);
+        for (Ft8Message msg : messages) {
             if (isExcludeMessage(msg)) continue;
 
             if ((msg.checkIsCQ()
@@ -932,7 +972,7 @@ public class FT8TransmitSignal {
             if (msg.signalFormat != currentMode) continue;
             // 同序列报文一般是“我自己这个发送序列”，但保留目标台明确回给我的消息，
             // 防止 FT4 在双机小时差下误过滤。
-            if (msg.getSequence() == sequential && !isDirectReplyToCurrentTarget(msg)) continue;
+            if (isSameSequenceButNotCallToMe(msg) && !isDirectReplyToCurrentTarget(msg)) continue;
             result.add(msg);
         }
         return result;
@@ -964,10 +1004,10 @@ public class FT8TransmitSignal {
      */
     public boolean getNewTargetCallsign(ArrayList<Ft8Message> messages) {
         if (toCallsign == null) return false;
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Ft8Message ft8Message = messages.get(i);
+        for (Ft8Message ft8Message : messages) {
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;
-            if (ft8Message.band != GeneralVariables.band) continue;
+            // Only enforce band match when decoded message carries a valid RF band.
+            if (ft8Message.band > 0 && ft8Message.band != GeneralVariables.band) continue;
             if (!ft8Message.checkIsCQ()) continue;
 
             if ((!ft8Message.getCallsignFrom().equals(toCallsign.callsign)
