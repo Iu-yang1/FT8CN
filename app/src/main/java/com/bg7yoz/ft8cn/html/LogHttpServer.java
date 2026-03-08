@@ -40,7 +40,7 @@ import fi.iki.elonen.NanoHTTPD;
 @SuppressWarnings("ConstantConditions")
 public class LogHttpServer extends NanoHTTPD {
     private final MainViewModel mainViewModel;
-    public static int DEFAULT_PORT = 7050;
+    public static int DEFAULT_PORT = 7060;
     private static final String TAG = "LOG HTTP";
 
     private final ImportTaskList importTaskList = new ImportTaskList();//导如日志的任务列表
