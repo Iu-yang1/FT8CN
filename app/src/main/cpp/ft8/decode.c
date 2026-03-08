@@ -6,6 +6,8 @@
 
 #include <stdbool.h>
 #include <math.h>
+#include <string.h>
+#include <stdio.h>
 #include "../common/debug.h"
 #include "hash22.h"
 
@@ -31,7 +33,12 @@ static void heapify_up(candidate_t heap[], int heap_size);
 static void ftx_normalize_logl(float *log174);
 static void ft4_extract_symbol(const uint8_t *wf, float *logl);
 static void ft8_extract_symbol(const uint8_t *wf, float *logl);
-static void ft8_decode_multi_symbols(const uint8_t *wf, int num_bins, int n_syms, int bit_idx, float *log174);
+static void ft4_decode_multi_symbols(const uint8_t *wf, int symbol_stride, int n_syms, int bit_idx, float *log174);
+static void ft8_decode_multi_symbols(const uint8_t *wf, int symbol_stride, int n_syms, int bit_idx, float *log174);
+static void ft4_extract_likelihood_n(const waterfall_t *wf, const candidate_t *cand, int n_syms, float *log174);
+static void ft8_extract_likelihood_n(const waterfall_t *wf, const candidate_t *cand, int n_syms, float *log174);
+static int ftx_ldpc_check_codeword(const uint8_t codeword[]);
+static bool ftx_osd_refine(const float *log174, uint8_t plain174[], int *errors);
 
 /**
  * SNR 限幅，避免异常值
@@ -195,15 +202,21 @@ static int ft4_sync_score(const waterfall_t *wf, const candidate_t *candidate) {
 int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[], int min_score) {
     int heap_size = 0;
     candidate_t candidate;
+    const bool is_ft4 = (wf->protocol == PROTO_FT4);
+    // FT4 对起始时刻偏差更敏感，放宽搜索窗口以提高检出率
+    const int time_offset_min = is_ft4 ? -40 : -12;
+    const int time_offset_max = is_ft4 ? 80 : 24;
+    // 频率扫描边界：FT4 为 4-FSK，FT8 为 8-FSK
+    const int tone_span = is_ft4 ? 3 : 7;
 
     // 注意：
-    // FT8 / FT4 这里都共用同一个扫描框架
-    // 当前先不改扫描范围，只优化评分函数，避免引入新的时序副作用
+    // FT8 / FT4 共用同一套扫描框架，但窗口按协议分别配置
+    // FT4 放宽时偏搜索范围，可减少“耳朵能听到但候选未入堆”的漏检
     for (candidate.time_sub = 0; candidate.time_sub < wf->time_osr; ++candidate.time_sub) {
         for (candidate.freq_sub = 0; candidate.freq_sub < wf->freq_osr; ++candidate.freq_sub) {
-            for (candidate.time_offset = -12; candidate.time_offset < 24; ++candidate.time_offset) {
+            for (candidate.time_offset = time_offset_min; candidate.time_offset < time_offset_max; ++candidate.time_offset) {
                 for (candidate.freq_offset = 0;
-                     (candidate.freq_offset + 7) < wf->num_bins; ++candidate.freq_offset) {
+                     (candidate.freq_offset + tone_span) < wf->num_bins; ++candidate.freq_offset) {
 
                     if (wf->protocol == PROTO_FT4) {
                         candidate.score = ft4_sync_score(wf, &candidate);
@@ -244,45 +257,163 @@ int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[],
 }
 
 static void ft4_extract_likelihood(const waterfall_t *wf, const candidate_t *cand, float *log174) {
-    const uint8_t *mag_cand = wf->mag + get_index(wf, cand);
+    float llr_tmp[FTX_LDPC_N];
+    float llr_acc[FTX_LDPC_N];
+    int llr_cnt[FTX_LDPC_N];
 
-    for (int k = 0; k < FT4_ND; ++k) {
-        // Skip either 5, 9 or 13 sync symbols
-        int sym_idx = k + ((k < 29) ? 5 : ((k < 58) ? 9 : 13));
-        int bit_idx = 2 * k;
+    memset(llr_acc, 0, sizeof(llr_acc));
+    memset(llr_cnt, 0, sizeof(llr_cnt));
 
-        int block = cand->time_offset + sym_idx;
-        if ((block < 0) || (block >= wf->num_blocks)) {
-            log174[bit_idx + 0] = 0;
-            log174[bit_idx + 1] = 0;
-        } else {
-            const uint8_t *ps = mag_cand + (sym_idx * wf->block_stride);
-            ft4_extract_symbol(ps, log174 + bit_idx);
+    // FT4 融合 1/2/4 符号联合软判决，改善强信号但软信息失真的场景
+    const int joint_list[] = {1, 2, 4};
+    for (int j = 0; j < 3; ++j) {
+        memset(llr_tmp, 0, sizeof(llr_tmp));
+        ft4_extract_likelihood_n(wf, cand, joint_list[j], llr_tmp);
+        for (int i = 0; i < FTX_LDPC_N; ++i) {
+            llr_acc[i] += llr_tmp[i];
+            llr_cnt[i] += 1;
         }
     }
 
-    // FT4 一帧只有 2bit/符号，174 中后半部分未写入的位清零，避免残值干扰 LDPC
-    for (int i = FT4_ND * 2; i < FTX_LDPC_N; ++i) {
-        log174[i] = 0.0f;
+    for (int i = 0; i < FTX_LDPC_N; ++i) {
+        log174[i] = (llr_cnt[i] > 0) ? (llr_acc[i] / (float) llr_cnt[i]) : 0.0f;
     }
 }
 
-// 解开可能的 FT8 信号
+// 计算 FT8 的软判决输入
 static void ft8_extract_likelihood(const waterfall_t *wf, candidate_t *cand, float *log174) {
+    float llr_tmp[FTX_LDPC_N];
+    float llr_acc[FTX_LDPC_N];
+    int llr_cnt[FTX_LDPC_N];
+
+    memset(llr_acc, 0, sizeof(llr_acc));
+    memset(llr_cnt, 0, sizeof(llr_cnt));
+
+    // FT8 融合 1/2/3 符号联合软判决，降低单符号判决波动
+    const int joint_list[] = {1, 2, 3};
+    for (int j = 0; j < 3; ++j) {
+        memset(llr_tmp, 0, sizeof(llr_tmp));
+        ft8_extract_likelihood_n(wf, cand, joint_list[j], llr_tmp);
+        for (int i = 0; i < FTX_LDPC_N; ++i) {
+            llr_acc[i] += llr_tmp[i];
+            llr_cnt[i] += 1;
+        }
+    }
+
+    for (int i = 0; i < FTX_LDPC_N; ++i) {
+        log174[i] = (llr_cnt[i] > 0) ? (llr_acc[i] / (float) llr_cnt[i]) : 0.0f;
+    }
+}
+
+static void ft4_extract_likelihood_n(const waterfall_t *wf, const candidate_t *cand, int n_syms, float *log174) {
     const uint8_t *mag_cand = wf->mag + get_index(wf, cand);
+    memset(log174, 0, sizeof(float) * FTX_LDPC_N);
 
-    for (int k = 0; k < FT8_ND; ++k) {
-        int sym_idx = k + ((k < 29) ? 7 : 14);
-        int bit_idx = 3 * k;
+    const int data_k_start[3] = {0, 29, 58};
+    const int sym_start[3] = {5, 38, 71};
 
-        int block = cand->time_offset + sym_idx;
-        if ((block < 0) || (block >= wf->num_blocks)) {
-            log174[bit_idx + 0] = 0;
-            log174[bit_idx + 1] = 0;
-            log174[bit_idx + 2] = 0;
-        } else {
-            const uint8_t *ps = mag_cand + (sym_idx * wf->block_stride);
-            ft8_extract_symbol(ps, log174 + bit_idx);
+    for (int seg = 0; seg < 3; ++seg) {
+        int pos = 0;
+        while (pos < 29) {
+            int group = n_syms;
+            if ((pos + group) > 29) {
+                // 联合判决不能跨段，尾部退化为单符号
+                group = 1;
+            }
+
+            int data_idx = data_k_start[seg] + pos;
+            int bit_idx = 2 * data_idx;
+            int first_sym = sym_start[seg] + pos;
+            int block = cand->time_offset + first_sym;
+
+            if (group == 1) {
+                if ((block < 0) || (block >= wf->num_blocks)) {
+                    log174[bit_idx + 0] = 0.0f;
+                    log174[bit_idx + 1] = 0.0f;
+                } else {
+                    const uint8_t *ps = mag_cand + (first_sym * wf->block_stride);
+                    ft4_extract_symbol(ps, log174 + bit_idx);
+                }
+                pos += 1;
+                continue;
+            }
+
+            bool in_range = true;
+            for (int s = 0; s < group; ++s) {
+                int b = cand->time_offset + first_sym + s;
+                if ((b < 0) || (b >= wf->num_blocks)) {
+                    in_range = false;
+                    break;
+                }
+            }
+
+            if (!in_range) {
+                for (int b = 0; b < 2 * group && (bit_idx + b) < FTX_LDPC_N; ++b) {
+                    log174[bit_idx + b] = 0.0f;
+                }
+            } else {
+                const uint8_t *ps = mag_cand + (first_sym * wf->block_stride);
+                ft4_decode_multi_symbols(ps, wf->block_stride, group, bit_idx, log174);
+            }
+
+            pos += group;
+        }
+    }
+}
+
+static void ft8_extract_likelihood_n(const waterfall_t *wf, const candidate_t *cand, int n_syms, float *log174) {
+    const uint8_t *mag_cand = wf->mag + get_index(wf, cand);
+    memset(log174, 0, sizeof(float) * FTX_LDPC_N);
+
+    const int data_k_start[2] = {0, 29};
+    const int sym_start[2] = {7, 43};
+
+    for (int seg = 0; seg < 2; ++seg) {
+        int pos = 0;
+        while (pos < 29) {
+            int group = n_syms;
+            if ((pos + group) > 29) {
+                // 联合判决不能跨段，尾部退化为单符号
+                group = 1;
+            }
+
+            int data_idx = data_k_start[seg] + pos;
+            int bit_idx = 3 * data_idx;
+            int first_sym = sym_start[seg] + pos;
+            int block = cand->time_offset + first_sym;
+
+            if (group == 1) {
+                if ((block < 0) || (block >= wf->num_blocks)) {
+                    log174[bit_idx + 0] = 0.0f;
+                    log174[bit_idx + 1] = 0.0f;
+                    log174[bit_idx + 2] = 0.0f;
+                } else {
+                    const uint8_t *ps = mag_cand + (first_sym * wf->block_stride);
+                    ft8_extract_symbol(ps, log174 + bit_idx);
+                }
+                pos += 1;
+                continue;
+            }
+
+            bool in_range = true;
+            for (int s = 0; s < group; ++s) {
+                int b = cand->time_offset + first_sym + s;
+                if ((b < 0) || (b >= wf->num_blocks)) {
+                    in_range = false;
+                    break;
+                }
+            }
+
+            if (!in_range) {
+                for (int b = 0; b < 3 * group && (bit_idx + b) < FTX_LDPC_N; ++b) {
+                    log174[bit_idx + b] = 0.0f;
+                }
+            } else {
+                const uint8_t *ps = mag_cand + (first_sym * wf->block_stride);
+                ft8_decode_multi_symbols(ps, wf->block_stride, group, bit_idx, log174);
+            }
+
+            pos += group;
         }
     }
 }
@@ -412,6 +543,11 @@ static void ftx_guess_snr(const waterfall_t *wf, candidate_t *cand) {
 bool
 ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_iterations,
            decode_status_t *status) {
+    status->ldpc_errors = FTX_LDPC_M;
+    status->crc_extracted = 0;
+    status->crc_calculated = 0;
+    status->unpack_status = -1;
+
     float log174[FTX_LDPC_N];
 
     if (wf->protocol == PROTO_FT4) {
@@ -424,11 +560,19 @@ ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_itera
 
     uint8_t plain174[FTX_LDPC_N];
 
+    // 第一层：快速 BP
     bp_decode(log174, max_iterations, plain174, &status->ldpc_errors);
-    // ldpc_decode(log174, max_iterations, plain174, &status->ldpc_errors);
 
+    // 第二层：LDPC
     if (status->ldpc_errors > 0) {
-        return false;
+        ldpc_decode(log174, max_iterations, plain174, &status->ldpc_errors);
+    }
+
+    // 第三层：轻量 OSD 比特翻转搜索
+    if (status->ldpc_errors > 0) {
+        if (!ftx_osd_refine(log174, plain174, &status->ldpc_errors)) {
+            return false;
+        }
     }
 
     uint8_t a91[FTX_LDPC_K_BYTES];
@@ -455,12 +599,21 @@ ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_itera
     message->call_to[0] = message->call_de[0] = message->maidenGrid[0] = message->extra[0] = '\0';
     message->call_de_hash.hash10 = message->call_de_hash.hash12 = message->call_de_hash.hash22 = 0;
     message->call_to_hash.hash10 = message->call_to_hash.hash12 = message->call_to_hash.hash22 = 0;
+    message->report = -100;
     memcpy(message->a91, a91, FTX_LDPC_K_BYTES);
 
     status->unpack_status = unpackToMessage_t(a91, message);
 
     if (status->unpack_status < 0) {
-        return false;
+        // CRC/FEC 已通过但当前实现不支持该消息类型时，保留占位文本而不直接丢弃
+        message->call_to[0] = '\0';
+        message->call_de[0] = '\0';
+        message->maidenGrid[0] = '\0';
+        message->call_de_hash.hash10 = message->call_de_hash.hash12 = message->call_de_hash.hash22 = 0;
+        message->call_to_hash.hash10 = message->call_to_hash.hash12 = message->call_to_hash.hash22 = 0;
+        snprintf(message->extra, sizeof(message->extra), "UNSUP i3=%u n3=%u",
+                 (unsigned) message->i3, (unsigned) message->n3);
+        snprintf(message->text, sizeof(message->text), "%s", message->extra);
     }
 
     message->hash = status->crc_extracted;
@@ -518,6 +671,131 @@ static void heapify_up(candidate_t heap[], int heap_size) {
     }
 }
 
+// 检查 174 bit 是否满足 LDPC 校验方程，返回未满足个数
+static int ftx_ldpc_check_codeword(const uint8_t codeword[]) {
+    int errors = 0;
+    for (int m = 0; m < FTX_LDPC_M; ++m) {
+        uint8_t x = 0;
+        for (int i = 0; i < kFTX_LDPCNumRows[m]; ++i) {
+            x ^= codeword[kFTX_LDPC_Nm[m][i] - 1];
+        }
+        if (x != 0) {
+            ++errors;
+        }
+    }
+    return errors;
+}
+
+// 轻量 OSD：在最不可靠比特上做 1/2/3 位翻转搜索
+static bool ftx_osd_refine(const float *log174, uint8_t plain174[], int *errors) {
+    if (errors == NULL) {
+        return false;
+    }
+
+    const int max_candidates = 10;
+    int idx[max_candidates];
+    float reliab[max_candidates];
+
+    for (int i = 0; i < max_candidates; ++i) {
+        idx[i] = -1;
+        reliab[i] = 1e30f;
+    }
+
+    for (int bit = 0; bit < FTX_LDPC_N; ++bit) {
+        float r = fabsf(log174[bit]);
+        for (int pos = 0; pos < max_candidates; ++pos) {
+            if (r < reliab[pos]) {
+                for (int sh = max_candidates - 1; sh > pos; --sh) {
+                    reliab[sh] = reliab[sh - 1];
+                    idx[sh] = idx[sh - 1];
+                }
+                reliab[pos] = r;
+                idx[pos] = bit;
+                break;
+            }
+        }
+    }
+
+    int use_count = 0;
+    for (int i = 0; i < max_candidates; ++i) {
+        if (idx[i] >= 0) {
+            ++use_count;
+        }
+    }
+    if (use_count == 0) {
+        return false;
+    }
+
+    uint8_t base[FTX_LDPC_N];
+    uint8_t trial[FTX_LDPC_N];
+    uint8_t best[FTX_LDPC_N];
+    memcpy(base, plain174, sizeof(base));
+    memcpy(best, plain174, sizeof(best));
+
+    int best_errors = (*errors >= 0) ? *errors : FTX_LDPC_M;
+
+    for (int i = 0; i < use_count; ++i) {
+        memcpy(trial, base, sizeof(trial));
+        trial[idx[i]] ^= 1;
+        int e = ftx_ldpc_check_codeword(trial);
+        if (e < best_errors) {
+            best_errors = e;
+            memcpy(best, trial, sizeof(best));
+            if (best_errors == 0) {
+                memcpy(plain174, best, sizeof(best));
+                *errors = 0;
+                return true;
+            }
+        }
+    }
+
+    for (int i = 0; i < use_count; ++i) {
+        for (int j = i + 1; j < use_count; ++j) {
+            memcpy(trial, base, sizeof(trial));
+            trial[idx[i]] ^= 1;
+            trial[idx[j]] ^= 1;
+            int e = ftx_ldpc_check_codeword(trial);
+            if (e < best_errors) {
+                best_errors = e;
+                memcpy(best, trial, sizeof(best));
+                if (best_errors == 0) {
+                    memcpy(plain174, best, sizeof(best));
+                    *errors = 0;
+                    return true;
+                }
+            }
+        }
+    }
+
+    int use3 = (use_count > 8) ? 8 : use_count;
+    for (int i = 0; i < use3; ++i) {
+        for (int j = i + 1; j < use3; ++j) {
+            for (int k = j + 1; k < use3; ++k) {
+                memcpy(trial, base, sizeof(trial));
+                trial[idx[i]] ^= 1;
+                trial[idx[j]] ^= 1;
+                trial[idx[k]] ^= 1;
+                int e = ftx_ldpc_check_codeword(trial);
+                if (e < best_errors) {
+                    best_errors = e;
+                    memcpy(best, trial, sizeof(best));
+                    if (best_errors == 0) {
+                        memcpy(plain174, best, sizeof(best));
+                        *errors = 0;
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    if (best_errors < *errors) {
+        memcpy(plain174, best, sizeof(best));
+        *errors = best_errors;
+    }
+    return (best_errors == 0);
+}
+
 // Compute unnormalized log likelihood log(p(1) / p(0)) of 2 message bits (1 FSK symbol)
 static void ft4_extract_symbol(const uint8_t *wf, float *logl) {
     float s2[4];
@@ -544,29 +822,20 @@ static void ft8_extract_symbol(const uint8_t *wf, float *logl) {
 }
 
 // Compute unnormalized log likelihood log(p(1) / p(0)) of bits corresponding to several FSK symbols at once
-static void
-ft8_decode_multi_symbols(const uint8_t *wf, int num_bins, int n_syms, int bit_idx, float *log174) {
-    const int n_bits = 3 * n_syms;
+static void ft4_decode_multi_symbols(const uint8_t *wf, int symbol_stride, int n_syms, int bit_idx, float *log174) {
+    const int n_bits = 2 * n_syms;
     const int n_tones = (1 << n_bits);
-
     float s2[n_tones];
 
     for (int j = 0; j < n_tones; ++j) {
-        int j1 = j & 0x07;
-        if (n_syms == 1) {
-            s2[j] = (float) wf[kFT8GrayMap[j1]];
-            continue;
+        float sum = 0.0f;
+        for (int s = 0; s < n_syms; ++s) {
+            int shift = 2 * (n_syms - 1 - s);
+            int bits2 = (j >> shift) & 0x03;
+            int tone = kFT4GrayMap[bits2];
+            sum += (float) wf[tone + s * symbol_stride];
         }
-        int j2 = (j >> 3) & 0x07;
-        if (n_syms == 2) {
-            s2[j] = (float) wf[kFT8GrayMap[j2]];
-            s2[j] += (float) wf[kFT8GrayMap[j1] + 4 * num_bins];
-            continue;
-        }
-        int j3 = (j >> 6) & 0x07;
-        s2[j] = (float) wf[kFT8GrayMap[j3]];
-        s2[j] += (float) wf[kFT8GrayMap[j2] + 4 * num_bins];
-        s2[j] += (float) wf[kFT8GrayMap[j1] + 8 * num_bins];
+        s2[j] = sum;
     }
 
     for (int i = 0; i < n_bits; ++i) {
@@ -575,7 +844,44 @@ ft8_decode_multi_symbols(const uint8_t *wf, int num_bins, int n_syms, int bit_id
         }
 
         uint16_t mask = (n_tones >> (i + 1));
-        float max_zero = -1000, max_one = -1000;
+        float max_zero = -1000.0f;
+        float max_one = -1000.0f;
+        for (int n = 0; n < n_tones; ++n) {
+            if (n & mask) {
+                max_one = max2(max_one, s2[n]);
+            } else {
+                max_zero = max2(max_zero, s2[n]);
+            }
+        }
+
+        log174[bit_idx + i] = max_one - max_zero;
+    }
+}
+
+static void ft8_decode_multi_symbols(const uint8_t *wf, int symbol_stride, int n_syms, int bit_idx, float *log174) {
+    const int n_bits = 3 * n_syms;
+    const int n_tones = (1 << n_bits);
+    float s2[n_tones];
+
+    for (int j = 0; j < n_tones; ++j) {
+        float sum = 0.0f;
+        for (int s = 0; s < n_syms; ++s) {
+            int shift = 3 * (n_syms - 1 - s);
+            int bits3 = (j >> shift) & 0x07;
+            int tone = kFT8GrayMap[bits3];
+            sum += (float) wf[tone + s * symbol_stride];
+        }
+        s2[j] = sum;
+    }
+
+    for (int i = 0; i < n_bits; ++i) {
+        if (bit_idx + i >= FTX_LDPC_N) {
+            break;
+        }
+
+        uint16_t mask = (n_tones >> (i + 1));
+        float max_zero = -1000.0f;
+        float max_one = -1000.0f;
         for (int n = 0; n < n_tones; ++n) {
             if (n & mask) {
                 max_one = max2(max_one, s2[n]);

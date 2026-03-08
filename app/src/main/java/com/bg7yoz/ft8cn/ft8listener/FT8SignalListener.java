@@ -5,8 +5,6 @@ package com.bg7yoz.ft8cn.ft8listener;
  *
  * 1. 每一轮解码先固定 decodeMode，避免解码过程中用户切模式造成混乱
  * 2. FT4 允许进入深度解码
- * 3. subtractSignal / sequential / Ft8Message.signalFormat 全部按本轮 decodeMode 统一
- * 4. FT4 / FT8 深解采用有限轮 subtract 重解，避免误码扩散
  *
  * @author BGY70Z
  * @date 2023-03-20

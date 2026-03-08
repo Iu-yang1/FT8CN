@@ -224,12 +224,13 @@ public class FT8TransmitSignal {
         toCallsign = transmitCallsign;//设定呼叫的目标
 
         if (functionOrder == -1) {//说明是回复消息
-            this.functionOrder = GeneralVariables.checkFunOrderByExtraInfo(toMaidenheadGrid) + 1;
+            this.functionOrder = normalizeFunctionOrder(
+                    GeneralVariables.checkFunOrderByExtraInfo(toMaidenheadGrid) + 1);
             if (this.functionOrder == 6) {//如果已经是73了，就改到消息1
                 this.functionOrder = 1;
             }
         } else {
-            this.functionOrder = functionOrder;//当前指令的序号
+            this.functionOrder = normalizeFunctionOrder(functionOrder);//当前指令的序号
         }
 
         if (transmitCallsign.frequency == 0) {
@@ -243,6 +244,21 @@ public class FT8TransmitSignal {
         mutableSequential.postValue(sequential);//通知发射时序改变
         generateFun();
         mutableFunctionOrder.postValue(this.functionOrder);
+    }
+
+    private int normalizeFunctionOrder(int order) {
+        if (order < 1 || order > 6) {
+            return 2;
+        }
+        return order;
+    }
+
+    private int nextOrderFromIncoming(Ft8Message message) {
+        int order = GeneralVariables.checkFunOrder(message);
+        if (order < 1 || order > 5) {
+            return 2;
+        }
+        return order + 1;
     }
 
     @SuppressLint("DefaultLocale")
@@ -701,7 +717,7 @@ public class FT8TransmitSignal {
                     && !GeneralVariables.checkFun5(msg.extraInfo)) {
                 setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
                                 , msg.getSequence(), msg.snr)
-                        , GeneralVariables.checkFunOrder(msg) + 1
+                        , nextOrderFromIncoming(msg)
                         , msg.extraInfo);
                 return true;
             }
@@ -715,7 +731,7 @@ public class FT8TransmitSignal {
                     && !GeneralVariables.checkFun5(msg.extraInfo))) {
                 setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
                                 , msg.getSequence(), msg.snr)
-                        , GeneralVariables.checkFunOrder(msg) + 1
+                        , nextOrderFromIncoming(msg)
                         , msg.extraInfo);
                 return true;
             }

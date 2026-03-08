@@ -1,8 +1,7 @@
 //
 // Created by jmsmf on 2022/6/2.
 // 已修改：
-// 1. ReBuildSignal_doSubtractSignal 增加 mode 参数，支持 FT8 / FT4
-// 2. DecoderFt8Analysis 增加可选 FT4 SNR 显示补偿
+// 1. ReBuildSignal_doSubtractSignal 增加 mode 参数，支持FT8 / FT4
 //
 
 #include <jni.h>
@@ -22,21 +21,12 @@ extern "C" {
 static const int SIGNAL_MODE_FT8 = 0;
 static const int SIGNAL_MODE_FT4 = 1;
 
-/**
- * 这里先做“显示层补偿”：
- * 当前 FT4 解码内容正常，但 snr 普遍偏小，先把 FT4 单独抬高。
- * 后面如果你在 decoder_ft8_analysis 内部修正了原始 snr，这里可直接改回 return rawSnr;
- */
 static inline int normalize_decode_snr_for_display(int rawSnr, int signalMode) {
+    (void)signalMode;
     int snr = rawSnr;
 
-    if (signalMode == SIGNAL_MODE_FT4) {
-        // 经验补偿，先给 FT4 抬高 4 dB
-        snr += 4;
-    }
-
-    if (snr > 20) snr = 20;
-    if (snr < -30) snr = -30;
+    if (snr > 32) snr = 32;
+    if (snr < -32) snr = -32;
     return snr;
 }
 
@@ -80,7 +70,6 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *e
     jfieldID snr = env->GetFieldID(objectClass, "snr", "I");
     jfieldID messageHash = env->GetFieldID(objectClass, "messageHash", "I");
 
-    // 读取 Java 层 signalFormat，用于决定是否做 FT4 补偿
     jfieldID signalFormat = env->GetFieldID(objectClass, "signalFormat", "I");
 
     env->SetBooleanField(ft8Message, isValid, message.isValid);
@@ -224,8 +213,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_setDecodeMode(JNIEnv *env, j
 }
 
 /**
- * 把频率减去
- */
+ * 把频率减�? */
 static inline void setMagToZero(decoder_t *dd, int index, int max_block_size) {
     if (index > 0 && index < max_block_size) {
         dd->mon.wf.mag[index] = 0;

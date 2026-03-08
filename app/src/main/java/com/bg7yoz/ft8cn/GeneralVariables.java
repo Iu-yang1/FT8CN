@@ -54,11 +54,10 @@ public class GeneralVariables {
     public static String pskReporterHost = "report.pskreporter.info";
     public static int pskReporterPort = 4739;
     public static String pskReporterAntennaInfo = "";
-    public static int pskReporterFlushIntervalMs = 30000;
+    public static int pskReporterFlushIntervalMs = 15000;
 
     /**
      * 是否开启深度解码
-     * 建议：FT8 可开启，FT4 在 subtractSignal 完全适配前建议关闭
      */
     public static boolean deepDecodeMode = true;
 
@@ -144,7 +143,7 @@ public class GeneralVariables {
     /**
      * 自定义服务器
      */
-    public static String ntpCustomServer = "";
+    public static String ntpCustomServer = "ntp.aliyun.com";
 
     /**
      * 最近一次同步实际使用的服务器

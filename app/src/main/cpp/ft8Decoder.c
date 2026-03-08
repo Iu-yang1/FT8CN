@@ -3,6 +3,7 @@
 //
 
 #include "ft8Decoder.h"
+#include <string.h>
 
 #define LOG_LEVEL LOG_INFO
 
@@ -14,6 +15,11 @@ static float hann_i(int i, int N) {
 
 static inline bool decoder_is_ft4(decoder_t *decoder) {
     return decoder->mon_cfg.protocol == PROTO_FT4;
+}
+
+static inline int decoder_min_sync_score(decoder_t *decoder) {
+    // FT4 扫描窗更宽、候选更多，阈值略放宽以减少弱信号漏检。
+    return decoder_is_ft4(decoder) ? 8 : kMin_score;
 }
 
 //把信号FFT,在解码decoder中减去信号
@@ -41,6 +47,10 @@ void signalToFFT(decoder_t *decoder, float signal[], int sample_rate) {
 void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8) {
     decoder_t *decoder;
     decoder = malloc(sizeof(decoder_t));
+    if (decoder == NULL) {
+        return NULL;
+    }
+    memset(decoder, 0, sizeof(decoder_t));
     decoder->utcTime = utcTime;
     decoder->num_samples = num_samples;
     decoder->mon_cfg = (monitor_config_t) {
@@ -75,10 +85,12 @@ void decoder_monitor_press(float signal[], decoder_t *decoder) {
 }
 
 int decoder_ft8_find_sync(decoder_t *decoder) {
+    int min_score = decoder_min_sync_score(decoder);
     decoder->num_candidates = ft8_find_sync(&decoder->mon.wf, kMax_candidates,
-                                            decoder->candidate_list, kMin_score);
+                                            decoder->candidate_list, min_score);
     LOG(LOG_DEBUG, "ft8_find_sync finished. %d candidates\n", decoder->num_candidates);
 
+    decoder->num_decoded = 0;
     for (int i = 0; i < kMax_decoded_messages; ++i) {
         decoder->decoded_hashtable[i] = NULL;
     }
@@ -89,9 +101,12 @@ ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder) {
     ft8_message ft8Message;
     ft8Message.isValid = false;
     ft8Message.utcTime = decoder->utcTime;
+    if (idx < 0 || idx >= decoder->num_candidates) {
+        return ft8Message;
+    }
     ft8Message.candidate = decoder->candidate_list[idx];
 
-    if (ft8Message.candidate.score < kMin_score) {
+    if (ft8Message.candidate.score < decoder_min_sync_score(decoder)) {
         return ft8Message;
     }
 
@@ -131,6 +146,7 @@ ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder) {
 
     bool found_empty_slot = false;
     bool found_duplicate = false;
+    int probe_count = 0;
 
     do {
         if (decoder->decoded_hashtable[idx_hash] == NULL) {
@@ -144,7 +160,13 @@ ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder) {
             LOG(LOG_DEBUG, "Hash table clash!\n");
             idx_hash = (idx_hash + 1) % kMax_decoded_messages;
         }
-    } while (!found_empty_slot && !found_duplicate);
+        ++probe_count;
+    } while (!found_empty_slot && !found_duplicate && probe_count < kMax_decoded_messages);
+
+    if (!found_empty_slot && !found_duplicate) {
+        // 哈希表已满时避免死循环，直接放弃本条去重写入。
+        LOG(LOG_DEBUG, "Decoded hash table full, drop this message\n");
+    }
 
     if (found_empty_slot) {
         memcpy(&decoder->decoded[idx_hash], &ft8Message.message, sizeof(ft8Message.message));

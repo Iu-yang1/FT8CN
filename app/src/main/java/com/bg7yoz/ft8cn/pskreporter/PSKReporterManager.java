@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /**
  * PSKReporterManager
  *
- * 确保 PSKReporter 上传链路不会阻塞解码流程。
+ * 确保 PSKReporter 上传链路不会阻塞解码流程
  */
 public class PSKReporterManager {
     private static final String TAG = "PSKReporterManager";

@@ -8,7 +8,7 @@
 #include <time.h>
 
 //const int kMin_score = 10; // 候选人的最低同步分数阈值。Minimum sync score threshold for candidates
-const int kMax_candidates = 120;//最大候选人数量
+const int kMax_candidates = 220;//最大候选人数量
 
 const int kMax_decoded_messages = 100;
 //const int kMax_decoded_messages = 50;
@@ -66,4 +66,3 @@ ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder);
 void decoder_ft8_reset(decoder_t *decoder,long utcTime,int num_samples);
 
 void recode(int a174[],int a79[]);
-

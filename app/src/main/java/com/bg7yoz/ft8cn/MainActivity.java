@@ -1,10 +1,9 @@
 package com.bg7yoz.ft8cn;
 /**
  * FT8CN程序的主Activity。本APP采用Fragment框架实现，每个Fragment实现不同的功能。
- * 已修改：
  * 1. 顶部时间条支持 FT8 / FT4 周期切换
  * 2. 发射时序高亮按当前模式判断
- * 3. 顶部时间条改为连续刷新，而不是步进刷新
+ * 3. 顶部时间条改为连续刷新
  *
  * @author BG7YOZ
  * @date 2022.5.6

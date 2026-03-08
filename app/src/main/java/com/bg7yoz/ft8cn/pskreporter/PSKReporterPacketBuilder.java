@@ -10,17 +10,12 @@ import java.util.Locale;
 /**
  * PSKReporterPacketBuilder
  *
- * PSKReporter IPFIX 二进制报文构造器。
+ * PSKReporter IPFIX 二进制报文构造器
  *
- * 当前实现策略：
- * 1. Receiver record 固定使用带 antennaInformation 的模板（template id 0x9992, field count 4）
- * 2. Sender record 固定使用带 senderLocator、不带 sNR/iMD 的模板（template id 0x9993, field count 6）
- * 3. 不在解码线程内做任何阻塞操作；这里只负责纯内存拼包
  *
  * 说明：
- * - 如果 receiver 的 antennaInfo 为空，仍发送 0 长度字符串字段，模板保持稳定。
- * - 如果 senderGrid 为空，则该条记录会被跳过；这与当前 manager 的过滤逻辑一致。
- */
+ * 未做SNR回报
+ * */
 public class PSKReporterPacketBuilder {
 
     // IPFIX header
@@ -81,7 +76,7 @@ public class PSKReporterPacketBuilder {
     }
 
     /**
-     * 真正的 IPFIX packet builder。
+     * IPFIX packet builder。
      */
     public byte[] buildPacket(PSKReporterConfig config,
                               ArrayList<PSKReporterSpot> batch,
