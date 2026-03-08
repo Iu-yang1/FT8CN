@@ -643,12 +643,19 @@ public class FT8TransmitSignal {
         for (int i = messages.size() - 1; i >= 0; i--) {
             Ft8Message ft8Message = messages.get(i);
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;//模式不同不处理
-            if (ft8Message.getSequence() == sequential) continue;//同一个时序下的消息不做解析
             if (toCallsign == null) {
                 continue;
             }
-            if (GeneralVariables.checkIsMyCallsign(ft8Message.getCallsignTo())
-                    && checkCallsignIsCallTo(ft8Message.getCallsignFrom(), toCallsign.callsign)) {
+            boolean isDirectReply = GeneralVariables.checkIsMyCallsign(ft8Message.getCallsignTo())
+                    && checkCallsignIsCallTo(ft8Message.getCallsignFrom(), toCallsign.callsign);
+
+            // FT4 对时钟偏差更敏感：当双机存在约 0.5s 级别偏差时，
+            // 仅靠 sequence 可能把“明确回给我的报文”误判为同序列并过滤。
+            if (!isDirectReply && ft8Message.getSequence() == sequential) {
+                continue;
+            }
+
+            if (isDirectReply) {
 
                 if (GeneralVariables.checkFun3(ft8Message.extraInfo)
                         || GeneralVariables.checkFun2(ft8Message.extraInfo)) {
@@ -675,7 +682,16 @@ public class FT8TransmitSignal {
      * @return 信号报告
      */
     private int getReportFromExtraInfo(String extraInfo) {
-        String s = extraInfo.replace("R", "").trim();
+        if (extraInfo == null) {
+            return -100;
+        }
+        String s = extraInfo.trim().toUpperCase();
+        if (s.startsWith("R")) {
+            s = s.substring(1).trim();
+        }
+        if (!s.matches("[+-]?[0-9]{1,2}")) {
+            return -100;
+        }
         try {
             return Integer.parseInt(s);
         } catch (Exception e) {
@@ -841,12 +857,16 @@ public class FT8TransmitSignal {
         //更新一下通联的列表检查是不是在通联列表中，如果没有记录下来，就保存
         updateQSlRecordList(newOrder, toCallsign);
 
+        boolean resetOnTargetCallOthers = (functionOrder == 4)
+                && (GeneralVariables.getSignalMode() == FT8Common.FT8_MODE)
+                && (checkTargetCallMe(messages) > 1);
+
         if (newOrder == 5
                 || (functionOrder == 5 && newOrder == -1)
                 || (functionOrder == 4 &&
                 (GeneralVariables.noReplyCount > GeneralVariables.noReplyLimit * 2)
                 && (GeneralVariables.noReplyLimit > 0))
-                || (functionOrder == 4 && checkTargetCallMe(messages) > 1)
+                || resetOnTargetCallOthers
                 || (functionOrder == 4 && (GeneralVariables.noReplyCount > 20)
                 && (GeneralVariables.noReplyLimit == 0))) {
 
@@ -859,15 +879,20 @@ public class FT8TransmitSignal {
         }
 
         if (newOrder != -1) {
-            if (newOrder == 1 || newOrder == 2) {
-                resetTargetReport();
-                generateFun();
-            }
+            int nextOrder = newOrder + 1;
+            // 防止深度解码/重复解码把已推进的流程又回退到更低阶段
+            boolean canPromote = functionOrder == 6 || nextOrder > functionOrder;
+            if (canPromote) {
+                if (newOrder == 1 || newOrder == 2) {
+                    resetTargetReport();
+                    generateFun();
+                }
 
-            functionOrder = newOrder + 1;
-            mutableFunctions.postValue(functionList);
-            mutableFunctionOrder.postValue(functionOrder);
-            setCurrentFunctionOrder(functionOrder);
+                functionOrder = nextOrder;
+                mutableFunctions.postValue(functionList);
+                mutableFunctionOrder.postValue(functionOrder);
+                setCurrentFunctionOrder(functionOrder);
+            }
             return;
         }
 
@@ -905,10 +930,20 @@ public class FT8TransmitSignal {
         for (Ft8Message msg : src) {
             if (msg == null) continue;
             if (msg.signalFormat != currentMode) continue;
-            if (msg.getSequence() == sequential) continue;
+            // 同序列报文一般是“我自己这个发送序列”，但保留目标台明确回给我的消息，
+            // 防止 FT4 在双机小时差下误过滤。
+            if (msg.getSequence() == sequential && !isDirectReplyToCurrentTarget(msg)) continue;
             result.add(msg);
         }
         return result;
+    }
+
+    private boolean isDirectReplyToCurrentTarget(Ft8Message msg) {
+        if (msg == null || toCallsign == null) {
+            return false;
+        }
+        return GeneralVariables.checkIsMyCallsign(msg.getCallsignTo())
+                && checkCallsignIsCallTo(msg.getCallsignFrom(), toCallsign.callsign);
     }
 
     private boolean hasUsableMessage(ArrayList<Ft8Message> messages) {
