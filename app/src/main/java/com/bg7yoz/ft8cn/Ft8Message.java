@@ -460,6 +460,33 @@ public class Ft8Message {
         return i3 == 0 && n3 == 1;
     }
 
+    public boolean isAutoReplySupportedMessageType() {
+        if (!isValid) {
+            return false;
+        }
+        if (isDxpeditionCompoundMessage()) {
+            return true;
+        }
+        return i3 == 1 || i3 == 2 || i3 == 4;
+    }
+
+    public boolean isAutoFlowRelevant() {
+        if (!isAutoReplySupportedMessageType()) {
+            return false;
+        }
+
+        String autoFrom = getAutoReplyCallsignFrom();
+        if (autoFrom.length() == 0) {
+            return false;
+        }
+
+        if (checkIsCQ()) {
+            return true;
+        }
+
+        return getAutoReplyCallsignTo().length() > 0;
+    }
+
     public String getDirectCallsignFrom() {
         return cleanCallsignValue(callsignFrom);
     }
