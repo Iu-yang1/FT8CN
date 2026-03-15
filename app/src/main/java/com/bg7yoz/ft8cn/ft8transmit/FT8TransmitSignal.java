@@ -662,6 +662,9 @@ public class FT8TransmitSignal {
 
         int fromCount = 1;
         for (Ft8Message ft8Message : messages) {
+            if (!ft8Message.isAutoFlowRelevant()) {
+                continue;
+            }
             if (GeneralVariables.checkIsMyCallsign(ft8Message.getAutoReplyCallsignTo())
                     && checkCallsignIsCallTo(ft8Message.getAutoReplyCallsignFrom(), toCallsign.callsign)) {
                 return 0;
@@ -688,6 +691,9 @@ public class FT8TransmitSignal {
             return -1;
         }
         for (Ft8Message ft8Message : messages) {
+            if (!ft8Message.isAutoFlowRelevant()) {
+                continue;
+            }
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) {
                 continue;
             }
@@ -726,7 +732,7 @@ public class FT8TransmitSignal {
         return -1;
     }
 
-/*
+    /**
         for (Ft8Message ft8Message : messages) {
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;//模式不同不处理
             boolean isDirectReply = GeneralVariables.checkIsMyCallsign(ft8Message.getCallsignTo())
@@ -797,7 +803,8 @@ public class FT8TransmitSignal {
         if (msg == null) {
             return true;
         }
-        return isSameSequenceButNotCallToMe(msg)
+        return !msg.isAutoFlowRelevant()
+                || isSameSequenceButNotCallToMe(msg)
                 || msg.signalFormat != GeneralVariables.getSignalMode()
                 || GeneralVariables.checkIsExcludeCallsign(msg.getAutoReplyCallsignFrom());
     }
@@ -937,11 +944,21 @@ public class FT8TransmitSignal {
             return;
         }
         if (msgList == null || msgList.size() == 0) {
+            if (functionOrder == 5) {
+                resetToCQ();
+                setCurrentFunctionOrder(functionOrder);
+                mutableFunctionOrder.postValue(functionOrder);
+            }
             return;
         }
 
         ArrayList<Ft8Message> messages = filterAutoMessages(new ArrayList<>(msgList));
         if (messages.size() == 0) {
+            if (functionOrder == 5) {
+                resetToCQ();
+                setCurrentFunctionOrder(functionOrder);
+                mutableFunctionOrder.postValue(functionOrder);
+            }
             return;
         }
 
@@ -1025,9 +1042,11 @@ public class FT8TransmitSignal {
 
         for (Ft8Message msg : src) {
             if (msg == null) continue;
+            if (!msg.isAutoFlowRelevant()) continue;
             if (msg.signalFormat != currentMode) continue;
             // 同序列报文一般是“我自己这个发送序列”，但保留目标台明确回给我的消息，
             // 防止 FT4 在双机小时差下误过滤。
+            if (isSameSequenceButNotCallToMe(msg) && !isDirectReplyToCurrentTarget(msg)) continue;
             if (isSameSequenceButNotCallToMe(msg) && !isDirectReplyToCurrentTarget(msg)) continue;
             result.add(msg);
         }
@@ -1045,6 +1064,7 @@ public class FT8TransmitSignal {
     private boolean hasUsableMessage(ArrayList<Ft8Message> messages) {
         for (Ft8Message msg : messages) {
             if (msg == null) continue;
+            if (!msg.isAutoFlowRelevant()) continue;
             if (!msg.isWeakSignal) {
                 return true;
             }
@@ -1061,6 +1081,7 @@ public class FT8TransmitSignal {
     public boolean getNewTargetCallsign(ArrayList<Ft8Message> messages) {
         if (toCallsign == null) return false;
         for (Ft8Message ft8Message : messages) {
+            if (!ft8Message.isAutoFlowRelevant()) continue;
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;
             // Only enforce band match when decoded message carries a valid RF band.
             if (ft8Message.band > 0 && ft8Message.band != GeneralVariables.band) continue;

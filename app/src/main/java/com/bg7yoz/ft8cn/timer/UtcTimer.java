@@ -78,6 +78,7 @@ public class UtcTimer {
      * 实例级时间偏移（毫秒）
      */
     private int time_sec = 0;
+    private volatile long lastTriggeredSlotIndex = Long.MIN_VALUE;
 
     private final ExecutorService cachedThreadPool = Executors.newCachedThreadPool();
     private final Runnable doSomething = new Runnable() {
@@ -187,11 +188,13 @@ public class UtcTimer {
             public void run() {
                 try {
                     utc = getSystemTime();
+                    long currentSlotIndex = getSlotIndex(utc);
 
                     // 转换为0.1秒单位的时间轴
                     long tick100ms = (utc - time_sec) / 100L;
 
-                    if (running && (tick100ms % sec == 0)) {
+                    if (running && currentSlotIndex > lastTriggeredSlotIndex) {
+                        lastTriggeredSlotIndex = currentSlotIndex;
                         cachedThreadPool.execute(doSomething);
 
                         if (doOnce) {
@@ -199,8 +202,7 @@ public class UtcTimer {
                             return;
                         }
 
-                        long sleepMs = sec * 100L;
-                        Thread.sleep(sleepMs);
+                        Thread.sleep(1);
                     }
                 } catch (InterruptedException e) {
                     e.printStackTrace();
@@ -221,6 +223,7 @@ public class UtcTimer {
     }
 
     public void start() {
+        lastTriggeredSlotIndex = getSlotIndex(getSystemTime());
         running = true;
     }
 
@@ -240,6 +243,7 @@ public class UtcTimer {
      */
     public void setTime_sec(int time_sec) {
         this.time_sec = time_sec;
+        lastTriggeredSlotIndex = getSlotIndex(getSystemTime());
     }
 
     /**
@@ -253,6 +257,10 @@ public class UtcTimer {
 
     public long getUtc() {
         return utc;
+    }
+
+    private long getSlotIndex(long utc) {
+        return (utc - time_sec) / (sec * 100L);
     }
 
     /**
@@ -375,54 +383,58 @@ public class UtcTimer {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                NTPUDPClient timeClient = new NTPUDPClient();
-                timeClient.setDefaultTimeout(3000);
-
                 String targetServer = (server == null || server.trim().length() == 0)
                         ? "pool.ntp.org"
                         : server.trim();
 
                 try {
-                    InetAddress inetAddress = InetAddress.getByName(targetServer);
-                    TimeInfo timeInfo = timeClient.getTime(inetAddress);
-                    timeInfo.computeDetails();
+                    NtpSyncResult bestResult = queryNtpServer(targetServer);
 
-                    Long offset = timeInfo.getOffset();
-                    Long roundTrip = timeInfo.getDelay();
-
-                    long localNow = System.currentTimeMillis();
-                    long serverTime = timeInfo.getMessage().getTransmitTimeStamp().getTime();
-
-                    long trueOffset = (offset != null) ? offset : (serverTime - localNow);
-
-                    int realOffsetMs = (int) trueOffset;
-                    int alignedOffsetMs = alignDelayToFt8Slot(trueOffset);
-                    long syncTimeMs = System.currentTimeMillis();
-
-                    realDelay = realOffsetMs;
-                    delay = alignedOffsetMs;
-                    lastNtpRoundTripDelay = roundTrip == null ? -1 : roundTrip;
-                    lastSyncTime = syncTimeMs;
+                    realDelay = bestResult.realOffsetMs;
+                    delay = bestResult.alignedOffsetMs;
+                    lastNtpRoundTripDelay = bestResult.roundTripDelayMs;
+                    lastSyncTime = bestResult.syncTimeMs;
                     lastSyncServer = targetServer;
 
                     if (afterSyncTimeDetail != null) {
-                        afterSyncTimeDetail.doAfterSyncTimer(new NtpSyncResult(
-                                targetServer,
-                                realOffsetMs,
-                                alignedOffsetMs,
-                                lastNtpRoundTripDelay,
-                                syncTimeMs
-                        ));
+                        afterSyncTimeDetail.doAfterSyncTimer(bestResult);
                     }
                 } catch (IOException e) {
                     if (afterSyncTimeDetail != null) {
                         afterSyncTimeDetail.syncFailed(e);
                     }
-                } finally {
-                    timeClient.close();
                 }
             }
         }).start();
+    }
+
+    private static NtpSyncResult queryNtpServer(String targetServer) throws IOException {
+        NTPUDPClient timeClient = new NTPUDPClient();
+        timeClient.setDefaultTimeout(3000);
+
+        try {
+            InetAddress inetAddress = InetAddress.getByName(targetServer);
+            TimeInfo timeInfo = timeClient.getTime(inetAddress);
+            timeInfo.computeDetails();
+
+            Long offset = timeInfo.getOffset();
+            Long roundTrip = timeInfo.getDelay();
+
+            long localNow = System.currentTimeMillis();
+            long serverTime = timeInfo.getMessage().getTransmitTimeStamp().getTime();
+
+            long trueOffset = (offset != null) ? offset : (serverTime - localNow);
+
+            return new NtpSyncResult(
+                    targetServer,
+                    (int) trueOffset,
+                    alignDelayToFt8Slot(trueOffset),
+                    roundTrip == null ? -1 : roundTrip,
+                    System.currentTimeMillis()
+            );
+        } finally {
+            timeClient.close();
+        }
     }
 
     public interface AfterSyncTime {

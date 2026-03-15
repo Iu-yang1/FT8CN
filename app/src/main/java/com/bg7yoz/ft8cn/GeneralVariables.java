@@ -436,7 +436,10 @@ public class GeneralVariables {
         }
 
         if (ntpServerIndex <= NTP_SERVER_INDEX_AUTO) {
-            return "time.windows.com";
+            if (lastNtpServer != null && lastNtpServer.trim().length() > 0) {
+                return lastNtpServer.trim();
+            }
+            return "pool.ntp.org";
         }
 
         if (ntpServerIndex >= 0 && ntpServerIndex < NTP_SERVER_ITEMS.length) {
@@ -446,7 +449,7 @@ public class GeneralVariables {
             }
         }
 
-        return "time.windows.com";
+        return "pool.ntp.org";
     }
 
     public static void setNtpEnable(boolean enable) {

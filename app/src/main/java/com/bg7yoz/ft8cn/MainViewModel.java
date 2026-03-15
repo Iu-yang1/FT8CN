@@ -297,7 +297,7 @@ public class MainViewModel extends ViewModel {
 
                 findIncludedCallsigns(messages);
 
-                if (ft8TransmitSignal != null && !ft8TransmitSignal.isTransmitting()) {
+                if (ft8TransmitSignal != null) {
                     ft8TransmitSignal.parseMessageToFunction(messages);
                 }
 
@@ -563,6 +563,9 @@ public class MainViewModel extends ViewModel {
 
         int count = 0;
         for (Ft8Message msg : messages) {
+            if (msg == null || !msg.isAutoFlowRelevant()) {
+                continue;
+            }
             String rawFrom = msg.getCallsignFrom();
             String rawTo = msg.getCallsignTo();
             String autoFrom = msg.getAutoReplyCallsignFrom();
