@@ -5,6 +5,7 @@
 #endif
 
 #include "unpack.h"
+#include <string.h>
 
 #include "text.h"
 // #include <stdio.h>//为防止警告
@@ -115,6 +116,52 @@ int unpack_callsign(uint32_t n28, uint8_t ip, uint8_t i3, char *result,hashCode 
     }
 
     return 0; // Success
+}
+
+static void unpack_type0_payload71(const uint8_t *a77, uint8_t *payload71) {
+    uint8_t carry = 0;
+    for (int i = 0; i < 9; ++i) {
+        payload71[i] = carry | (a77[i] >> 1);
+        carry = (a77[i] & 0x01) ? 0x80 : 0;
+    }
+}
+
+static uint32_t read_bits_be(const uint8_t *data, int start_bit, int bit_count) {
+    uint32_t value = 0;
+    for (int i = 0; i < bit_count; ++i) {
+        int bit_index = start_bit + i;
+        int byte_index = bit_index / 8;
+        int bit_in_byte = 7 - (bit_index % 8);
+        value = (value << 1) | ((data[byte_index] >> bit_in_byte) & 0x01);
+    }
+    return value;
+}
+
+static int unpack_type0_dxpedition(const uint8_t *a77, message_t *message) {
+    uint8_t payload71[9];
+    unpack_type0_payload71(a77, payload71);
+
+    uint32_t n28a = read_bits_be(payload71, 1, 28);
+    uint32_t n28b = read_bits_be(payload71, 29, 28);
+    uint16_t n10 = (uint16_t) read_bits_be(payload71, 57, 10);
+    uint8_t n5 = (uint8_t) read_bits_be(payload71, 67, 5);
+    hashCode dx_hash = {0, 0, 0};
+
+    if (unpack_callsign(n28a, 0, 0, message->call_to, &message->call_to_hash) < 0) {
+        return -1;
+    }
+    if (unpack_callsign(n28b, 0, 0, message->dx_call_to2, &dx_hash) < 0) {
+        return -2;
+    }
+
+    strcpy(message->call_de, "<...>");
+    message->call_de_hash.hash10 = n10;
+    message->call_de_hash.hash12 = 0;
+    message->call_de_hash.hash22 = 0;
+
+    message->report = ((int) n5 * 2) - 30;
+    int_to_dd(message->extra, message->report, 2, true);
+    return 0;
 }
 
 //int unpack_type1(const uint8_t *a77, uint8_t i3, char *call_to, char *call_de, char *extra) {
@@ -547,9 +594,10 @@ int unpack77_fields_(const uint8_t *a77, message_t *message) {
             // 0.0  Free text
             return unpack_text(a77, message->extra);
         }
-            // else if (i3 == 0 && n3 == 1) {
-            //     // 0.1  K1ABC RR73; W9XYZ <KH1/KH7Z> -11   28 28 10 5       71   DXpedition Mode
-            // }
+        else if (message->n3 == 1) {
+            // 0.1  K1ABC RR73; W9XYZ <KH1/KH7Z> -11
+            return unpack_type0_dxpedition(a77, message);
+        }
             // else if (i3 == 0 && n3 == 2) {
             //     // 0.2  PA3XYZ/P R 590003 IO91NP           28 1 1 3 12 25   70   EU VHF contest
             // }
@@ -599,10 +647,26 @@ int unpackToMessage_t(const uint8_t *a77, message_t *message) {
         return rc;
 
 
-    // int msg_sz = strlen(call_to) + strlen(call_de) + strlen(extra) + 2;
     char *dst = message->text;
 
     message->text[0] = '\0';
+
+    if (message->i3 == 0 && message->n3 == 1) {
+        dst = strcpy(dst, message->call_to);
+        dst += strlen(message->call_to);
+        dst = strcpy(dst, " RR73; ");
+        dst += strlen(" RR73; ");
+        dst = strcpy(dst, message->dx_call_to2);
+        dst += strlen(message->dx_call_to2);
+        *dst++ = ' ';
+        dst = strcpy(dst, message->call_de);
+        dst += strlen(message->call_de);
+        *dst++ = ' ';
+        dst = strcpy(dst, message->extra);
+        dst += strlen(message->extra);
+        *dst = '\0';
+        return 0;
+    }
 
     if (message->call_to[0] != '\0') {
         // dst = stpcpy(dst, call_to); //除错

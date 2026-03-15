@@ -254,7 +254,9 @@ public class FT8TransmitSignal {
     }
 
     private int nextOrderFromIncoming(Ft8Message message) {
-        int order = GeneralVariables.checkFunOrder(message);
+        int order = message.checkIsCQ()
+                ? 6
+                : GeneralVariables.checkFunOrderByExtraInfo(message.getAutoReplyExtraInfo());
         if (order < 1 || order > 5) {
             return 2;
         }
@@ -654,13 +656,17 @@ public class FT8TransmitSignal {
             return 1;
         }
 
+        if (messages == null) {
+            return 1;
+        }
+
         int fromCount = 1;
         for (Ft8Message ft8Message : messages) {
-            if (GeneralVariables.checkIsMyCallsign(ft8Message.getCallsignTo())
-                    && checkCallsignIsCallTo(ft8Message.getCallsignFrom(), toCallsign.callsign)) {
+            if (GeneralVariables.checkIsMyCallsign(ft8Message.getAutoReplyCallsignTo())
+                    && checkCallsignIsCallTo(ft8Message.getAutoReplyCallsignFrom(), toCallsign.callsign)) {
                 return 0;
             }
-            if (checkCallsignIsCallTo(ft8Message.getCallsignFrom(), toCallsign.callsign)) {
+            if (checkCallsignIsCallTo(ft8Message.getAutoReplyCallsignFrom(), toCallsign.callsign)) {
                 fromCount++;//计数器，from是目标呼号的情况
             }
         }
@@ -678,6 +684,49 @@ public class FT8TransmitSignal {
             return -1;
         }
 
+        if (messages == null) {
+            return -1;
+        }
+        for (Ft8Message ft8Message : messages) {
+            if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) {
+                continue;
+            }
+
+            String autoReplyTo = ft8Message.getAutoReplyCallsignTo();
+            String autoReplyFrom = ft8Message.getAutoReplyCallsignFrom();
+            String autoReplyExtra = ft8Message.getAutoReplyExtraInfo();
+            boolean isDirectReply = GeneralVariables.checkIsMyCallsign(autoReplyTo)
+                    && checkCallsignIsCallTo(autoReplyFrom, toCallsign.callsign);
+
+            if (!isDirectReply && ft8Message.getSequence() == sequential) {
+                continue;
+            }
+
+            if (!isDirectReply) {
+                continue;
+            }
+
+            if (GeneralVariables.checkFun3(autoReplyExtra)
+                    || GeneralVariables.checkFun2(autoReplyExtra)) {
+                receivedReport = getReportFromExtraInfo(autoReplyExtra);
+                receiveTargetReport = receivedReport;
+                if (receivedReport == -100) {
+                    receivedReport = ft8Message.report;
+                }
+            }
+
+            sendReport = ft8Message.snr;
+            int order = ft8Message.checkIsCQ()
+                    ? 6
+                    : GeneralVariables.checkFunOrderByExtraInfo(autoReplyExtra);
+            if (order != -1) {
+                return order;
+            }
+        }
+        return -1;
+    }
+
+/*
         for (Ft8Message ft8Message : messages) {
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;//模式不同不处理
             boolean isDirectReply = GeneralVariables.checkIsMyCallsign(ft8Message.getCallsignTo())
@@ -708,6 +757,7 @@ public class FT8TransmitSignal {
 
         return -1;//说明没找到消息
     }
+*/
 
     /**
      * 从扩展消息中获取对方给的信号报告，获取失败，值-100
@@ -744,14 +794,20 @@ public class FT8TransmitSignal {
      * @return 是/否
      */
     private boolean isExcludeMessage(Ft8Message msg) {
+        if (msg == null) {
+            return true;
+        }
         return isSameSequenceButNotCallToMe(msg)
                 || msg.signalFormat != GeneralVariables.getSignalMode()
-                || GeneralVariables.checkIsExcludeCallsign(msg.callsignFrom);
+                || GeneralVariables.checkIsExcludeCallsign(msg.getAutoReplyCallsignFrom());
     }
 
     private boolean isSameSequenceButNotCallToMe(Ft8Message msg) {
+        if (msg == null) {
+            return false;
+        }
         return msg.getSequence() == sequential
-                && !GeneralVariables.checkIsMyCallsign(msg.getCallsignTo());
+                && !GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo());
     }
 
     /**
@@ -766,13 +822,13 @@ public class FT8TransmitSignal {
             if (isExcludeMessage(msg)) continue;
             if (toCallsign == null) break;
 
-            if (GeneralVariables.checkIsMyCallsign(msg.getCallsignTo())
-                    && checkCallsignIsCallTo(msg.getCallsignFrom(), toCallsign.callsign)
-                    && !GeneralVariables.checkFun5(msg.extraInfo)) {
-                setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
+            if (GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo())
+                    && checkCallsignIsCallTo(msg.getAutoReplyCallsignFrom(), toCallsign.callsign)
+                    && !GeneralVariables.checkFun5(msg.getAutoReplyExtraInfo())) {
+                setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getAutoReplyCallsignFrom(), msg.freq_hz
                                 , msg.getSequence(), msg.snr)
                         , nextOrderFromIncoming(msg)
-                        , msg.extraInfo);
+                        , msg.getAutoReplyExtraInfo());
                 return true;
             }
         }
@@ -784,12 +840,12 @@ public class FT8TransmitSignal {
         //检查CQ我，不是73
         for (Ft8Message msg : messages) {
             if (isExcludeMessage(msg)) continue;
-            if ((GeneralVariables.checkIsMyCallsign(msg.getCallsignTo())
-                    && !GeneralVariables.checkFun5(msg.extraInfo))) {
-                setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
+            if ((GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo())
+                    && !GeneralVariables.checkFun5(msg.getAutoReplyExtraInfo()))) {
+                setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getAutoReplyCallsignFrom(), msg.freq_hz
                                 , msg.getSequence(), msg.snr)
                         , nextOrderFromIncoming(msg)
-                        , msg.extraInfo);
+                        , msg.getAutoReplyExtraInfo());
                 return true;
             }
         }
@@ -982,8 +1038,8 @@ public class FT8TransmitSignal {
         if (msg == null || toCallsign == null) {
             return false;
         }
-        return GeneralVariables.checkIsMyCallsign(msg.getCallsignTo())
-                && checkCallsignIsCallTo(msg.getCallsignFrom(), toCallsign.callsign);
+        return GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo())
+                && checkCallsignIsCallTo(msg.getAutoReplyCallsignFrom(), toCallsign.callsign);
     }
 
     private boolean hasUsableMessage(ArrayList<Ft8Message> messages) {

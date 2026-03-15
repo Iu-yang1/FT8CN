@@ -72,7 +72,7 @@ public class MyCallingFragment extends Fragment {
             GeneralVariables.transmitMessages.add(message);//把消息添加到关注列表中
         }
         // 呼叫发起者
-        mainViewModel.ft8TransmitSignal.setTransmit(message.getFromCallTransmitCallsign(), 1, message.extraInfo);
+        mainViewModel.ft8TransmitSignal.setTransmit(message.getFromCallTransmitCallsign(), 1, message.getAutoReplyExtraInfo());
         mainViewModel.ft8TransmitSignal.transmitNow();
 
         GeneralVariables.resetLaunchSupervision();//复位自动监管
@@ -97,7 +97,7 @@ public class MyCallingFragment extends Fragment {
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
                 }
-                mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getToCallTransmitCallsign(), 1, ft8Message.extraInfo);
+                mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getToCallTransmitCallsign(), 1, ft8Message.getAutoReplyExtraInfo());
                 mainViewModel.ft8TransmitSignal.transmitNow();
                 break;
 
@@ -113,7 +113,7 @@ public class MyCallingFragment extends Fragment {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
                     GeneralVariables.transmitMessages.add(ft8Message);//把消息添加到关注列表中
                 }
-                mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getFromCallTransmitCallsign(), -1, ft8Message.extraInfo);
+                mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getFromCallTransmitCallsign(), -1, ft8Message.getAutoReplyExtraInfo());
                 mainViewModel.ft8TransmitSignal.transmitNow();
                 break;
 

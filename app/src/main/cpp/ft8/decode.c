@@ -596,7 +596,8 @@ ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_itera
         }
     }
 
-    message->call_to[0] = message->call_de[0] = message->maidenGrid[0] = message->extra[0] = '\0';
+    message->call_to[0] = message->call_de[0] = message->dx_call_to2[0] =
+            message->maidenGrid[0] = message->extra[0] = '\0';
     message->call_de_hash.hash10 = message->call_de_hash.hash12 = message->call_de_hash.hash22 = 0;
     message->call_to_hash.hash10 = message->call_to_hash.hash12 = message->call_to_hash.hash22 = 0;
     message->report = -100;
@@ -608,6 +609,7 @@ ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_itera
         // CRC/FEC 已通过但当前实现不支持该消息类型时，保留占位文本而不直接丢弃
         message->call_to[0] = '\0';
         message->call_de[0] = '\0';
+        message->dx_call_to2[0] = '\0';
         message->maidenGrid[0] = '\0';
         message->call_de_hash.hash10 = message->call_de_hash.hash12 = message->call_de_hash.hash22 = 0;
         message->call_to_hash.hash10 = message->call_to_hash.hash12 = message->call_to_hash.hash22 = 0;

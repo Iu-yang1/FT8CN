@@ -78,6 +78,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *e
     jfieldID n3 = env->GetFieldID(objectClass, "n3", "I");
     jfieldID callsignFrom = env->GetFieldID(objectClass, "callsignFrom", "Ljava/lang/String;");
     jfieldID callsignTo = env->GetFieldID(objectClass, "callsignTo", "Ljava/lang/String;");
+    jfieldID dxCallTo2 = env->GetFieldID(objectClass, "dx_call_to2", "Ljava/lang/String;");
     jfieldID extraInfo = env->GetFieldID(objectClass, "extraInfo", "Ljava/lang/String;");
     jfieldID maidenGrid = env->GetFieldID(objectClass, "maidenGrid", "Ljava/lang/String;");
     jfieldID report = env->GetFieldID(objectClass, "report", "I");
@@ -108,6 +109,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *e
         env->SetIntField(ft8Message, n3, message.message.n3);
         env->SetObjectField(ft8Message, callsignFrom, env->NewStringUTF(message.message.call_de));
         env->SetObjectField(ft8Message, callsignTo, env->NewStringUTF(message.message.call_to));
+        env->SetObjectField(ft8Message, dxCallTo2, env->NewStringUTF(message.message.dx_call_to2));
         env->SetObjectField(ft8Message, extraInfo, env->NewStringUTF(message.message.extra));
         env->SetObjectField(ft8Message, maidenGrid, env->NewStringUTF(message.message.maidenGrid));
         env->SetIntField(ft8Message, report, message.message.report);

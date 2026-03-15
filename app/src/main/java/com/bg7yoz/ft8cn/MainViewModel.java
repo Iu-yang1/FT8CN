@@ -563,13 +563,24 @@ public class MainViewModel extends ViewModel {
 
         int count = 0;
         for (Ft8Message msg : messages) {
-            if (GeneralVariables.checkIsMyCallsign(msg.getCallsignFrom())
-                    || GeneralVariables.checkIsMyCallsign(msg.getCallsignTo())
-                    || GeneralVariables.callsignInFollow(msg.getCallsignFrom())
-                    || (GeneralVariables.callsignInFollow(msg.getCallsignTo()) && (msg.getCallsignTo() != null))
+            String rawFrom = msg.getCallsignFrom();
+            String rawTo = msg.getCallsignTo();
+            String autoFrom = msg.getAutoReplyCallsignFrom();
+            String autoTo = msg.getAutoReplyCallsignTo();
+
+            if (GeneralVariables.checkIsMyCallsign(rawFrom)
+                    || GeneralVariables.checkIsMyCallsign(rawTo)
+                    || GeneralVariables.checkIsMyCallsign(autoFrom)
+                    || GeneralVariables.checkIsMyCallsign(autoTo)
+                    || GeneralVariables.callsignInFollow(rawFrom)
+                    || GeneralVariables.callsignInFollow(rawTo)
+                    || GeneralVariables.callsignInFollow(autoFrom)
+                    || GeneralVariables.callsignInFollow(autoTo)
                     || (GeneralVariables.autoFollowCQ && msg.checkIsCQ())) {
-                msg.isQSL_Callsign = GeneralVariables.checkQSLCallsign(msg.getCallsignFrom());
-                if (!GeneralVariables.checkIsExcludeCallsign(msg.callsignFrom)) {
+                String qslCallsign = autoFrom.length() > 0 ? autoFrom : rawFrom;
+                msg.isQSL_Callsign = GeneralVariables.checkQSLCallsign(qslCallsign);
+                String excludeCallsign = autoFrom.length() > 0 ? autoFrom : rawFrom;
+                if (!GeneralVariables.checkIsExcludeCallsign(excludeCallsign)) {
                     count++;
                     GeneralVariables.transmitMessages.add(msg);
                 }

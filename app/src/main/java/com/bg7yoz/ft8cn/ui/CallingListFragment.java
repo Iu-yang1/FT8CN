@@ -319,7 +319,7 @@ public class CallingListFragment extends Fragment {
         }
         //呼叫发启者
         mainViewModel.ft8TransmitSignal.setTransmit(message.getFromCallTransmitCallsign()
-                , 1, message.extraInfo);
+                , 1, message.getAutoReplyExtraInfo());
         mainViewModel.ft8TransmitSignal.transmitNow();
         GeneralVariables.resetLaunchSupervision();//复位自动监管
         navigateToMyCallFragment();//跳转到发射界面
@@ -377,7 +377,7 @@ public class CallingListFragment extends Fragment {
                 }
                 //呼叫被呼叫对象
                 mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getToCallTransmitCallsign()
-                        , 1, ft8Message.extraInfo);
+                        , 1, ft8Message.getAutoReplyExtraInfo());
                 mainViewModel.ft8TransmitSignal.transmitNow();
 
                 navigateToMyCallFragment();//跳转到发射界面
@@ -401,7 +401,7 @@ public class CallingListFragment extends Fragment {
                 }
                 //呼叫发启者
                 mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getFromCallTransmitCallsign()
-                        , -1, ft8Message.extraInfo);
+                        , -1, ft8Message.getAutoReplyExtraInfo());
                 mainViewModel.ft8TransmitSignal.transmitNow();
                 GeneralVariables.resetLaunchSupervision();//复位自动监管
                 navigateToMyCallFragment();//跳转到发射界面

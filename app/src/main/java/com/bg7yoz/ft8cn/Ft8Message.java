@@ -197,6 +197,7 @@ public class Ft8Message {
             }
 
             extraInfo = message.extraInfo;
+            dx_call_to2 = message.dx_call_to2;
             maidenGrid = message.maidenGrid;
             modifier = message.modifier;
             report = message.report;
@@ -229,7 +230,6 @@ public class Ft8Message {
 
             arrl_class = message.arrl_class;
             arrl_rac = message.arrl_rac;
-            dx_call_to2 = message.dx_call_to2;
 
             fromWhere = message.fromWhere;
             toWhere = message.toWhere;
@@ -310,11 +310,15 @@ public class Ft8Message {
         }
 
         if (i3 == 0 && (n3 == 1)) {//说明是DXpedition
+            String foxDisplayCallsign = getDxpeditionFoxCallsign();
+            if (foxDisplayCallsign.length() == 0) {
+                foxDisplayCallsign = safeCallFrom;
+            }
             return String.format("%s RR73; %s %s %s%d",
                     safeCallTo,
-                    dx_call_to2 == null ? "" : dx_call_to2,
-                    hashList.getCallsign(new long[]{callFromHash10}),
-                    report > 0 ? "+" : "-",
+                    getDxpeditionSecondCallsign(),
+                    foxDisplayCallsign,
+                    report >= 0 ? "+" : "-",
                     Math.abs(report)
             ).trim();
         }
@@ -426,7 +430,72 @@ public class Ft8Message {
      */
     public boolean inMyCall() {
         return GeneralVariables.checkIsMyCallsign(this.callsignFrom == null ? "" : this.callsignFrom)
-                || GeneralVariables.checkIsMyCallsign(this.callsignTo == null ? "" : this.callsignTo);
+                || GeneralVariables.checkIsMyCallsign(this.callsignTo == null ? "" : this.callsignTo)
+                || GeneralVariables.checkIsMyCallsign(getDxpeditionSecondCallsign());
+    }
+
+    private String cleanCallsignValue(String callsign) {
+        if (callsign == null) {
+            return "";
+        }
+        String cleaned = callsign.replace("<", "").replace(">", "").trim();
+        if ("...".equals(cleaned)) {
+            return "";
+        }
+        return cleaned;
+    }
+
+    private String normalizeExtraInfo(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.trim().toUpperCase();
+    }
+
+    private String formatReportString(int reportValue) {
+        return String.format("%+d", reportValue);
+    }
+
+    public boolean isDxpeditionCompoundMessage() {
+        return i3 == 0 && n3 == 1;
+    }
+
+    public String getDirectCallsignFrom() {
+        return cleanCallsignValue(callsignFrom);
+    }
+
+    public String getDxpeditionSecondCallsign() {
+        return cleanCallsignValue(dx_call_to2);
+    }
+
+    public String getDxpeditionFoxCallsign() {
+        String direct = getDirectCallsignFrom();
+        if (!direct.isEmpty()) {
+            return direct;
+        }
+        String resolved = hashList.getCallsign(new long[]{callFromHash10, callFromHash12, callFromHash22});
+        return cleanCallsignValue(resolved);
+    }
+
+    public String getAutoReplyCallsignFrom() {
+        if (isDxpeditionCompoundMessage()) {
+            return getDxpeditionFoxCallsign();
+        }
+        return getDirectCallsignFrom();
+    }
+
+    public String getAutoReplyCallsignTo() {
+        if (isDxpeditionCompoundMessage()) {
+            return getDxpeditionSecondCallsign();
+        }
+        return getCallsignTo();
+    }
+
+    public String getAutoReplyExtraInfo() {
+        if (isDxpeditionCompoundMessage() && report != -100) {
+            return formatReportString(report);
+        }
+        return normalizeExtraInfo(extraInfo);
     }
 
     /**
@@ -550,10 +619,11 @@ public class Ft8Message {
 
     // 获取发送者的传输对象
     public TransmitCallsign getFromCallTransmitCallsign() {
+        String autoFrom = getAutoReplyCallsignFrom();
         TransmitCallsign result = new TransmitCallsign(
                 this.i3,
                 this.n3,
-                this.callsignFrom,
+                autoFrom.length() > 0 ? autoFrom : getDirectCallsignFrom(),
                 freq_hz,
                 this.getSequence(),
                 snr
