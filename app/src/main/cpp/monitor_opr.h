@@ -8,6 +8,9 @@
 #include "fft/kiss_fftr.h"
 #include "common/debug.h"
 
+#ifdef LOG_LEVEL
+#undef LOG_LEVEL
+#endif
 #define LOG_LEVEL LOG_INFO
 
 

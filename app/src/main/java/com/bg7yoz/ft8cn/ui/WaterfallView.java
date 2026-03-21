@@ -16,7 +16,6 @@ import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.Rect;
 import android.graphics.Shader;
 import android.util.AttributeSet;
 import android.util.TypedValue;
@@ -30,10 +29,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Iterator;
 import java.util.List;
-import java.util.ListIterator;
 
 public class WaterfallView extends View {
     private int blockHeight = 2;//色块高度
@@ -43,6 +39,9 @@ public class WaterfallView extends View {
     private int lastSequential = 0;
     private Bitmap lastBitMap = null;
     private Canvas _canvas;
+    private Bitmap scrollBitmap = null;
+    private Canvas scrollCanvas = null;
+    private int[] colorBuffer = new int[0];
     private final Paint linePaint = new Paint();
     private Paint touchPaint = new Paint();
     private final Paint fontPaint = new Paint();
@@ -50,7 +49,7 @@ public class WaterfallView extends View {
     private final Paint textLinePaint = new Paint();
 //    private final Paint messagePaintBack = new Paint();//消息背景
     private final Paint utcPaint = new Paint();
-    Paint linearPaint = new Paint();
+    private final Paint linearPaint = new Paint();
     private final Paint utcPainBack = new Paint();
     private float pathStart = 0;
     private float pathEnd = 0;
@@ -70,7 +69,7 @@ public class WaterfallView extends View {
     public WaterfallView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
     }
-    ArrayList<Ft8Message> messages= new ArrayList<>();
+    private final ArrayList<Ft8Message> messages = new ArrayList<>();
 
 
     /**
@@ -84,13 +83,49 @@ public class WaterfallView extends View {
                 , getResources().getDisplayMetrics());
     }
 
+    private void ensureScrollBuffer(int width, int height) {
+        int scrollHeight = height - blockHeight;
+        if (width <= 0 || scrollHeight <= 0) {
+            scrollBitmap = null;
+            scrollCanvas = null;
+            return;
+        }
+
+        if (scrollBitmap == null
+                || scrollBitmap.getWidth() != width
+                || scrollBitmap.getHeight() != scrollHeight) {
+            if (scrollBitmap != null) {
+                scrollBitmap.recycle();
+            }
+            scrollBitmap = Bitmap.createBitmap(width, scrollHeight, ARGB_8888);
+            scrollCanvas = new Canvas(scrollBitmap);
+        }
+    }
+
+    private void shiftBitmapDown(Paint paint) {
+        if (lastBitMap == null || _canvas == null) {
+            return;
+        }
+        ensureScrollBuffer(getWidth(), getHeight());
+        if (scrollBitmap == null || scrollCanvas == null) {
+            return;
+        }
+        scrollCanvas.drawBitmap(lastBitMap, 0, 0, null);
+        _canvas.drawBitmap(scrollBitmap, 0, blockHeight, paint);
+    }
+
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         setClickable(true);
-        blockHeight = getHeight() / (symbols * cycle);
-        freq_width = (float) getWidth() / 3000f;
+        blockHeight = Math.max(1, h / (symbols * cycle));
+        freq_width = (float) w / 3000f;
+        if (lastBitMap != null) {
+            lastBitMap.recycle();
+        }
         lastBitMap = Bitmap.createBitmap(w, h, ARGB_8888);
         _canvas = new Canvas(lastBitMap);
+        ensureScrollBuffer(w, h);
+        colorBuffer = new int[Math.max(1, w)];
         Paint blackPaint = new Paint();
         blackPaint.setColor(0xFF000000);
         _canvas.drawRect(0, 0, w, h, blackPaint);//先把背景画黑，防止文字重叠
@@ -171,6 +206,9 @@ public class WaterfallView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        if (lastBitMap == null) {
+            return;
+        }
         canvas.drawBitmap(lastBitMap, 0, 0, null);
 
         //计算频率
@@ -195,33 +233,27 @@ public class WaterfallView extends View {
             canvas.drawLine(touch_x, 0, touch_x, getHeight(), touchPaint);
 
         }
-        invalidate();
     }
 
     public void setWaveData(int[] data, int sequential, List<Ft8Message> msgs) {
-        if (drawMessage&& msgs!=null){//把需要画的消息复制出来防止多线程访问冲突
-            messages=new ArrayList<>(msgs);
-        }else {
+        if (drawMessage && msgs != null) {//把需要画的消息复制出来防止多线程访问冲突
+            messages.clear();
+            messages.addAll(msgs);
+        } else {
             messages.clear();//当设定不标记消息时，要清空原来的消息
         }
 
-        if (data == null) {
-            return;
-        }
-        if (data.length <= 0) {
-            return;
-        }
-        if (lastBitMap == null) {
+        if (data == null || data.length <= 0 || lastBitMap == null || _canvas == null) {
             return;
         }
 
-        int[] colors = new int[data.length];
+        if (colorBuffer.length != data.length) {
+            colorBuffer = new int[data.length];
+        }
 
         //画分割线
         if (sequential != lastSequential) {
-            Bitmap bitmap = Bitmap.createBitmap(lastBitMap, 0, 0, getWidth(), getHeight() - blockHeight);
-            _canvas.drawBitmap(bitmap, 0, blockHeight, linePaint);
-            bitmap.recycle();
+            shiftBitmapDown(linePaint);
             _canvas.drawRect(0, 0, getWidth(), getResources().getDisplayMetrics().density
                     , linePaint);
             _canvas.drawText(UtcTimer.getTimeStr(UtcTimer.getSystemTime()), 50
@@ -236,25 +268,21 @@ public class WaterfallView extends View {
 
 
             if (data[i] < 128) {//低于一半的音量，用蓝色0~256
-                colors[i] = 0xff000000 | (data[i] << 1);
+                colorBuffer[i] = 0xff000000 | (data[i] << 1);
             } else if (data[i] < 192) {
-                colors[i] = 0xff0000ff | (((data[i] - 127)) << 10);//放大4倍
-//                colors[i] = 0xff000000 | (data[i] * 2 * 256 + 255);
+                colorBuffer[i] = 0xff0000ff | (((data[i] - 127)) << 10);//放大4倍
             } else {
-                colors[i] = 0xff00ffff | (((data[i] - 127)) << 18);//放大4倍
+                colorBuffer[i] = 0xff00ffff | (((data[i] - 127)) << 18);//放大4倍
             }
         }
-        LinearGradient linearGradient = new LinearGradient(0, 0, getWidth() * 2, 0, colors
+        LinearGradient linearGradient = new LinearGradient(0, 0, getWidth() * 2, 0, colorBuffer
                 , null, Shader.TileMode.CLAMP);
-        //Paint linearPaint = new Paint();
         linearPaint.setShader(linearGradient);
-        Bitmap bitmap = Bitmap.createBitmap(lastBitMap, 0, 0, getWidth(), getHeight() - blockHeight);
-        _canvas.drawBitmap(bitmap, 0, blockHeight, linearPaint);
-        bitmap.recycle();
+        shiftBitmapDown(linearPaint);
         _canvas.drawRect(0, 0, getWidth(), blockHeight, linearPaint);
 
         //消息有3种：普通、CQ、有我
-        if (drawMessage && messages != null) {
+        if (drawMessage && !messages.isEmpty()) {
             drawMessage = false;//只画一遍
             //fontPaint.setTextAlign(Paint.Align.LEFT);
             //fontPaint.setStrikeThruText(true);
@@ -293,10 +321,12 @@ public class WaterfallView extends View {
         }
 
 
+        postInvalidateOnAnimation();
     }
 
     public void setTouch_x(int touch_x) {
         this.touch_x = touch_x;
+        postInvalidateOnAnimation();
     }
 
     public void setDrawMessage(boolean drawMessage) {

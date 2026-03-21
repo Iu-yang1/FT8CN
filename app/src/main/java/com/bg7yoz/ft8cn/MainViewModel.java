@@ -99,6 +99,7 @@ import java.util.concurrent.Executors;
 public class MainViewModel extends ViewModel {
     String TAG = "ft8cn MainViewModel";
     public boolean configIsLoaded = false;
+    private boolean resourcesReleased = false;
 
     private static MainViewModel viewModel = null;
 
@@ -130,11 +131,15 @@ public class MainViewModel extends ViewModel {
     public MutableLiveData<String> mutableNtpServer = new MutableLiveData<>("");
     public MutableLiveData<String> mutableNtpSyncInfo = new MutableLiveData<>("");
     public MutableLiveData<Boolean> mutableNtpSyncSuccess = new MutableLiveData<>(false);
+    private final Observer<Integer> ntpConfigChangedObserver = new Observer<Integer>() {
+        @Override
+        public void onChanged(Integer integer) {
+            mutableNtpServer.postValue(GeneralVariables.getCurrentNtpServer());
+        }
+    };
 
     private final ExecutorService getQTHThreadPool = Executors.newCachedThreadPool();
     private final ExecutorService sendWaveDataThreadPool = Executors.newCachedThreadPool();
-    private final GetQTHRunnable getQTHRunnable = new GetQTHRunnable(this);
-    private final SendWaveDataRunnable sendWaveDataRunnable = new SendWaveDataRunnable();
 
     //用于显示生成共享日志过程的变量
     public MutableLiveData<String> mutableShareInfo = new MutableLiveData<>("");
@@ -238,12 +243,7 @@ public class MainViewModel extends ViewModel {
         mutableNtpDelayMs.postValue(GeneralVariables.lastNtpDelay);
         mutableNtpSyncTime.postValue(GeneralVariables.lastNtpSyncTime);
 
-        GeneralVariables.mutableNtpConfigChanged.observeForever(new Observer<Integer>() {
-            @Override
-            public void onChanged(Integer integer) {
-                mutableNtpServer.postValue(GeneralVariables.getCurrentNtpServer());
-            }
-        });
+        GeneralVariables.mutableNtpConfigChanged.observeForever(ntpConfigChangedObserver);
 
         //创建用于显示时间的计时器
         utcTimer = new UtcTimer(10, false, new OnUtcTimer() {
@@ -278,7 +278,6 @@ public class MainViewModel extends ViewModel {
                     , ArrayList<Ft8Message> messages, boolean isDeep) {
 
                 if (messages == null || messages.size() == 0) {
-                    mutableIsDecoding.postValue(false);
                     currentMessages = messages;
                     if (!isDeep) {
                         currentDecodeCount = 0;
@@ -309,10 +308,7 @@ public class MainViewModel extends ViewModel {
                     currentDecodeCount = messages.size();
                 }
 
-                mutableIsDecoding.postValue(false);
-
-                getQTHRunnable.messages = messages;
-                getQTHThreadPool.execute(getQTHRunnable);
+                getQTHThreadPool.execute(new GetQTHRunnable(MainViewModel.this, messages));
 
                 mutable_Decoded_Counter.postValue(currentDecodeCount);
 
@@ -336,6 +332,11 @@ public class MainViewModel extends ViewModel {
                     pskReporterManager.collectAndQueue(messages);
                     Log.d(TAG, "PSKReporter queue size=" + pskReporterManager.getQueueSize());
                 } //PSK
+            }
+
+            @Override
+            public void afterDecodeFinished(long utc, long decodeDurationMs) {
+                mutableIsDecoding.postValue(false);
             }
         });
 
@@ -394,9 +395,7 @@ public class MainViewModel extends ViewModel {
                 if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
                     if (baseRig != null) {
                         if (baseRig.isConnected()) {
-                            sendWaveDataRunnable.baseRig = baseRig;
-                            sendWaveDataRunnable.message = msg;
-                            sendWaveDataThreadPool.execute(sendWaveDataRunnable);
+                            sendWaveDataThreadPool.execute(new SendWaveDataRunnable(baseRig, msg));
                         }
                     }
                 }
@@ -418,9 +417,7 @@ public class MainViewModel extends ViewModel {
                 if (!supportTransmitOverCAT()) {
                     return;
                 }
-                sendWaveDataRunnable.baseRig = baseRig;
-                sendWaveDataRunnable.message = msg;
-                sendWaveDataThreadPool.execute(sendWaveDataRunnable);
+                sendWaveDataThreadPool.execute(new SendWaveDataRunnable(baseRig, msg));
             }
 
         }, new OnTransmitSuccess() {
@@ -1070,15 +1067,19 @@ public class MainViewModel extends ViewModel {
     }
 
     private static class GetQTHRunnable implements Runnable {
-        MainViewModel mainViewModel;
-        ArrayList<Ft8Message> messages;
+        private final MainViewModel mainViewModel;
+        private final ArrayList<Ft8Message> messages;
 
-        public GetQTHRunnable(MainViewModel mainViewModel) {
+        public GetQTHRunnable(MainViewModel mainViewModel, ArrayList<Ft8Message> messages) {
             this.mainViewModel = mainViewModel;
+            this.messages = new ArrayList<>(messages);
         }
 
         @Override
         public void run() {
+            if (messages.size() == 0) {
+                return;
+            }
             CallsignDatabase.getMessagesLocation(
                     GeneralVariables.callsignDatabase.getDb(), messages);
             mainViewModel.mutableFt8MessageList.postValue(mainViewModel.ft8Messages);
@@ -1086,8 +1087,13 @@ public class MainViewModel extends ViewModel {
     }
 
     private static class SendWaveDataRunnable implements Runnable {
-        BaseRig baseRig;
-        Ft8Message message;
+        private final BaseRig baseRig;
+        private final Ft8Message message;
+
+        public SendWaveDataRunnable(BaseRig baseRig, Ft8Message message) {
+            this.baseRig = baseRig;
+            this.message = message;
+        }
 
         @Override
         public void run() {
@@ -1097,11 +1103,34 @@ public class MainViewModel extends ViewModel {
         }
     }
 
-    @Override
-    protected void onCleared() {
-        super.onCleared();
+    public synchronized void releaseResources() {
+        if (resourcesReleased) {
+            return;
+        }
+        resourcesReleased = true;
+        GeneralVariables.mutableNtpConfigChanged.removeObserver(ntpConfigChangedObserver);
+        if (utcTimer != null) {
+            utcTimer.stop();
+        }
+        if (hamRecorder != null) {
+            hamRecorder.stopRecord();
+        }
+        if (ft8SignalListener != null) {
+            ft8SignalListener.release();
+        }
+        if (ft8TransmitSignal != null) {
+            ft8TransmitSignal.release();
+        }
+        getQTHThreadPool.shutdownNow();
+        sendWaveDataThreadPool.shutdownNow();
         if (pskReporterSender != null) {
             pskReporterSender.stop();
         }
+    }
+
+    @Override
+    protected void onCleared() {
+        super.onCleared();
+        releaseResources();
     }
 }

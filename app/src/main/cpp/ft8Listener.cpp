@@ -215,7 +215,8 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_setDecodeMode(JNIEnv *env, j
 }
 
 /**
- * 把频率减�? */
+ * 把频率幅度置零
+ */
 static inline void setMagToZero(decoder_t *dd, int index, int max_block_size) {
     if (index > 0 && index < max_block_size) {
         dd->mon.wf.mag[index] = 0;

@@ -95,6 +95,10 @@ public class FT8SignalListener {
         }
     }
 
+    public void release() {
+        stopListen();
+    }
+
     public boolean isListening() {
         return utcTimer != null && utcTimer.isRunning();
     }
@@ -159,16 +163,16 @@ public class FT8SignalListener {
 
         if (!isDeep) {
             if (decodeMode == FT8Common.FT4_MODE) {
-                return msg.snr >= -21 && msg.score >= 12;
+                return msg.snr >= -18 && msg.score >= 12;
             } else {
-                return msg.snr >= -28 && msg.score >= 10;
+                return msg.snr >= -26 && msg.score >= 10;
             }
         }
 
         if (decodeMode == FT8Common.FT4_MODE) {
             return msg.snr >= -19 && msg.score >= 14;
         } else {
-            return msg.snr >= -26 && msg.score >= 12;
+            return msg.snr >= -27 && msg.score >= 12;
         }
     }
 
@@ -224,7 +228,6 @@ public class FT8SignalListener {
                 addMsgToList(allMsg, msgs);
 
                 timeSec = System.currentTimeMillis() - time;
-                decodeTimeSec.postValue(timeSec);
 
                 if (onFt8Listen != null) {
                     onFt8Listen.afterDecode(
@@ -242,7 +245,6 @@ public class FT8SignalListener {
                     addMsgToList(allMsg, msgs);
 
                     timeSec = System.currentTimeMillis() - time;
-                    decodeTimeSec.postValue(timeSec);
 
                     if (onFt8Listen != null) {
                         onFt8Listen.afterDecode(
@@ -277,7 +279,6 @@ public class FT8SignalListener {
                         addMsgToList(allMsg, msgs);
 
                         timeSec = System.currentTimeMillis() - time;
-                        decodeTimeSec.postValue(timeSec);
 
                         if (onFt8Listen != null) {
                             onFt8Listen.afterDecode(
@@ -294,9 +295,15 @@ public class FT8SignalListener {
                 }
 
                 DeleteDecoder(ft8Decoder);
+                timeSec = System.currentTimeMillis() - time;
+                decodeTimeSec.postValue(timeSec);
+
+                if (onFt8Listen != null) {
+                    onFt8Listen.afterDecodeFinished(utc, timeSec);
+                }
 
                 Log.d(TAG, String.format("解码耗时:%d毫秒,mode=%s",
-                        System.currentTimeMillis() - time,
+                        timeSec,
                         FT8Common.modeToString(decodeMode)));
             }
         }).start();

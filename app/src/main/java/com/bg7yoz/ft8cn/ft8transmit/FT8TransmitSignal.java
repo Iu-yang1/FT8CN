@@ -1,11 +1,4 @@
 package com.bg7yoz.ft8cn.ft8transmit;
-/**
- * 与发射信号有关的类。包括分析通联过程的自动程序。
- * 支持 FT8 / FT4 模式切换。
- *
- * @author BGY70Z
- * @date 2023-03-20
- */
 
 import android.annotation.SuppressLint;
 import android.media.AudioAttributes;
@@ -33,90 +26,72 @@ import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/**
+ * 发射控制与自动通联流程。
+ */
 public class FT8TransmitSignal {
     private static final String TAG = "FT8TransmitSignal";
 
     private boolean transmitFreeText = false;
     private String freeText = "FREE TEXT";
 
-    private final DatabaseOpr databaseOpr;//配置信息，和相关数据的数据库
-    private TransmitCallsign toCallsign;//目标呼号
+    private final DatabaseOpr databaseOpr;
+    private TransmitCallsign toCallsign;
     public MutableLiveData<TransmitCallsign> mutableToCallsign = new MutableLiveData<>();
 
     private int functionOrder = 6;
-    public MutableLiveData<Integer> mutableFunctionOrder = new MutableLiveData<>();//指令的顺序变化
-    private boolean activated = false;//是否处于可以发射的模式
+    public MutableLiveData<Integer> mutableFunctionOrder = new MutableLiveData<>();
+    private boolean activated = false;
     public MutableLiveData<Boolean> mutableIsActivated = new MutableLiveData<>();
-    public int sequential;//发射的时序
+    public int sequential;
     public MutableLiveData<Integer> mutableSequential = new MutableLiveData<>();
     private boolean isTransmitting = false;
-    public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();//是否处于发射状态
-    public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();//当前消息的内容
-
-    //********************************************
-    //此处的信息是用于保存QSL的
-    private long messageStartTime = 0;//消息开始的时间
-    private long messageEndTime = 0;//消息结束的时间
-    private String toMaidenheadGrid = "";//目标的网格信息
-    private int sendReport = 0;//我发送到对方的报告
-    private int sentTargetReport = -100;//
-
-    private int receivedReport = 0;//我接收到的报告
-    private int receiveTargetReport = -100;//发送给对方的信号报告
-    //********************************************
-    private final OnTransmitSuccess onTransmitSuccess;//一般是用于保存QSL数据
-
-    //防止播放中止，变量不能放在方法中
+    private final Object transmitStateLock = new Object();
+    private int lastTransmittedFunctionOrder = -1;
+    private Ft8Message lastTransmittedMessage = null;
+    public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
+    public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();
+    private long messageStartTime = 0;
+    private long messageEndTime = 0;
+    private String toMaidenheadGrid = "";
+    private int sendReport = 0;
+    private int sentTargetReport = -100;
+    private int receivedReport = 0;
+    private int receiveTargetReport = -100;
+    private final OnTransmitSuccess onTransmitSuccess;
     private AudioAttributes attributes = null;
     private AudioFormat myFormat = null;
     private AudioTrack audioTrack = null;
-
     public UtcTimer utcTimer;
-
     public ArrayList<FunctionOfTransmit> functionList = new ArrayList<>();
     public MutableLiveData<ArrayList<FunctionOfTransmit>> mutableFunctions = new MutableLiveData<>();
-
-    private final OnDoTransmitted onDoTransmitted;//一般是用于打开关闭PTT
+    private final OnDoTransmitted onDoTransmitted;
     private final ExecutorService doTransmitThreadPool = Executors.newCachedThreadPool();
-    private final DoTransmitRunnable doTransmitRunnable = new DoTransmitRunnable(this);
+    private final Observer<Float> volumePercentObserver = new Observer<Float>() {
+        @Override
+        public void onChanged(Float aFloat) {
+            if (audioTrack != null) {
+                audioTrack.setVolume(aFloat);
+            }
+        }
+    };
 
-    static {
-        System.loadLibrary("ft8cn");
-    }
-
-    /**
-     * 发射模块的构造函数，需要两个回调，一个是当发射时（有两个动作，用于打开/关闭PTT），另一个时当成功时(用于保存QSL)。
-     *
-     * @param databaseOpr       数据库
-     * @param doTransmitted     当发射前后时的回调
-     * @param onTransmitSuccess 当发射成功时的回调
-     */
     public FT8TransmitSignal(DatabaseOpr databaseOpr
             , OnDoTransmitted doTransmitted, OnTransmitSuccess onTransmitSuccess) {
-        this.onDoTransmitted = doTransmitted;//用于打开关闭PTT的事件
-        this.onTransmitSuccess = onTransmitSuccess;//用于保存QSL的事件
+        this.onDoTransmitted = doTransmitted;
+        this.onTransmitSuccess = onTransmitSuccess;
         this.databaseOpr = databaseOpr;
 
         setTransmitting(false);
         setActivated(false);
 
-        //观察音量设置的变化
-        GeneralVariables.mutableVolumePercent.observeForever(new Observer<Float>() {
-            @Override
-            public void onChanged(Float aFloat) {
-                if (audioTrack != null) {
-                    audioTrack.setVolume(aFloat);
-                }
-            }
-        });
+
+        GeneralVariables.mutableVolumePercent.observeForever(volumePercentObserver);
 
         buildUtcTimer();
         utcTimer.start();
     }
 
-    /**
-     * 按当前模式创建时钟
-     */
     private void buildUtcTimer() {
         utcTimer = new UtcTimer(FT8Common.getSlotTimeM(GeneralVariables.getSignalMode()), false, new OnUtcTimer() {
             @Override
@@ -125,7 +100,7 @@ public class FT8TransmitSignal {
 
             @Override
             public void doOnSecTimer(long utc) {
-                //超过自动监管时间，就停止
+
                 if (GeneralVariables.isLaunchSupervisionTimeout()) {
                     setActivated(false);
                     return;
@@ -135,15 +110,12 @@ public class FT8TransmitSignal {
                         ToastMessage.show(GeneralVariables.getStringFromResource(R.string.callsign_error));
                         return;
                     }
-                    doTransmit();//发射动作还是准确按时间来，延迟是音频信号的延迟
+                    doTransmit();
                 }
             }
         });
     }
 
-    /**
-     * 模式切换后重建发射时钟
-     */
     public void restartByCurrentMode() {
         boolean running = utcTimer != null && utcTimer.isRunning();
         if (utcTimer != null) {
@@ -156,9 +128,19 @@ public class FT8TransmitSignal {
         mutableFunctions.postValue(functionList);
     }
 
-    /**
-     * 立即发射
-     */
+    public void release() {
+        GeneralVariables.mutableVolumePercent.removeObserver(volumePercentObserver);
+        if (utcTimer != null) {
+            utcTimer.stop();
+        }
+        setActivated(false);
+        doTransmitThreadPool.shutdownNow();
+        if (audioTrack != null) {
+            audioTrack.release();
+            audioTrack = null;
+        }
+    }
+
     public void transmitNow() {
         if (GeneralVariables.myCallsign.length() < 3) {
             ToastMessage.show(GeneralVariables.getStringFromResource(R.string.callsign_error));
@@ -171,7 +153,7 @@ public class FT8TransmitSignal {
         ToastMessage.show(String.format(GeneralVariables.getStringFromResource(R.string.adjust_call_target)
                 , toCallsign.callsign));
 
-        //把信号报告相关的复位
+
         resetTargetReport();
 
         if (UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM()) == sequential) {
@@ -183,12 +165,22 @@ public class FT8TransmitSignal {
         }
     }
 
-    //发射信号
+
     public void doTransmit() {
         if (!activated) {
             return;
         }
-        //检测是不是黑名单频率，WSPR-2的频率，频率=电台频率+声音频率
+        synchronized (transmitStateLock) {
+            if (isTransmitting) {
+                Log.w(TAG, "doTransmit ignored: transmit already in progress");
+                return;
+            }
+        }
+        if (!transmitFreeText && functionOrder != 6 && toCallsign == null) {
+            Log.w(TAG, "doTransmit ignored: target callsign is null");
+            return;
+        }
+
         if (BaseRigOperation.checkIsWSPR2(
                 GeneralVariables.band + Math.round(GeneralVariables.getBaseFrequency()))) {
             ToastMessage.show(String.format(GeneralVariables.getStringFromResource(R.string.use_wspr2_error)
@@ -196,52 +188,46 @@ public class FT8TransmitSignal {
             setActivated(false);
             return;
         }
-        Log.d(TAG, "doTransmit: 开始发射...");
-        doTransmitThreadPool.execute(doTransmitRunnable);
+        Log.d(TAG, "doTransmit: start transmit");
+        doTransmitThreadPool.execute(new DoTransmitRunnable(this));
         mutableFunctions.postValue(functionList);
     }
 
-    /**
-     * 设置呼叫，生成发射消息列表
-     *
-     * @param transmitCallsign 目标呼号
-     * @param functionOrder    命令顺序
-     * @param toMaidenheadGrid 目标网格
-     */
     @SuppressLint("DefaultLocale")
     public void setTransmit(TransmitCallsign transmitCallsign
             , int functionOrder, String toMaidenheadGrid) {
 
-        messageStartTime = 0;//复位起始的时间
+        messageStartTime = 0;
+        lastTransmittedFunctionOrder = -1;
 
-        Log.d(TAG, "准备发射数据...");
+        Log.d(TAG, "setTransmit: preparing transmit data");
         if (GeneralVariables.checkFun1(toMaidenheadGrid)) {
             this.toMaidenheadGrid = toMaidenheadGrid;
         } else {
             this.toMaidenheadGrid = "";
         }
-        mutableToCallsign.postValue(transmitCallsign);//设定呼叫的目标对象（含报告、时序，频率，呼号）
-        toCallsign = transmitCallsign;//设定呼叫的目标
+        mutableToCallsign.postValue(transmitCallsign);
+        toCallsign = transmitCallsign;
 
         if (functionOrder == -1) {//说明是回复消息
             this.functionOrder = normalizeFunctionOrder(
                     GeneralVariables.checkFunOrderByExtraInfo(toMaidenheadGrid) + 1);
-            if (this.functionOrder == 6) {//如果已经是73了，就改到消息1
+            if (this.functionOrder == 6) {
                 this.functionOrder = 1;
             }
         } else {
-            this.functionOrder = normalizeFunctionOrder(functionOrder);//当前指令的序号
+            this.functionOrder = normalizeFunctionOrder(functionOrder);
         }
 
         if (transmitCallsign.frequency == 0) {
             transmitCallsign.frequency = GeneralVariables.getBaseFrequency();
         }
-        if (GeneralVariables.synFrequency) {//如果是同频发送，就与目标呼号频率一致
+        if (GeneralVariables.synFrequency) {
             setBaseFrequency(transmitCallsign.frequency);
         }
 
-        sequential = (toCallsign.sequential + 1) % 2;//发射的时序
-        mutableSequential.postValue(sequential);//通知发射时序改变
+        sequential = (toCallsign.sequential + 1) % 2;
+        mutableSequential.postValue(sequential);
         generateFun();
         mutableFunctionOrder.postValue(this.functionOrder);
     }
@@ -263,48 +249,51 @@ public class FT8TransmitSignal {
         return order + 1;
     }
 
+    private int getIncomingFunctionOrder(Ft8Message message) {
+        if (message == null) {
+            return -1;
+        }
+        return message.checkIsCQ()
+                ? 6
+                : GeneralVariables.checkFunOrderByExtraInfo(message.getAutoReplyExtraInfo());
+    }
+
     @SuppressLint("DefaultLocale")
     public void setBaseFrequency(float freq) {
         GeneralVariables.setBaseFrequency(freq);
-        //写到数据中
+
         databaseOpr.writeConfig("freq", String.format("%.0f", freq), null);
     }
 
-    /**
-     * 根据消息号，生成对应的消息
-     *
-     * @param order 消息号
-     * @return FT8/FT4消息
-     */
     public Ft8Message getFunctionCommand(int order) {
         int currentMode = GeneralVariables.getSignalMode();
         switch (order) {
-            //发射模式1，BG7YOY BG7YOZ OL50
+
             case 1:
-                resetTargetReport();//把给对方的信号报告记录复位成-100
+                resetTargetReport();
                 return new Ft8Message(currentMode, 1, 0, toCallsign.callsign, GeneralVariables.myCallsign
                         , GeneralVariables.getMyMaidenhead4Grid());
-            //发射模式2，BG7YOY BG7YOZ -10
+
             case 2:
                 sentTargetReport = toCallsign.snr;
                 return new Ft8Message(currentMode, 1, 0, toCallsign.callsign
                         , GeneralVariables.myCallsign, toCallsign.getSnr());
-            //发射模式3，BG7YOY BG7YOZ R-10
+
             case 3:
                 sentTargetReport = toCallsign.snr;
                 return new Ft8Message(currentMode, 1, 0, toCallsign.callsign
                         , GeneralVariables.myCallsign, "R" + toCallsign.getSnr());
-            //发射模式4，BG7YOY BG7YOZ RR73
+
             case 4:
                 return new Ft8Message(currentMode, 1, 0, toCallsign.callsign
                         , GeneralVariables.myCallsign, "RR73");
-            //发射模式5，BG7YOY BG7YOZ 73
+
             case 5:
                 return new Ft8Message(currentMode, 1, 0, toCallsign.callsign
                         , GeneralVariables.myCallsign, "73");
-            //发射模式6，CQ BG7YOZ OL50
+
             case 6:
-                resetTargetReport();//把给对方的信号报告,接收到对方的信号报告记录复位成-100
+                resetTargetReport();
                 Ft8Message msg = new Ft8Message(currentMode, 1, 0, "CQ", GeneralVariables.myCallsign
                         , GeneralVariables.getMyMaidenhead4Grid());
                 msg.modifier = GeneralVariables.toModifier;
@@ -315,14 +304,11 @@ public class FT8TransmitSignal {
                 , GeneralVariables.getMyMaidenhead4Grid());
     }
 
-    /**
-     * 生成指令序列
-     */
     public void generateFun() {
         GeneralVariables.noReplyCount = 0;
         functionList.clear();
         for (int i = 1; i <= 6; i++) {
-            if (functionOrder == 6) {//如果当前的指令序列是6(CQ)，那么就只生成一个消息
+            if (functionOrder == 6) {
                 functionList.add(new FunctionOfTransmit(6, getFunctionCommand(6), false));
                 break;
             } else {
@@ -330,17 +316,11 @@ public class FT8TransmitSignal {
             }
         }
         mutableFunctions.postValue(functionList);
-        setCurrentFunctionOrder(functionOrder);//设置当前消息
+        setCurrentFunctionOrder(functionOrder);
     }
 
-    /**
-     * 为了最大限度兼容，把32位浮点转换成16位整型，有些声卡不支持32位的浮点。
-     *
-     * @param buffer 32位浮点音频
-     * @return 16位整型
-     */
     private short[] float2Short(float[] buffer) {
-        short[] temp = new short[buffer.length + 8];//多出8个为0的数据包，是为了兼容QP-7C的RP2040音频判断
+        short[] temp = new short[buffer.length + 8];
         for (int i = 0; i < buffer.length; i++) {
             float x = buffer[i];
             if (x > 1.0) {
@@ -353,57 +333,129 @@ public class FT8TransmitSignal {
         return temp;
     }
 
+    private void updateMessageStartTimeForOrder(int order) {
+        if (order == 1 || order == 2) {
+            messageStartTime = UtcTimer.getSystemTime();
+        }
+        if (messageStartTime == 0) {
+            messageStartTime = UtcTimer.getSystemTime();
+        }
+    }
+
+    private Ft8Message buildTransmitMessage(int order) {
+        Ft8Message msg;
+        if (transmitFreeText) {
+            msg = new Ft8Message(GeneralVariables.getSignalMode(), "CQ",
+                    GeneralVariables.myCallsign, freeText);
+            msg.i3 = 0;
+            msg.n3 = 0;
+        } else {
+            msg = getFunctionCommand(order);
+        }
+        msg.modifier = GeneralVariables.toModifier;
+        msg.signalFormat = GeneralVariables.getSignalMode();
+        return msg;
+    }
+
+    private void postTransmittingMessage(Ft8Message msg) {
+        mutableTransmittingMessage.postValue(String.format("[%s] (%.0fHz) %s",
+                FT8Common.modeToString(GeneralVariables.getSignalMode()),
+                GeneralVariables.getBaseFrequency(),
+                msg.getMessageText()));
+    }
+
+    private void rememberTransmitMessage(Ft8Message msg, int order) {
+        lastTransmittedMessage = msg;
+        lastTransmittedFunctionOrder = order;
+    }
+
+    private Ft8Message getAfterTransmitMessage(int order) {
+        if (lastTransmittedMessage != null) {
+            return lastTransmittedMessage;
+        }
+        try {
+            return buildTransmitMessage(order);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "getAfterTransmitMessage failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private void notifyAfterTransmit(int order) {
+        if (onDoTransmitted == null) {
+            return;
+        }
+        Ft8Message message = getAfterTransmitMessage(order);
+        if (message != null) {
+            onDoTransmitted.onAfterTransmit(message, order);
+        }
+    }
+
+    private void replaceLatestQueuedTransmitMessage(Ft8Message msg) {
+        synchronized (GeneralVariables.transmitMessages) {
+            int lastIndex = GeneralVariables.transmitMessages.size() - 1;
+            if (lastIndex >= 0) {
+                GeneralVariables.transmitMessages.set(lastIndex, msg);
+            }
+        }
+    }
+
+    private void updateTransmittingState(boolean transmitting) {
+        synchronized (transmitStateLock) {
+            isTransmitting = transmitting;
+            mutableIsTransmitting.postValue(transmitting);
+            if (!transmitting) {
+                transmitStateLock.notifyAll();
+            }
+        }
+    }
+
+    private boolean waitForTransmitCompletion(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + Math.max(1L, timeoutMs);
+        synchronized (transmitStateLock) {
+            while (isTransmitting) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) {
+                    return false;
+                }
+                try {
+                    transmitStateLock.wait(Math.min(remaining, 50L));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
     private void playFT8Signal(Ft8Message msg) {
         final int currentMode = GeneralVariables.getSignalMode();
         final int currentSlotMs = FT8Common.getSlotTimeMillisecond(currentMode);
         final int currentSampleRate = GeneralVariables.audioSampleRate;
 
-        if (GeneralVariables.connectMode == ConnectMode.NETWORK) {//网络方式就不播放音频了
-            Log.d(TAG, "playFT8Signal: 进入网络发射程序，等待音频发送。");
+        if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
+            Log.d(TAG, "playFT8Signal: start network audio transmit");
 
-            if (onDoTransmitted != null) {//处理音频数据，可以给ICOM的网络模式发送
+            if (onDoTransmitted != null) {
                 onDoTransmitted.onTransmitByWifi(msg);
             }
 
-            long now = System.currentTimeMillis();
-            while (isTransmitting) {//等待音频数据包发送完毕再退出，以触发afterTransmitting
-                try {
-                    Thread.sleep(1);
-                    long current = System.currentTimeMillis() - now;
-                    if (current > currentSlotMs - 200) {
-                        isTransmitting = false;
-                        break;
-                    }
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            Log.d(TAG, "playFT8Signal: 退出网络音频发送。");
+            waitForTransmitCompletion(currentSlotMs - 200L);
+            Log.d(TAG, "playFT8Signal: network audio transmit finished");
             afterPlayAudio();
             return;
         }
 
-        //进入到CAT串口传输音频方式
+
         if (GeneralVariables.controlMode == ControlMode.CAT) {
             Log.d(TAG, "playFT8Signal: try to transmit over CAT");
 
-            if (onDoTransmitted != null) {//处理音频数据，可以给truSDX的CAT模式发送
+            if (onDoTransmitted != null) {
                 if (onDoTransmitted.supportTransmitOverCAT()) {
                     onDoTransmitted.onTransmitOverCAT(msg);
 
-                    long now = System.currentTimeMillis();
-                    while (isTransmitting) {//等待音频数据包发送完毕再退出，以触发afterTransmitting
-                        try {
-                            Thread.sleep(1);
-                            long current = System.currentTimeMillis() - now;
-                            if (current > currentSlotMs - 200) {
-                                isTransmitting = false;
-                                break;
-                            }
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
-                    }
+                    waitForTransmitCompletion(currentSlotMs - 200L);
                     Log.d(TAG, "playFT8Signal: transmitting over CAT is finished.");
                     afterPlayAudio();
                     return;
@@ -424,7 +476,7 @@ public class FT8TransmitSignal {
             return;
         }
 
-        Log.d(TAG, String.format("playFT8Signal: 准备声卡播放....模式：%s,位数：%s,采样率：%d",
+        Log.d(TAG, String.format("playFT8Signal: prepare audio playback, mode=%s, format=%s, sampleRate=%d",
                 FT8Common.modeToString(currentMode),
                 GeneralVariables.audioOutput32Bit ? "Float32" : "Int16",
                 currentSampleRate));
@@ -450,7 +502,7 @@ public class FT8TransmitSignal {
                 AudioTrack.MODE_STATIC,
                 mySession);
 
-        //区分32浮点和整型
+
         int writeResult;
         if (GeneralVariables.audioOutput32Bit) {
             writeResult = audioTrack.write(buffer, 0, buffer.length, AudioTrack.WRITE_NON_BLOCKING);
@@ -460,15 +512,15 @@ public class FT8TransmitSignal {
         }
 
         if (buffer.length > writeResult) {
-            Log.e(TAG, String.format("播放缓冲区不足：%d--->%d", buffer.length, writeResult));
+            Log.e(TAG, String.format("audio write truncated: %d -> %d", buffer.length, writeResult));
         }
 
-        //检查写入的结果，如果是异常情况，则直接需要释放资源
+
         if (writeResult == AudioTrack.ERROR_INVALID_OPERATION
                 || writeResult == AudioTrack.ERROR_BAD_VALUE
                 || writeResult == AudioTrack.ERROR_DEAD_OBJECT
                 || writeResult == AudioTrack.ERROR) {
-            Log.e(TAG, String.format("播放出错：%d", writeResult));
+            Log.e(TAG, String.format("audio write failed: %d", writeResult));
             afterPlayAudio();
             return;
         }
@@ -491,33 +543,35 @@ public class FT8TransmitSignal {
         }
     }
 
-    /**
-     * 播放完声音后的处理动作。包括回调onAfterTransmit,用于关闭PTT
-     */
     private void afterPlayAudio() {
-        if (onDoTransmitted != null) {
-            onDoTransmitted.onAfterTransmit(getFunctionCommand(functionOrder), functionOrder);
-        }
-        isTransmitting = false;
-        mutableIsTransmitting.postValue(false);
+        int transmittedOrder = lastTransmittedFunctionOrder > 0
+                ? lastTransmittedFunctionOrder
+                : functionOrder;
+        notifyAfterTransmit(transmittedOrder);
+        updateTransmittingState(false);
         if (audioTrack != null) {
             audioTrack.release();
             audioTrack = null;
         }
+        if (transmittedOrder == 5 && activated) {
+            resetToCQ();
+            mutableFunctionOrder.postValue(functionOrder);
+            lastTransmittedFunctionOrder = -1;
+        }
     }
 
-    //当通联成功时的动作
-    private void doComplete() {
-        messageEndTime = UtcTimer.getSystemTime();//获取结束的时间
 
-        //如对方没有网格，就从历史呼号与网格对应表中查找
+    private void doComplete() {
+        messageEndTime = UtcTimer.getSystemTime();
+
+
         toMaidenheadGrid = GeneralVariables.getGridByCallsign(toCallsign.callsign, databaseOpr);
 
-        if (messageStartTime == 0) {//如果起始时间没有，就取现在的
+        if (messageStartTime == 0) {
             messageStartTime = UtcTimer.getSystemTime();
         }
 
-        //从历史记录中查信号报告
+
         for (int i = GeneralVariables.transmitMessages.size() - 1; i >= 0; i--) {
             Ft8Message message = GeneralVariables.transmitMessages.get(i);
             if ((GeneralVariables.checkFun3(message.extraInfo)
@@ -541,7 +595,7 @@ public class FT8TransmitSignal {
         }
 
         messageEndTime = UtcTimer.getSystemTime();
-        if (onDoTransmitted != null) {//用于保存通联记录
+        if (onDoTransmitted != null) {
             onTransmitSuccess.doAfterTransmit(new QSLRecord(
                     messageStartTime,
                     messageEndTime,
@@ -556,24 +610,19 @@ public class FT8TransmitSignal {
                     Math.round(GeneralVariables.getBaseFrequency())
             ));
 
-            GeneralVariables.addQSLCallsign(toCallsign.callsign);//把通联成功的呼号添加到列表中
+            GeneralVariables.addQSLCallsign(toCallsign.callsign);
             ToastMessage.show(String.format("QSO : %s , at %s", toCallsign.callsign
                     , BaseRigOperation.getFrequencyAllInfo(GeneralVariables.band)));
         }
     }
 
-    /**
-     * 设置当前要发射的指令顺序
-     *
-     * @param order 顺序
-     */
     public void setCurrentFunctionOrder(int order) {
         functionOrder = order;
         for (int i = 0; i < functionList.size(); i++) {
             functionList.get(i).setCurrentOrder(order);
         }
         if (order == 1) {
-            resetTargetReport();//复位信号报告
+            resetTargetReport();
         }
         if (order == 4 || order == 5) {
             updateQSlRecordList(order, toCallsign);
@@ -581,13 +630,6 @@ public class FT8TransmitSignal {
         mutableFunctions.postValue(functionList);
     }
 
-    /**
-     * 当目标是复合呼号（非标准信号），JTDX回复可能会缩短
-     *
-     * @param fromCall 对方的呼号
-     * @param toCall   我的目标呼号
-     * @return 是不是
-     */
     private boolean checkCallsignIsCallTo(String fromCall, String toCall) {
         if (fromCall == null || toCall == null) {
             return false;
@@ -645,12 +687,6 @@ public class FT8TransmitSignal {
         return callsign.substring(bestStart, bestStart + bestLen);
     }
 
-    /**
-     * 检查消息中from中有目标呼号的数量。当有目标呼号呼叫我的消息，返回0，如果目标呼号呼叫别人，返回值应当大于1
-     *
-     * @param messages 消息列表
-     * @return 0：有目标呼叫我的，1：没有任何目标呼号发出的消息，>1：有目标呼号呼叫别人的消息
-     */
     private int checkTargetCallMe(ArrayList<Ft8Message> messages) {
         if (toCallsign == null) {
             return 1;
@@ -670,18 +706,12 @@ public class FT8TransmitSignal {
                 return 0;
             }
             if (checkCallsignIsCallTo(ft8Message.getAutoReplyCallsignFrom(), toCallsign.callsign)) {
-                fromCount++;//计数器，from是目标呼号的情况
+                fromCount++;
             }
         }
         return fromCount;
     }
 
-    /**
-     * 检测本消息列表中对方回复消息的序号，如果没有,返回-1
-     *
-     * @param messages 消息列表
-     * @return 消息的序号
-     */
     private int checkFunctionOrdFromMessages(ArrayList<Ft8Message> messages) {
         if (toCallsign == null) {
             return -1;
@@ -690,6 +720,9 @@ public class FT8TransmitSignal {
         if (messages == null) {
             return -1;
         }
+        Ft8Message bestMessage = null;
+        int bestOrder = -1;
+        int bestSequenceIndex = Integer.MIN_VALUE;
         for (Ft8Message ft8Message : messages) {
             if (!ft8Message.isAutoFlowRelevant()) {
                 continue;
@@ -712,65 +745,42 @@ public class FT8TransmitSignal {
                 continue;
             }
 
-            if (GeneralVariables.checkFun3(autoReplyExtra)
-                    || GeneralVariables.checkFun2(autoReplyExtra)) {
-                receivedReport = getReportFromExtraInfo(autoReplyExtra);
-                receiveTargetReport = receivedReport;
-                if (receivedReport == -100) {
-                    receivedReport = ft8Message.report;
-                }
-            }
-
-            sendReport = ft8Message.snr;
-            int order = ft8Message.checkIsCQ()
-                    ? 6
-                    : GeneralVariables.checkFunOrderByExtraInfo(autoReplyExtra);
-            if (order != -1) {
-                return order;
-            }
-        }
-        return -1;
-    }
-
-    /**
-        for (Ft8Message ft8Message : messages) {
-            if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;//模式不同不处理
-            boolean isDirectReply = GeneralVariables.checkIsMyCallsign(ft8Message.getCallsignTo())
-                    && checkCallsignIsCallTo(ft8Message.getCallsignFrom(), toCallsign.callsign);
-
-            // FT4 对时钟偏差更敏感：当双机存在约 0.5s 级别偏差时，
-            // 仅靠 sequence 可能把“明确回给我的报文”误判为同序列并过滤。
-            if (!isDirectReply && ft8Message.getSequence() == sequential) {
+            int order = getIncomingFunctionOrder(ft8Message);
+            if (order == -1) {
                 continue;
             }
 
-            if (isDirectReply) {
+            int sequenceIndex = ft8Message.getFullSequenceIndex();
+            if (bestMessage == null
+                    || order > bestOrder
+                    || (order == bestOrder && sequenceIndex > bestSequenceIndex)
+                    || (order == bestOrder
+                    && sequenceIndex == bestSequenceIndex
+                    && ft8Message.utcTime > bestMessage.utcTime)) {
+                bestMessage = ft8Message;
+                bestOrder = order;
+                bestSequenceIndex = sequenceIndex;
+            }
+        }
+        if (bestMessage == null) {
+            return -1;
+        }
 
-                if (GeneralVariables.checkFun3(ft8Message.extraInfo)
-                        || GeneralVariables.checkFun2(ft8Message.extraInfo)) {
-                    receivedReport = getReportFromExtraInfo(ft8Message.extraInfo);
-                    receiveTargetReport = receivedReport;//对方给我的信号报告，要保存下来
-                    if (receivedReport == -100) {//如果不正确，就取消息的报告
-                        receivedReport = ft8Message.report;
-                    }
-                }
-                sendReport = ft8Message.snr;//把接收到的信号保存下来
-
-                int order = GeneralVariables.checkFunOrder(ft8Message);//检查消息的序号
-                if (order != -1) return order;//说明成功解析出序号
+        String bestExtraInfo = bestMessage.getAutoReplyExtraInfo();
+        if (GeneralVariables.checkFun3(bestExtraInfo)
+                || GeneralVariables.checkFun2(bestExtraInfo)) {
+            receivedReport = getReportFromExtraInfo(bestExtraInfo);
+            receiveTargetReport = receivedReport;
+            if (receivedReport == -100) {
+                receivedReport = bestMessage.report;
             }
         }
 
-        return -1;//说明没找到消息
+        sendReport = bestMessage.snr;
+        return bestOrder;
     }
-*/
 
-    /**
-     * 从扩展消息中获取对方给的信号报告，获取失败，值-100
-     *
-     * @param extraInfo 扩展消息
-     * @return 信号报告
-     */
+
     private int getReportFromExtraInfo(String extraInfo) {
         if (extraInfo == null) {
             return -100;
@@ -789,16 +799,6 @@ public class FT8TransmitSignal {
         }
     }
 
-    /**
-     * 检查是不是属于排除的消息：
-     * 1.与发射的时序相同
-     * 2.不在相同的波段
-     * 3.呼号是排除的字头
-     * 4.模式不同
-     *
-     * @param msg 消息
-     * @return 是/否
-     */
     private boolean isExcludeMessage(Ft8Message msg) {
         if (msg == null) {
             return true;
@@ -817,14 +817,8 @@ public class FT8TransmitSignal {
                 && !GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo());
     }
 
-    /**
-     * 检查有没有人CQ我，或我关注的呼号在CQ
-     *
-     * @param messages 消息列表
-     * @return false=没有符合的消息，TRUE=有符合的消息
-     */
     private boolean checkCQMeOrFollowCQMessage(ArrayList<Ft8Message> messages) {
-        //检查CQ我，不是73，且是我呼叫的目标
+
         for (Ft8Message msg : messages) {
             if (isExcludeMessage(msg)) continue;
             if (toCallsign == null) break;
@@ -844,7 +838,7 @@ public class FT8TransmitSignal {
             return false;
         }
 
-        //检查CQ我，不是73
+
         for (Ft8Message msg : messages) {
             if (isExcludeMessage(msg)) continue;
             if ((GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo())
@@ -909,15 +903,15 @@ public class FT8TransmitSignal {
                     Math.round(GeneralVariables.getBaseFrequency()
                     )));
         }
-        //根据消息序列更新内容
+
         switch (order) {
-            case 1://更新网格，和对方消息的SNR
+            case 1:
                 record.setToMaidenGrid(toMaidenheadGrid);
                 record.setSendReport(sentTargetReport != -100 ? sentTargetReport : sendReport);
                 GeneralVariables.qslRecordList.deleteIfSaved(record);
                 break;
 
-            case 2://更新对方返回的信号报告，和对方的信号报告
+            case 2:
             case 3:
                 record.setSendReport(sentTargetReport != -100 ? sentTargetReport : sendReport);
                 record.setReceivedReport(receiveTargetReport != -100 ? receiveTargetReport : receivedReport);
@@ -927,18 +921,13 @@ public class FT8TransmitSignal {
             case 4:
             case 5:
                 if (!record.saved) {
-                    doComplete();//保存到数据库
+                    doComplete();
                     record.saved = true;
                 }
                 break;
         }
     }
 
-    /**
-     * 从关注列表解码的消息中，此处是变化发射程序的入口
-     *
-     * @param msgList 消息列表
-     */
     public void parseMessageToFunction(ArrayList<Ft8Message> msgList) {
         if (GeneralVariables.myCallsign.length() < 3) {
             return;
@@ -962,20 +951,23 @@ public class FT8TransmitSignal {
             return;
         }
 
-        int newOrder = checkFunctionOrdFromMessages(messages);//检查消息中对方回复的消息序号，-1为没有收到
-        if (newOrder != -1) {//如果有消息序号，说明有回应，复位错误计数器
+        int newOrder = checkFunctionOrdFromMessages(messages);
+        if (newOrder != -1) {
             GeneralVariables.noReplyCount = 0;
         }
 
-        //更新一下通联的列表检查是不是在通联列表中，如果没有记录下来，就保存
+
         updateQSlRecordList(newOrder, toCallsign);
 
         boolean resetOnTargetCallOthers = (functionOrder == 4)
                 && (GeneralVariables.getSignalMode() == FT8Common.FT8_MODE)
                 && (checkTargetCallMe(messages) > 1);
 
+        boolean rr73AlreadySent = functionOrder == 4 && lastTransmittedFunctionOrder == 4;
+
         if (newOrder == 5
                 || (functionOrder == 5 && newOrder == -1)
+                || (rr73AlreadySent && newOrder <= 3)
                 || (functionOrder == 4 &&
                 (GeneralVariables.noReplyCount > GeneralVariables.noReplyLimit * 2)
                 && (GeneralVariables.noReplyLimit > 0))
@@ -993,19 +985,12 @@ public class FT8TransmitSignal {
 
         if (newOrder != -1) {
             int nextOrder = newOrder + 1;
-            // 防止深度解码/重复解码把已推进的流程又回退到更低阶段
-            boolean canPromote = functionOrder == 6 || nextOrder > functionOrder;
-            if (canPromote) {
-                if (newOrder == 1 || newOrder == 2) {
-                    resetTargetReport();
-                    generateFun();
-                }
-
-                functionOrder = nextOrder;
-                mutableFunctions.postValue(functionList);
-                mutableFunctionOrder.postValue(functionOrder);
-                setCurrentFunctionOrder(functionOrder);
+            if (newOrder == 1 || newOrder == 2) {
+                resetTargetReport();
             }
+            functionOrder = nextOrder;
+            generateFun();
+            mutableFunctionOrder.postValue(functionOrder);
             return;
         }
 
@@ -1044,9 +1029,8 @@ public class FT8TransmitSignal {
             if (msg == null) continue;
             if (!msg.isAutoFlowRelevant()) continue;
             if (msg.signalFormat != currentMode) continue;
-            // 同序列报文一般是“我自己这个发送序列”，但保留目标台明确回给我的消息，
-            // 防止 FT4 在双机小时差下误过滤。
-            if (isSameSequenceButNotCallToMe(msg) && !isDirectReplyToCurrentTarget(msg)) continue;
+
+
             if (isSameSequenceButNotCallToMe(msg) && !isDirectReplyToCurrentTarget(msg)) continue;
             result.add(msg);
         }
@@ -1072,12 +1056,6 @@ public class FT8TransmitSignal {
         return false;
     }
 
-    /**
-     * 检查关注列表中，有没有正在CQ的消息，且不是我现在的目标呼号
-     *
-     * @param messages 关注的消息列表
-     * @return 是否找到新的目标
-     */
     public boolean getNewTargetCallsign(ArrayList<Ft8Message> messages) {
         if (toCallsign == null) return false;
         for (Ft8Message ft8Message : messages) {
@@ -1107,7 +1085,7 @@ public class FT8TransmitSignal {
 
     public void setActivated(boolean activated) {
         this.activated = activated;
-        if (!this.activated) {//强制关闭发射
+        if (!this.activated) {
             setTransmitting(false);
         }
         mutableIsActivated.postValue(activated);
@@ -1123,48 +1101,37 @@ public class FT8TransmitSignal {
             return;
         }
 
-        if (!transmitting) {//停止发射
+        if (!transmitting) {
             if (audioTrack != null) {
                 if (audioTrack.getState() != AudioTrack.STATE_UNINITIALIZED) {
                     audioTrack.pause();
                 }
-                if (onDoTransmitted != null) {
-                    onDoTransmitted.onAfterTransmit(getFunctionCommand(functionOrder), functionOrder);
-                }
+                notifyAfterTransmit(lastTransmittedFunctionOrder > 0 ? lastTransmittedFunctionOrder : functionOrder);
             }
         }
 
-        mutableIsTransmitting.postValue(transmitting);
-        isTransmitting = transmitting;
+        updateTransmittingState(transmitting);
     }
 
-    /**
-     * 复位发射程序到6,时序也会改变
-     */
     public void restTransmitting() {
         if (GeneralVariables.myCallsign.length() < 3) {
             return;
         }
-        //要判断我的呼号类型，才能确定i3n3
+
         int i3 = GenerateFT8.checkI3ByCallsign(GeneralVariables.myCallsign);
         setTransmit(new TransmitCallsign(i3, 0, "CQ",
                         UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM()))
                 , 6, "");
     }
 
-    /**
-     * 把给对方的信号记录复位成-100；
-     */
     public void resetTargetReport() {
         receiveTargetReport = -100;
         sentTargetReport = -100;
     }
 
-    /**
-     * 复位发射程序到6，不会改变时序
-     */
     public void resetToCQ() {
         resetTargetReport();
+        lastTransmittedFunctionOrder = -1;
         if (toCallsign == null) {
             int i3 = GenerateFT8.checkI3ByCallsign(GeneralVariables.myCallsign);
             setTransmit(new TransmitCallsign(i3, 0, "CQ",
@@ -1178,11 +1145,6 @@ public class FT8TransmitSignal {
         }
     }
 
-    /**
-     * 设置发射时间延迟，这个延迟时间，也是给上一个周期解码的一个时间
-     *
-     * @param sec 毫秒
-     */
     public void setTimer_sec(int sec) {
         utcTimer.setTime_sec(sec);
     }
@@ -1214,45 +1176,36 @@ public class FT8TransmitSignal {
         @SuppressLint("DefaultLocale")
         @Override
         public void run() {
-            if (transmitSignal.functionOrder == 1 || transmitSignal.functionOrder == 2) {
-                transmitSignal.messageStartTime = UtcTimer.getSystemTime();
-            }
-            if (transmitSignal.messageStartTime == 0) {
-                transmitSignal.messageStartTime = UtcTimer.getSystemTime();
-            }
-
-            //用于显示将要发射的消息内容
-            Ft8Message msg;
-            if (transmitSignal.transmitFreeText) {
-                msg = new Ft8Message(GeneralVariables.getSignalMode(), "CQ", GeneralVariables.myCallsign, transmitSignal.freeText);
-                msg.i3 = 0;
-                msg.n3 = 0;
-            } else {
-                msg = transmitSignal.getFunctionCommand(transmitSignal.functionOrder);
-            }
-            msg.modifier = GeneralVariables.toModifier;
-            msg.signalFormat = GeneralVariables.getSignalMode();
+            int transmitOrder = transmitSignal.functionOrder;
+            transmitSignal.updateMessageStartTimeForOrder(transmitOrder);
+            Ft8Message msg = transmitSignal.buildTransmitMessage(transmitOrder);
+            transmitSignal.rememberTransmitMessage(msg, transmitOrder);
 
             if (transmitSignal.onDoTransmitted != null) {
-                transmitSignal.onDoTransmitted.onBeforeTransmit(msg, transmitSignal.functionOrder);
+                transmitSignal.onDoTransmitted.onBeforeTransmit(msg, transmitOrder);
             }
 
-            transmitSignal.isTransmitting = true;
-            transmitSignal.mutableIsTransmitting.postValue(true);
-
-            transmitSignal.mutableTransmittingMessage.postValue(String.format("[%s] (%.0fHz) %s",
-                    FT8Common.modeToString(GeneralVariables.getSignalMode()),
-                    GeneralVariables.getBaseFrequency(),
-                    msg.getMessageText()));
-
-            //电台动作可能有要有个延迟时间，所以时间并不一定完全准确
+            transmitSignal.updateTransmittingState(true);
+            transmitSignal.postTransmittingMessage(msg);
             try {
                 Thread.sleep(GeneralVariables.pttDelay);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
 
-            //播放音频
+            if (!transmitSignal.transmitFreeText) {
+                int latestOrder = transmitSignal.functionOrder;
+                if (latestOrder != transmitOrder) {
+                    transmitOrder = latestOrder;
+                    transmitSignal.updateMessageStartTimeForOrder(transmitOrder);
+                    msg = transmitSignal.buildTransmitMessage(transmitOrder);
+                    transmitSignal.rememberTransmitMessage(msg, transmitOrder);
+                    transmitSignal.replaceLatestQueuedTransmitMessage(msg);
+                    transmitSignal.postTransmittingMessage(msg);
+                }
+            }
+
+
             transmitSignal.playFT8Signal(msg);
         }
     }
