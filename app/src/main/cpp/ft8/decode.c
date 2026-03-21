@@ -539,7 +539,7 @@ static void ftx_guess_snr(const waterfall_t *wf, candidate_t *cand) {
     }
 }
 
-// max_iterations=20 LDPC的迭代次数。
+ //max_iterations=20 LDPC的迭代次数。
 bool
 ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_iterations,
            decode_status_t *status) {

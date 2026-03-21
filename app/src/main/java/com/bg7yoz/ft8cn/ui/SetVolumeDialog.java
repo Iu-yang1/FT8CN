@@ -27,6 +27,12 @@ public class SetVolumeDialog extends Dialog {
     private SeekBar volumeSeekBar;
     private final MainViewModel mainViewModel;
     private VolumeProgress volumeProgress;
+    private final Observer<Float> volumeObserver = new Observer<Float>() {
+        @Override
+        public void onChanged(Float aFloat) {
+            setVolumeText(aFloat);
+        }
+    };
 
     public SetVolumeDialog(@NonNull Context context, MainViewModel mainViewModel) {
         super(context);
@@ -47,12 +53,7 @@ public class SetVolumeDialog extends Dialog {
         setVolumeText(GeneralVariables.volumePercent);
         volumeSeekBar.setProgress((int) (GeneralVariables.volumePercent*100));
 
-        GeneralVariables.mutableVolumePercent.observeForever(new Observer<Float>() {
-            @Override
-            public void onChanged(Float aFloat) {
-                setVolumeText(aFloat);
-            }
-        });
+        GeneralVariables.mutableVolumePercent.observeForever(volumeObserver);
 
 
         volumeSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -114,6 +115,12 @@ public class SetVolumeDialog extends Dialog {
             //params.height = (int) (height * 0.5);
         }
         getWindow().setAttributes(params);
+    }
+
+    @Override
+    public void dismiss() {
+        GeneralVariables.mutableVolumePercent.removeObserver(volumeObserver);
+        super.dismiss();
     }
 
 

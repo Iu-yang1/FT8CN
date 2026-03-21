@@ -220,12 +220,14 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                     callMessagesRecyclerView.scrollToPosition(callingListAdapter.getItemCount() - 1);
                 }
 
-                binding.gridMessageTextView.setText(String.format("%s %s"
-                        , String.format(GeneralVariables.getStringFromResource(
-                                        R.string.tracker_decoded_new)
-                                , mainViewModel.currentDecodeCount), String.format(
-                                getString(R.string.decoding_takes_milliseconds)
-                                , mainViewModel.ft8SignalListener.decodeTimeSec.getValue())));
+                binding.gridMessageTextView.setText(String.format(
+                        "%s %s",
+                        String.format(
+                                GeneralVariables.getStringFromResource(R.string.tracker_decoded_new),
+                                mainViewModel.currentDecodeCount
+                        ),
+                        getDecodeDurationText()
+                ));
 
                 for (Ft8Message msg : tempMsg) {
                     drawMessage(msg);
@@ -768,6 +770,19 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         mainViewModel.ft8TransmitSignal.transmitNow();
 
         GeneralVariables.resetLaunchSupervision();
+    }
+
+    private String getDecodeDurationText() {
+        if (Boolean.TRUE.equals(mainViewModel.mutableIsDecoding.getValue())) {
+            return getString(R.string.decoding);
+        }
+
+        Long decodeDuration = mainViewModel.ft8SignalListener.decodeTimeSec.getValue();
+        if (decodeDuration == null) {
+            return getString(R.string.decoding);
+        }
+
+        return String.format(getString(R.string.decoding_takes_milliseconds), decodeDuration);
     }
 
     /**

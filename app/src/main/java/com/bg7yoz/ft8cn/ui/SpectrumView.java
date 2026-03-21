@@ -56,7 +56,7 @@ public class SpectrumView extends ConstraintLayout {
 
     @SuppressLint("ClickableViewAccessibility")
     public void run(MainViewModel mainViewModel , Fragment fragment){
-        this.mainViewModel = MainViewModel.getInstance(null);
+        this.mainViewModel = mainViewModel;
         this.fragment=fragment;
         columnarView=findViewById(R.id.controlColumnarView);
         controlDeNoiseSwitch=findViewById(R.id.controlDeNoiseSwitch);

@@ -98,7 +98,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void run() {
             updateUtcProgressBarSmooth();
-            progressHandler.postDelayed(this, 40); // 约25fps，足够顺滑
+            progressHandler.postDelayed(this, 40); // 约25fps
         }
     };
 
@@ -691,16 +691,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void closeThisApp() {
-        mainViewModel.ft8TransmitSignal.setActivated(false);
-        if (mainViewModel.baseRig != null) {
-            if (mainViewModel.baseRig.getConnector() != null) {
-                mainViewModel.baseRig.getConnector().disconnect();
+        progressHandler.removeCallbacks(progressRunnable);
+        if (mainViewModel != null) {
+            mainViewModel.releaseResources();
+            if (mainViewModel.baseRig != null) {
+                if (mainViewModel.baseRig.getConnector() != null) {
+                    mainViewModel.baseRig.getConnector().disconnect();
+                }
             }
         }
-
-        mainViewModel.ft8SignalListener.stopListen();
-        mainViewModel = null;
-        System.exit(0);
+        finishAffinity();
     }
 
     /**

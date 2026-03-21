@@ -24,4 +24,13 @@ public interface OnFt8Listen {
      * @param messages 消息列表
      */
     void afterDecode(long utc,float time_sec,int sequential, ArrayList<Ft8Message> messages,boolean isDeep);
+
+    /**
+     * 当整轮解码流程全部结束后触发。
+     * 这里的耗时是快解、深解和 subtract 全部完成后的总耗时。
+     *
+     * @param utc 当前周期的UTC时间
+     * @param decodeDurationMs 当前周期的总解码耗时（毫秒）
+     */
+    void afterDecodeFinished(long utc, long decodeDurationMs);
 }

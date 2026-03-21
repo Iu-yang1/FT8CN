@@ -5,6 +5,9 @@
 #include "monitor_opr.h"
 #include "ft8/constants.h"
 //#define LOG_LEVEL LOG_DEBUG
+#ifdef LOG_LEVEL
+#undef LOG_LEVEL
+#endif
 #define LOG_LEVEL LOG_FATAL
 
 
