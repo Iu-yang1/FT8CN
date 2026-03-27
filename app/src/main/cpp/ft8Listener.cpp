@@ -30,6 +30,26 @@ static inline int normalize_decode_snr_for_display(int rawSnr, int signalMode) {
     return snr;
 }
 
+static void copyJStringToBuffer(JNIEnv *env, jstring source, char *dest, size_t destSize) {
+    if (dest == nullptr || destSize == 0) {
+        return;
+    }
+    dest[0] = '\0';
+
+    if (source == nullptr) {
+        return;
+    }
+
+    const char *value = env->GetStringUTFChars(source, nullptr);
+    if (value == nullptr) {
+        return;
+    }
+
+    snprintf(dest, destSize, "%s", value);
+    env->ReleaseStringUTFChars(source, value);
+    // JNI strings are copied into fixed buffers so the decoder never keeps stale AP hints by pointer.
+}
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Reset(JNIEnv *env, jobject thiz,
@@ -82,6 +102,12 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *e
     jfieldID extraInfo = env->GetFieldID(objectClass, "extraInfo", "Ljava/lang/String;");
     jfieldID maidenGrid = env->GetFieldID(objectClass, "maidenGrid", "Ljava/lang/String;");
     jfieldID report = env->GetFieldID(objectClass, "report", "I");
+    jfieldID rttyState = env->GetFieldID(objectClass, "rtty_state", "Ljava/lang/String;");
+    jfieldID rFlag = env->GetFieldID(objectClass, "r_flag", "I");
+    jfieldID rttyTu = env->GetFieldID(objectClass, "rtty_tu", "I");
+    jfieldID euSerial = env->GetFieldID(objectClass, "eu_serial", "I");
+    jfieldID arrlRac = env->GetFieldID(objectClass, "arrl_rac", "Ljava/lang/String;");
+    jfieldID arrlClass = env->GetFieldID(objectClass, "arrl_class", "Ljava/lang/String;");
     jfieldID callFromHash10 = env->GetFieldID(objectClass, "callFromHash10", "J");
     jfieldID callFromHash12 = env->GetFieldID(objectClass, "callFromHash12", "J");
     jfieldID callFromHash22 = env->GetFieldID(objectClass, "callFromHash22", "J");
@@ -113,6 +139,12 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderFt8Analysis(JNIEnv *e
         env->SetObjectField(ft8Message, extraInfo, env->NewStringUTF(message.message.extra));
         env->SetObjectField(ft8Message, maidenGrid, env->NewStringUTF(message.message.maidenGrid));
         env->SetIntField(ft8Message, report, message.message.report);
+        env->SetObjectField(ft8Message, rttyState, env->NewStringUTF(message.message.rtty_state));
+        env->SetIntField(ft8Message, rFlag, message.message.r_flag);
+        env->SetIntField(ft8Message, rttyTu, message.message.rtty_tu);
+        env->SetIntField(ft8Message, euSerial, message.message.eu_serial);
+        env->SetObjectField(ft8Message, arrlRac, env->NewStringUTF(message.message.arrl_rac));
+        env->SetObjectField(ft8Message, arrlClass, env->NewStringUTF(message.message.arrl_class));
 
         env->SetLongField(ft8Message, callFromHash10,
                           (jlong) message.message.call_de_hash.hash10);
@@ -211,6 +243,54 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_setDecodeMode(JNIEnv *env, j
         dd->kLDPC_iterations = deep_kLDPC_iterations;
     } else {
         dd->kLDPC_iterations = fast_kLDPC_iterations;
+    }
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetApHints(JNIEnv *env, jobject thiz,
+                                                                      jlong decoder,
+                                                                      jstring my_call,
+                                                                      jobjectArray hint_calls,
+                                                                      jobjectArray hint_grids) {
+    decoder_t *dd;
+    dd = (decoder_t *) decoder;
+    if (dd == nullptr) {
+        return;
+    }
+
+    memset(&dd->ap_hints, 0, sizeof(dd->ap_hints));
+    copyJStringToBuffer(env, my_call, dd->ap_hints.my_call, sizeof(dd->ap_hints.my_call));
+    // Each decode cycle replaces the full hint set so native state tracks the latest Java view.
+
+    jsize callCount = (hint_calls == nullptr) ? 0 : env->GetArrayLength(hint_calls);
+    jsize gridCount = (hint_grids == nullptr) ? 0 : env->GetArrayLength(hint_grids);
+    jsize count = callCount < gridCount ? callCount : gridCount;
+    if (count > FTX_AP_MAX_HINT_CALLS) {
+        count = FTX_AP_MAX_HINT_CALLS;
+    }
+
+    for (jsize i = 0; i < count; ++i) {
+        jstring call = (jstring) env->GetObjectArrayElement(hint_calls, i);
+        jstring grid = (jstring) env->GetObjectArrayElement(hint_grids, i);
+
+        copyJStringToBuffer(env, call,
+                            dd->ap_hints.hint_calls[i],
+                            sizeof(dd->ap_hints.hint_calls[i]));
+        copyJStringToBuffer(env, grid,
+                            dd->ap_hints.hint_grids[i],
+                            sizeof(dd->ap_hints.hint_grids[i]));
+
+        if (dd->ap_hints.hint_calls[i][0] != '\0') {
+            dd->ap_hints.hint_call_count = (int) i + 1;
+        }
+
+        if (call != nullptr) {
+            env->DeleteLocalRef(call);
+        }
+        if (grid != nullptr) {
+            env->DeleteLocalRef(grid);
+        }
     }
 }
 

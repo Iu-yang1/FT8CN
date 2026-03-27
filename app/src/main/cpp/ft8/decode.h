@@ -8,6 +8,10 @@
 #include "../common/debug.h"
 #include "../fft/kiss_fft.h"
 
+#define FTX_AP_MAX_HINT_CALLS 4
+#define FTX_AP_CALLSIGN_MAX 16
+#define FTX_AP_GRID_MAX 7
+
 typedef struct
 {
     int max_blocks;
@@ -52,8 +56,14 @@ typedef struct
     char dx_call_to2[14];
     char extra[19];
 
-    char maidenGrid[5];
+    char maidenGrid[7];
     int report;
+    int r_flag;
+    int rtty_tu;
+    int eu_serial;
+    char rtty_state[5];
+    char arrl_rac[5];
+    char arrl_class[3];
 
     hashCode call_to_hash;
     hashCode call_de_hash;
@@ -69,8 +79,18 @@ typedef struct
     int unpack_status;
 } decode_status_t;
 
+typedef struct
+{
+    char my_call[FTX_AP_CALLSIGN_MAX];
+    int hint_call_count;
+    char hint_calls[FTX_AP_MAX_HINT_CALLS][FTX_AP_CALLSIGN_MAX];
+    char hint_grids[FTX_AP_MAX_HINT_CALLS][FTX_AP_GRID_MAX];
+    // AP-lite only keeps a very small hint set so the fallback path stays bounded.
+} ap_hints_t;
+
 int ft8_find_sync(const waterfall_t *power, int num_candidates, candidate_t heap[], int min_score);
 bool ft8_decode(waterfall_t *power, candidate_t *cand, message_t *message, int max_iterations,
-                decode_status_t *status);
+                const ap_hints_t *ap_hints, decode_status_t *status);
+// AP hints are only consumed by the final deep-decode fallback and do not change the first-pass API.
 
 #endif // _INCLUDE_DECODE_H_

@@ -6,6 +6,7 @@
 
 #include "unpack.h"
 #include <string.h>
+#include <stdio.h>
 
 #include "text.h"
 // #include <stdio.h>//为防止警告
@@ -16,10 +17,97 @@
 #define NTOKENS  ((uint32_t)2063592L)
 #define MAXGRID4 ((uint16_t)32400L)
 
+static inline uint32_t hash22_to_hash12(uint32_t hash22) {
+    return hash22 >> (22 - 12);
+}
+
+static inline uint32_t hash22_to_hash10(uint32_t hash22) {
+    return hash22 >> (22 - 10);
+}
+
+static const char *const kStatesProvinces[] = {
+        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+        "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+        "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+        "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+        "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+        "NB", "NS", "QC", "ON", "MB", "SK", "AB", "BC", "NWT", "NF",
+        "LB", "NU", "YT", "PEI", "DC"
+};
+
+static const char *const kArrlSections[] = {
+        "AB", "AK", "AL", "AR", "AZ", "BC", "CO", "CT", "DE", "EB",
+        "EMA", "ENY", "EPA", "EWA", "GA", "GTA", "IA", "ID", "IL", "IN",
+        "KS", "KY", "LA", "LAX", "MAR", "MB", "MDC", "ME", "MI", "MN",
+        "MO", "MS", "MT", "NC", "ND", "NE", "NFL", "NH", "NL", "NLI",
+        "NM", "NNJ", "NNY", "NT", "NTX", "NV", "OH", "OK", "ONE", "ONN",
+        "ONS", "OR", "ORG", "PAC", "PR", "QC", "RI", "SB", "SC", "SCV",
+        "SD", "SDG", "SF", "SFL", "SJV", "SK", "SNJ", "STX", "SV", "TN",
+        "UT", "VA", "VI", "VT", "WCF", "WI", "WMA", "WNY", "WPA", "WTX",
+        "WV", "WWA", "WY", "DX"
+};
+
+static int unpack_callsign_impl(uint32_t n28, uint8_t ip, uint8_t i3, char *result, hashCode *hash);
+
+static void copy_trimmed_literal(char *dst, size_t dst_size, const char *src) {
+    size_t length = strlen(src);
+    while ((length > 0) && (src[length - 1] == ' ')) {
+        --length;
+    }
+
+    if (dst_size == 0) {
+        return;
+    }
+    if (length >= (dst_size - 1)) {
+        length = dst_size - 1;
+    }
+
+    memcpy(dst, src, length);
+    dst[length] = '\0';
+}
+
+static void set_hash12_placeholder(char *result, hashCode *hash, uint16_t hash12) {
+    strcpy(result, "<...>");
+    hash->hash10 = hash12 >> 2;
+    hash->hash12 = hash12;
+    hash->hash22 = 0;
+}
+
+static void set_hash22_placeholder(char *result, hashCode *hash, uint32_t hash22) {
+    strcpy(result, "<...>");
+    hash->hash10 = hash22_to_hash10(hash22);
+    hash->hash12 = hash22_to_hash12(hash22);
+    hash->hash22 = hash22;
+}
+
+static int unpack_grid6(uint32_t n25, char *grid6) {
+    const uint32_t max_grid6 = 18u * 18u * 10u * 10u * 24u * 24u;
+    if (n25 >= max_grid6) {
+        return -1;
+    }
+
+    grid6[6] = '\0';
+    grid6[5] = (char) ('A' + (n25 % 24u));
+    n25 /= 24u;
+    grid6[4] = (char) ('A' + (n25 % 24u));
+    n25 /= 24u;
+    grid6[3] = (char) ('0' + (n25 % 10u));
+    n25 /= 10u;
+    grid6[2] = (char) ('0' + (n25 % 10u));
+    n25 /= 10u;
+    grid6[1] = (char) ('A' + (n25 % 18u));
+    n25 /= 18u;
+    grid6[0] = (char) ('A' + (n25 % 18u));
+    return 0;
+}
+
+static int unpack_callsign_impl(uint32_t n28, uint8_t ip, uint8_t i3, char *result, hashCode *hash);
 
 // n28 is a 28-bit integer, e.g. n28a or n28b, containing all the
 // call sign bits from a packed message.
 int unpack_callsign(uint32_t n28, uint8_t ip, uint8_t i3, char *result,hashCode * hash) {
+    return unpack_callsign_impl(n28, ip, i3, result, hash);
+
     // Check for special tokens DE, QRZ, CQ, CQ_nnn, CQ_aaaa
     hash->hash10=0;
     hash->hash12=0;
@@ -57,7 +145,7 @@ int unpack_callsign(uint32_t n28, uint8_t ip, uint8_t i3, char *result,hashCode 
             strcat(result, trim_front(aaaa));
             return 0; // Success
         }
-        // ? TODO: unspecified in the WSJT-X code
+        // Reserved token range currently has no textual representation in WSJT-X.
         return -1;
     }
 
@@ -69,8 +157,7 @@ int unpack_callsign(uint32_t n28, uint8_t ip, uint8_t i3, char *result,hashCode 
 
         LOG_PRINTF("N28 HASH: %0x",n28);
 
-        // This is a 22-bit hash of a result
-        // TODO: implement
+        // Legacy path: hashed calls are surfaced as a placeholder and resolved by higher layers.
         strcpy(result, "<...>");
         // result[0] = '<';
         // int_to_dd(result + 1, n28, 7, false);
@@ -118,6 +205,87 @@ int unpack_callsign(uint32_t n28, uint8_t ip, uint8_t i3, char *result,hashCode 
     return 0; // Success
 }
 
+static int unpack_callsign_impl(uint32_t n28, uint8_t ip, uint8_t i3, char *result, hashCode *hash) {
+    hash->hash10 = 0;
+    hash->hash12 = 0;
+    hash->hash22 = 0;
+
+    if (n28 < NTOKENS) {
+        if (n28 <= 2) {
+            if (n28 == 0)
+                strcpy(result, "DE");
+            if (n28 == 1)
+                strcpy(result, "QRZ");
+            if (n28 == 2)
+                strcpy(result, "CQ");
+            return 0;
+        }
+        if (n28 <= 1002) {
+            strcpy(result, "CQ ");
+            int_to_dd(result + 3, n28 - 3, 3, false);
+            return 0;
+        }
+        if (n28 <= 532443L) {
+            uint32_t n = n28 - 1003;
+            char aaaa[5];
+            aaaa[4] = '\0';
+            for (int i = 3; /* */; --i) {
+                aaaa[i] = charn(n % 27, 4);
+                if (i == 0)
+                    break;
+                n /= 27;
+            }
+
+            strcpy(result, "CQ ");
+            strcat(result, trim_front(aaaa));
+            return 0;
+        }
+        return -1;
+    }
+
+    n28 -= NTOKENS;
+    if (n28 < MAX22) {
+        hash->hash22 = n28;
+        hash->hash12 = hash22_to_hash12(n28);
+        hash->hash10 = hash22_to_hash10(n28);
+        strcpy(result, "<...>");
+        return 0;
+    }
+
+    uint32_t n = n28 - MAX22;
+    char callsign[7];
+    callsign[6] = '\0';
+    callsign[5] = charn(n % 27, 4);
+    n /= 27;
+    callsign[4] = charn(n % 27, 4);
+    n /= 27;
+    callsign[3] = charn(n % 27, 4);
+    n /= 27;
+    callsign[2] = charn(n % 10, 3);
+    n /= 10;
+    callsign[1] = charn(n % 36, 2);
+    n /= 36;
+    callsign[0] = charn(n % 37, 1);
+
+    strcpy(result, trim(callsign));
+    if (strlen(result) == 0)
+        return -1;
+
+    hash->hash10 = hashcall_10(result);
+    hash->hash12 = hashcall_12(result);
+    hash->hash22 = hashcall_22(result);
+
+    if (ip) {
+        if (i3 == 1) {
+            strcat(result, "/R");
+        } else if (i3 == 2) {
+            strcat(result, "/P");
+        }
+    }
+
+    return 0;
+}
+
 static void unpack_type0_payload71(const uint8_t *a77, uint8_t *payload71) {
     uint8_t carry = 0;
     for (int i = 0; i < 9; ++i) {
@@ -147,10 +315,10 @@ static int unpack_type0_dxpedition(const uint8_t *a77, message_t *message) {
     uint8_t n5 = (uint8_t) read_bits_be(payload71, 67, 5);
     hashCode dx_hash = {0, 0, 0};
 
-    if (unpack_callsign(n28a, 0, 0, message->call_to, &message->call_to_hash) < 0) {
+    if (unpack_callsign_impl(n28a, 0, 0, message->call_to, &message->call_to_hash) < 0) {
         return -1;
     }
-    if (unpack_callsign(n28b, 0, 0, message->dx_call_to2, &dx_hash) < 0) {
+    if (unpack_callsign_impl(n28b, 0, 0, message->dx_call_to2, &dx_hash) < 0) {
         return -2;
     }
 
@@ -161,6 +329,105 @@ static int unpack_type0_dxpedition(const uint8_t *a77, message_t *message) {
 
     message->report = ((int) n5 * 2) - 30;
     int_to_dd(message->extra, message->report, 2, true);
+    return 0;
+}
+
+static int unpack_type0_field_day(const uint8_t *a77, message_t *message) {
+    uint8_t payload71[9];
+    unpack_type0_payload71(a77, payload71);
+
+    uint32_t n28a = read_bits_be(payload71, 1, 28);
+    uint32_t n28b = read_bits_be(payload71, 29, 28);
+    uint8_t ir = (uint8_t) read_bits_be(payload71, 57, 1);
+    uint8_t n4 = (uint8_t) read_bits_be(payload71, 58, 4);
+    uint8_t k3 = (uint8_t) read_bits_be(payload71, 62, 3);
+    uint8_t s7 = (uint8_t) read_bits_be(payload71, 65, 7);
+
+    if (unpack_callsign_impl(n28a, 0, 0, message->call_to, &message->call_to_hash) < 0) {
+        return -1;
+    }
+    if (unpack_callsign_impl(n28b, 0, 0, message->call_de, &message->call_de_hash) < 0) {
+        return -2;
+    }
+    if (k3 > 5) {
+        return -3;
+    }
+    if (s7 >= (sizeof(kArrlSections) / sizeof(kArrlSections[0]))) {
+        return -4;
+    }
+
+    message->r_flag = ir;
+    message->eu_serial = (message->n3 == 3) ? (n4 + 1) : (n4 + 17);
+    message->arrl_class[0] = (char) ('A' + k3);
+    message->arrl_class[1] = '\0';
+    copy_trimmed_literal(message->arrl_rac, sizeof(message->arrl_rac), kArrlSections[s7]);
+    snprintf(message->extra, sizeof(message->extra), "%s%d%s %s",
+             ir ? "R " : "",
+             message->eu_serial,
+             message->arrl_class,
+             message->arrl_rac);
+    return 0;
+}
+
+static int unpack_type3_rtty(const uint8_t *a77, message_t *message) {
+    uint8_t tu = (uint8_t) read_bits_be(a77, 0, 1);
+    uint32_t n28a = read_bits_be(a77, 1, 28);
+    uint32_t n28b = read_bits_be(a77, 29, 28);
+    uint8_t ir = (uint8_t) read_bits_be(a77, 57, 1);
+    uint8_t r3 = (uint8_t) read_bits_be(a77, 58, 3);
+    uint16_t s13 = (uint16_t) read_bits_be(a77, 61, 13);
+
+    if (unpack_callsign_impl(n28a, 0, 0, message->call_to, &message->call_to_hash) < 0) {
+        return -1;
+    }
+    if (unpack_callsign_impl(n28b, 0, 0, message->call_de, &message->call_de_hash) < 0) {
+        return -2;
+    }
+
+    message->rtty_tu = tu;
+    message->r_flag = ir;
+    message->report = 529 + (10 * r3);
+
+    if (s13 <= 7999) {
+        snprintf(message->rtty_state, sizeof(message->rtty_state), "%u", s13);
+    } else if ((s13 >= 8001) &&
+               (s13 <= (8000 + (sizeof(kStatesProvinces) / sizeof(kStatesProvinces[0]))))) {
+        copy_trimmed_literal(message->rtty_state, sizeof(message->rtty_state),
+                             kStatesProvinces[s13 - 8001]);
+    } else {
+        return -3;
+    }
+
+    snprintf(message->extra, sizeof(message->extra), "%s%d %s",
+             ir ? "R " : "",
+             message->report,
+             message->rtty_state);
+    return 0;
+}
+
+static int unpack_type5_euvhf(const uint8_t *a77, message_t *message) {
+    uint16_t h12 = (uint16_t) read_bits_be(a77, 0, 12);
+    uint32_t h22 = read_bits_be(a77, 12, 22);
+    uint8_t ir = (uint8_t) read_bits_be(a77, 34, 1);
+    uint8_t r3 = (uint8_t) read_bits_be(a77, 35, 3);
+    uint16_t s11 = (uint16_t) read_bits_be(a77, 38, 11);
+    uint32_t g25 = read_bits_be(a77, 49, 25);
+
+    set_hash12_placeholder(message->call_to, &message->call_to_hash, h12);
+    set_hash22_placeholder(message->call_de, &message->call_de_hash, h22);
+    message->r_flag = ir;
+    message->report = 52 + r3;
+    message->eu_serial = s11;
+
+    if (unpack_grid6(g25, message->maidenGrid) < 0) {
+        return -1;
+    }
+
+    snprintf(message->extra, sizeof(message->extra), "%s%d%04d %s",
+             ir ? "R " : "",
+             message->report,
+             message->eu_serial,
+             message->maidenGrid);
     return 0;
 }
 
@@ -193,7 +460,7 @@ static int unpack_type0_dxpedition(const uint8_t *a77, message_t *message) {
 //    }
 //    // Fix "CQ_" to "CQ " -> already done in unpack_callsign()
 //
-//    // TODO: add to recent calls
+//    // Recent-call caching is handled outside this legacy helper.
 //    // if (call_to[0] != '<' && strlen(call_to) >= 4) {
 //    //     save_hash_call(call_to)
 //    // }
@@ -278,21 +545,15 @@ int unpack_type1_(const uint8_t *a77, message_t *message) {
 
 
     // Unpack both callsigns
-    if (unpack_callsign(n28a >> 1, n28a & 0x01, message->i3, message->call_to,&message->call_to_hash) < 0) {
+    if (unpack_callsign_impl(n28a >> 1, n28a & 0x01, message->i3, message->call_to,&message->call_to_hash) < 0) {
         return -1;
     }
-    if (unpack_callsign(n28b >> 1, n28b & 0x01, message->i3, message->call_de,&message->call_de_hash) < 0) {
+    if (unpack_callsign_impl(n28b >> 1, n28b & 0x01, message->i3, message->call_de,&message->call_de_hash) < 0) {
         return -2;
     }
     // Fix "CQ_" to "CQ " -> already done in unpack_callsign()
 
-    // TODO: add to recent calls
-    // if (call_to[0] != '<' && strlen(call_to) >= 4) {
-    //     save_hash_call(call_to)
-    // }
-    // if (call_de[0] != '<' && strlen(call_de) >= 4) {
-    //     save_hash_call(call_de)
-    // }
+    // Recent-call hash caching is handled on the Java side by MessageHashMap.
 
     char *dst = message->extra;
     message->report=-100;//-100说明没有信号报告
@@ -356,7 +617,6 @@ int unpack_type1_(const uint8_t *a77, message_t *message) {
 
 
 int unpack_text(const uint8_t *a71, char *text) {
-    // TODO: test
     uint8_t b71[9];
 
     // Shift 71 bits right by 1 bit, so that it's right-aligned in the byte array
@@ -414,10 +674,6 @@ int unpack_nonstandard(const uint8_t *a77,  message_t *message) {
     uint64_t n58;
     n12 = (a77[0] << 4); //11 ~4  : 8
     n12 |= (a77[1] >> 4); //3~0 : 12
-    uint32_t h12=a77[0];
-
-
-
 
     n58 = ((uint64_t) (a77[1] & 0x0F) << 54); //57 ~ 54 : 4
     n58 |= ((uint64_t) a77[2] << 46); //53 ~ 46 : 12
@@ -436,9 +692,11 @@ int unpack_nonstandard(const uint8_t *a77,  message_t *message) {
 
 
     if (iflip==1){//h1==1
-        message->call_de_hash.hash12=n12;
+        message->call_de_hash.hash12 = n12;
+        message->call_de_hash.hash10 = n12 >> 2;
     } else{
-        message->call_to_hash.hash12=n12;
+        message->call_to_hash.hash12 = n12;
+        message->call_to_hash.hash10 = n12 >> 2;
     }
 
     char c11[12];
@@ -452,16 +710,10 @@ int unpack_nonstandard(const uint8_t *a77,  message_t *message) {
     }
 
     char call_3[15];
-    // should replace with hash12(n12, call_3);
     strcpy(call_3, "<...>");
-    // call_3[0] = '<';
-    // int_to_dd(call_3 + 1, n12, 4, false);
-    // call_3[5] = '>';
-    // call_3[6] = '\0';
 
     char *call_1 = (iflip) ? c11 : call_3;
     char *call_2 = (iflip) ? call_3 : c11;
-    //save_hash_call(c11_trimmed);
 
 
 
@@ -598,13 +850,10 @@ int unpack77_fields_(const uint8_t *a77, message_t *message) {
             // 0.1  K1ABC RR73; W9XYZ <KH1/KH7Z> -11
             return unpack_type0_dxpedition(a77, message);
         }
-            // else if (i3 == 0 && n3 == 2) {
-            //     // 0.2  PA3XYZ/P R 590003 IO91NP           28 1 1 3 12 25   70   EU VHF contest
-            // }
-            // else if (i3 == 0 && (n3 == 3 || n3 == 4)) {
-            //     // 0.3   WA9XYZ KA1ABC R 16A EMA            28 28 1 4 3 7    71   ARRL Field Day
-            //     // 0.4   WA9XYZ KA1ABC R 32A EMA            28 28 1 4 3 7    71   ARRL Field Day
-            // }
+        else if (message->n3 == 3 || message->n3 == 4) {
+            // 0.3 / 0.4  ARRL Field Day messages
+            return unpack_type0_field_day(a77, message);
+        }
         else if (message->n3 == 5) {
             // 0.5   0123456789abcdef01                 71               71   Telemetry (18 hex)
             return unpack_telemetry(a77, message->extra);
@@ -613,9 +862,10 @@ int unpack77_fields_(const uint8_t *a77, message_t *message) {
         // Type 1 (standard message) or Type 2 ("/P" form for EU VHF contest)
         return unpack_type1_(a77, message);
     }
-        // else if (i3 == 3) {
-        //     // Type 3: ARRL RTTY Contest
-        // }
+    else if (message->i3 == 3) {
+        // Type 3: ARRL RTTY Roundup
+        return unpack_type3_rtty(a77, message);
+    }
     else if (message->i3 == 4) {
         //     // Type 4: Nonstandard calls, e.g. <WA9XYZ> PJ4/KA1ABC RR73
         //     // One hashed call or "CQ"; one compound or nonstandard call with up
@@ -623,9 +873,10 @@ int unpack77_fields_(const uint8_t *a77, message_t *message) {
         //return unpack_nonstandard(a77, message->call_to, message->call_de, message->extra);
         return unpack_nonstandard(a77, message);
     }
-    // else if (i3 == 5) {
-    //     // Type 5: TU; W9XYZ K1ABC R-09 FN             1 28 28 1 7 9       74   WWROF contest
-    // }
+    else if (message->i3 == 5) {
+        // Type 5: EU VHF contest with hashed calls, report, serial, and 6-char grid.
+        return unpack_type5_euvhf(a77, message);
+    }
 
     // unknown type, should never get here
     return -1;
@@ -658,6 +909,23 @@ int unpackToMessage_t(const uint8_t *a77, message_t *message) {
         dst += strlen(" RR73; ");
         dst = strcpy(dst, message->dx_call_to2);
         dst += strlen(message->dx_call_to2);
+        *dst++ = ' ';
+        dst = strcpy(dst, message->call_de);
+        dst += strlen(message->call_de);
+        *dst++ = ' ';
+        dst = strcpy(dst, message->extra);
+        dst += strlen(message->extra);
+        *dst = '\0';
+        return 0;
+    }
+
+    if (message->i3 == 3) {
+        if (message->rtty_tu) {
+            dst = strcpy(dst, "TU; ");
+            dst += strlen("TU; ");
+        }
+        dst = strcpy(dst, message->call_to);
+        dst += strlen(message->call_to);
         *dst++ = ' ';
         dst = strcpy(dst, message->call_de);
         dst += strlen(message->call_de);

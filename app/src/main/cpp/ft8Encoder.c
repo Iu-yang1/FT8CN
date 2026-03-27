@@ -28,16 +28,20 @@ void gfsk_pulse(int n_spsym, float symbol_bt, float *pulse) {
 }
 
 
-/// 使用GFSK相位整形合成波形数据。
-/// 输出波形将包含n_sym个符号。
-/// @param[in] symbols 符号（音调）数组 (0-7 for FT8)
-/// @param[in] n_sym 符号数组中的符号数
-/// @param[in] f0 符号0的音频频率（赫兹） (载波频率)
-/// @param[in] symbol_bt 符号平滑滤波器带宽 (2 for FT8, 1 for FT4)
-/// @param[in] symbol_period 符号周期（持续时间），秒
-/// @param[in] signal_rate 合成信号的采样率，赫兹
-/// @param[out] signal 信号波形样本的输出阵列（应为n_sym*n_spsym样本留出空间）
-///
+/**
+ * 【优化】使用GFSK相位整形合成波形数据
+ * 输出波形将包含n_sym个符号。
+ *
+ * 改进点：增强错误处理，内存分配失败时记录日志并安全返回
+ *
+ * @param[in] symbols 符号（音调）数组 (0-7 for FT8)
+ * @param[in] n_sym 符号数组中的符号数
+ * @param[in] f0 符号0的音频频率（赫兹） (载波频率)
+ * @param[in] symbol_bt 符号平滑滤波器带宽 (2 for FT8, 1 for FT4)
+ * @param[in] symbol_period 符号周期（持续时间），秒
+ * @param[in] signal_rate 合成信号的采样率，赫兹
+ * @param[out] signal 信号波形样本的输出阵列（应为n_sym*n_spsym样本留出空间）
+ */
 void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, float symbol_period,
                 int signal_rate, float *signal) {
     int n_spsym = (int) (0.5f + (float)signal_rate * symbol_period); // 每个符号的样本数12000*0.16=1920
@@ -49,19 +53,30 @@ void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, fl
     // Length = (nsym+2)*n_spsym samples, 首个和最后一个扩展符号
     float dphi_peak = 2 * M_PI * hmod / n_spsym;
 
-    //此处是与采样率有关，采样率提高后，可能会有闪退的问题
-    float *dphi;//此处使用内存申请的方式，而不是原来数组的方式，因为是采样率过高时，会报内存出错。
-    dphi = malloc(sizeof(float) * (n_wave + 2 * n_spsym));
-    if (dphi==0) return;//内存申请失败
-    //float dphi[n_wave + 2 * n_spsym];//原来的方式
+    // 【优化】此处使用内存申请的方式，采样率提高后避免栈溢出
+    float *dphi = (float *) malloc(sizeof(float) * (n_wave + 2 * n_spsym));
+    if (dphi == NULL) {
+        // 【优化】内存分配失败时记录详细错误信息
+        LOG(LOG_ERROR, "synth_gfsk: Failed to allocate %zu bytes for dphi (n_wave=%d, n_spsym=%d)\n",
+            sizeof(float) * (n_wave + 2 * n_spsym), n_wave, n_spsym);
+        return;
+    }
 
     // 频率上移f0
     for (int i = 0; i < n_wave + 2 * n_spsym; ++i) {
         dphi[i] = 2 * M_PI * f0 / signal_rate;
     }
 
-    //float pulse[3 * n_spsym];
-    float *pulse=(float *) malloc(sizeof(float)*3 * n_spsym);
+    // 分配脉冲缓冲区
+    float *pulse = (float *) malloc(sizeof(float) * 3 * n_spsym);
+    if (pulse == NULL) {
+        // 【优化】pulse 分配失败时记录错误并释放已分配的 dphi
+        LOG(LOG_ERROR, "synth_gfsk: Failed to allocate %zu bytes for pulse (n_spsym=%d)\n",
+            sizeof(float) * 3 * n_spsym, n_spsym);
+        free(dphi);
+        return;
+    }
+
     gfsk_pulse(n_spsym, symbol_bt, pulse);
 
     for (int i = 0; i < n_sym; ++i) {
@@ -88,8 +103,10 @@ void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, fl
         signal[i] *= env;
         signal[n_wave - 1 - i] *= env;
     }
+
+    // 【优化】清理资源：按分配的逆序释放
     free(pulse);
-    free(dphi);//要释放掉内存
+    free(dphi);
 }
 
 //此代码已经弃用

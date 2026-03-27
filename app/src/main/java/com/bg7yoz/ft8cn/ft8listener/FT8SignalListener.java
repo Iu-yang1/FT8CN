@@ -26,6 +26,8 @@ import java.util.ArrayList;
 
 public class FT8SignalListener {
     private static final String TAG = "FT8SignalListener";
+    private static final int AP_HINT_CALL_LIMIT = 4;
+    // AP-lite only keeps a few recent follow calls so the native fallback stays cheap.
 
     private UtcTimer utcTimer;
     private final OnFt8Listen onFt8Listen;//当开始监听，解码结束后触发的事件
@@ -152,6 +154,53 @@ public class FT8SignalListener {
         return 2;
     }
 
+    private String[][] buildDecoderApHints() {
+        ArrayList<String> hintCalls = new ArrayList<>();
+        ArrayList<String> hintGrids = new ArrayList<>();
+        String myCall = GeneralVariables.getShortCallsign(GeneralVariables.myCallsign)
+                .toUpperCase()
+                .trim();
+
+        synchronized (GeneralVariables.followCallsign) {
+            for (int i = GeneralVariables.followCallsign.size() - 1;
+                 i >= 0 && hintCalls.size() < AP_HINT_CALL_LIMIT;
+                 --i) {
+                String rawCall = GeneralVariables.followCallsign.get(i);
+                String shortCall = GeneralVariables.getShortCallsign(rawCall)
+                        .toUpperCase()
+                        .trim();
+
+                if (shortCall.length() == 0
+                        || shortCall.equals(myCall)
+                        || hintCalls.contains(shortCall)) {
+                    continue;
+                }
+
+                String grid = GeneralVariables.callsignAndGrids.get(rawCall);
+                if (grid == null || grid.length() == 0) {
+                    grid = GeneralVariables.callsignAndGrids.get(shortCall);
+                }
+                if (grid == null) {
+                    grid = "";
+                } else {
+                    grid = grid.toUpperCase().trim();
+                    if (grid.length() > 4) {
+                        grid = grid.substring(0, 4);
+                    }
+                }
+
+                hintCalls.add(shortCall);
+                hintGrids.add(grid);
+            }
+        }
+
+        return new String[][]{
+                hintCalls.toArray(new String[0]),
+                hintGrids.toArray(new String[0])
+        };
+        // Java fixes both the size and the order of the hint set before passing it to native.
+    }
+
     /**
      * 判断消息是否允许进入 subtract 列表
      * 普通解码可略宽松，深解后更严格，避免误码扩散
@@ -163,16 +212,16 @@ public class FT8SignalListener {
 
         if (!isDeep) {
             if (decodeMode == FT8Common.FT4_MODE) {
-                return msg.snr >= -18 && msg.score >= 12;
+                return msg.snr >= -17 && msg.score >= 13;
             } else {
-                return msg.snr >= -26 && msg.score >= 10;
+                return msg.snr >= -24 && msg.score >= 12;
             }
         }
 
         if (decodeMode == FT8Common.FT4_MODE) {
-            return msg.snr >= -19 && msg.score >= 14;
+            return msg.snr >= -18 && msg.score >= 15;
         } else {
-            return msg.snr >= -27 && msg.score >= 12;
+            return msg.snr >= -25 && msg.score >= 14;
         }
     }
 
@@ -221,10 +270,18 @@ public class FT8SignalListener {
                 );
 
                 // 压入音频数据
+                String[][] apHints = buildDecoderApHints();
+                DecoderSetApHints(
+                        ft8Decoder,
+                        GeneralVariables.getShortCallsign(GeneralVariables.myCallsign).toUpperCase().trim(),
+                        apHints[0],
+                        apHints[1]
+                );
+                // AP-lite only receives my-call plus a few follow-call/grid hints before decode starts.
                 DecoderMonitorPressFloat(voiceData, ft8Decoder);
 
                 ArrayList<Ft8Message> allMsg = new ArrayList<>();
-                ArrayList<Ft8Message> msgs = runDecode(ft8Decoder, utc, false, decodeMode);
+                ArrayList<Ft8Message> msgs = runDecode(ft8Decoder, utc, false, decodeMode, 0L);
                 addMsgToList(allMsg, msgs);
 
                 timeSec = System.currentTimeMillis() - time;
@@ -241,7 +298,10 @@ public class FT8SignalListener {
 
                 // FT8 / FT4 都允许进入深度解码，但使用有限轮重解
                 if (GeneralVariables.deepDecodeMode && ReBuildSignal.supportSubtract(decodeMode)) {
-                    msgs = runDecode(ft8Decoder, utc, true, decodeMode);
+                    long deepDecodeDeadlineMs = System.currentTimeMillis() + FT8Common.DEEP_DECODE_TIMEOUT;
+                    // The deep-decode timeout is enforced as a real deadline instead of only checking between rounds.
+
+                    msgs = runDecode(ft8Decoder, utc, true, decodeMode, deepDecodeDeadlineMs);
                     addMsgToList(allMsg, msgs);
 
                     timeSec = System.currentTimeMillis() - time;
@@ -260,7 +320,7 @@ public class FT8SignalListener {
                     int round = 0;
 
                     while (round < maxRounds) {
-                        if (timeSec > FT8Common.DEEP_DECODE_TIMEOUT) {
+                        if (System.currentTimeMillis() >= deepDecodeDeadlineMs) {
                             break;
                         }
 
@@ -271,7 +331,7 @@ public class FT8SignalListener {
                         // 按本轮固定模式做 subtract，避免中途切模式
                         ReBuildSignal.subtractSignal(ft8Decoder, a91List, decodeMode);
 
-                        msgs = runDecode(ft8Decoder, utc, true, decodeMode);
+                        msgs = runDecode(ft8Decoder, utc, true, decodeMode, deepDecodeDeadlineMs);
                         if (msgs.size() == 0) {
                             break;
                         }
@@ -317,7 +377,8 @@ public class FT8SignalListener {
      * @param isDeep     是否深度解码
      * @param decodeMode 本轮固定模式
      */
-    private ArrayList<Ft8Message> runDecode(long ft8Decoder, long utc, boolean isDeep, int decodeMode) {
+    private ArrayList<Ft8Message> runDecode(long ft8Decoder, long utc, boolean isDeep, int decodeMode,
+                                            long deadlineMs) {
         ArrayList<Ft8Message> ft8Messages = new ArrayList<>();
         Ft8Message ft8Message = new Ft8Message(decodeMode);
 
@@ -333,6 +394,11 @@ public class FT8SignalListener {
         int num_candidates = DecoderFt8FindSync(ft8Decoder);
 
         for (int idx = 0; idx < num_candidates; ++idx) {
+            if (isDeep && deadlineMs > 0L && System.currentTimeMillis() >= deadlineMs) {
+                break;
+            }
+            // Deep decode uses a hard wall-clock cutoff so one slow round cannot run far past the UI budget.
+
             try {
                 ft8Message.signalFormat = decodeMode;
 
@@ -470,4 +536,7 @@ public class FT8SignalListener {
     public native byte[] DecoderGetA91(long decoder);//获取当前message的a91数据
 
     public native void setDecodeMode(long decoder, boolean isDeep);//设置解码的模式，isDeep=true是多次迭代，=false是快速迭代
+
+    public native void DecoderSetApHints(long decoder, String myCall, String[] hintCallsigns, String[] hintGrids);
+    // Native only receives a tiny hint set here; the AP logic still lives in the deep fallback path.
 }

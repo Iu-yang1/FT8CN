@@ -22,26 +22,44 @@ static inline int decoder_min_sync_score(decoder_t *decoder) {
     return decoder_is_ft4(decoder) ? 8 : kMin_score;
 }
 
-//把信号FFT,在解码decoder中减去信号
+/**
+ * 把信号FFT,在解码decoder中减去信号
+ * 改进点：移除未使用的 last_frame 分配，减少内存浪费
+ */
 void signalToFFT(decoder_t *decoder, float signal[], int sample_rate) {
     int nfft = kFreq_osr * (int) (sample_rate * FT8_SYMBOL_PERIOD);
     float fft_norm = 2.0f / nfft;
+
+    // 分配并初始化汉宁窗
     float *window = (float *) malloc(nfft * sizeof(window[0]));
+    if (window == NULL) {
+        LOG(LOG_ERROR, "Failed to allocate memory for window\n");
+        return;
+    }
+
     for (int i = 0; i < nfft; ++i) {
         window[i] = hann_i(i, nfft);
     }
 
-    float *last_frame = (float *) malloc(nfft * sizeof(last_frame[0]));
+    // 移除未使用的 last_frame 分配
+    // float *last_frame = (float *) malloc(nfft * sizeof(last_frame[0]));
 
     size_t fft_work_size;
     kiss_fftr_alloc(nfft, 0, 0, &fft_work_size);
 
     void *fft_work = malloc(fft_work_size);
+    if (fft_work == NULL) {
+        LOG(LOG_ERROR, "Failed to allocate memory for fft_work\n");
+        free(window);
+        return;
+    }
+
     kiss_fftr_cfg fft_cfg = kiss_fftr_alloc(nfft, 0, fft_work, &fft_work_size);
 
+    // 清理资源
     free(fft_work);
     free(window);
-    free(last_frame);
+    // free(last_frame); //
 }
 
 void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8) {
@@ -123,6 +141,7 @@ ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder) {
                     &ft8Message.candidate,
                     &ft8Message.message,
                     decoder->kLDPC_iterations,
+                    &decoder->ap_hints,
                     &ft8Message.status)) {
         if (ft8Message.status.ldpc_errors > 0) {
             LOG(LOG_DEBUG, "LDPC decode: %d errors\n", ft8Message.status.ldpc_errors);

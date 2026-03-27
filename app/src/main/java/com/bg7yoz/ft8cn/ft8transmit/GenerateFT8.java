@@ -175,22 +175,11 @@ public class GenerateFT8 {
         if (msg == null) {
             return null;
         }
-        if (msg.callsignFrom == null || msg.callsignFrom.length() < 3) {
-            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.callsign_error));
-            return null;
-        }
 
         // 首先，将文本数据打包为二进制消息,共12个字节
         byte[] packed = new byte[FTX_LDPC_K_BYTES];
 
         // 把 "<>" 去掉
-        if (msg.callsignTo != null) {
-            msg.callsignTo = msg.callsignTo.replace("<", "").replace(">", "");
-        }
-        if (msg.callsignFrom != null) {
-            msg.callsignFrom = msg.callsignFrom.replace("<", "").replace(">", "");
-        }
-
         if (hasModifier) {
             msg.modifier = GeneralVariables.toModifier;
         } else {
@@ -198,24 +187,15 @@ public class GenerateFT8 {
         }
 
         // 判定用非标准呼号 i3=4 的条件
-        if (msg.i3 != 0) {
-            if (!checkIsStandardCallsign(msg.callsignFrom)
-                    && (!checkIsReport(msg.extraInfo) || msg.checkIsCQ())) {
-                msg.i3 = 4;
-            } else if (msg.callsignFrom.endsWith("/P")
-                    || (msg.callsignTo.endsWith("/P") && (!msg.callsignFrom.endsWith("/P")))) {
-                msg.i3 = 2;
-            } else {
-                msg.i3 = 1;
-            }
+        String messageText = msg.getMessageText();
+        if (messageText == null || messageText.trim().length() == 0) {
+            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.transmit_freeText));
+            return null;
         }
 
-        if (msg.i3 == 1 || msg.i3 == 2) {
-            packed = FT8Package.generatePack77_i1(msg);
-        } else if (msg.i3 == 4) {
-            packed = FT8Package.generatePack77_i4(msg);
-        } else {
-            packFreeTextTo77(msg.getMessageText(), packed);
+        if (pack77(messageText, packed) != 0) {
+            Log.e(TAG, "generateA91: failed to pack message " + messageText);
+            return null;
         }
 
         return packed;
@@ -225,6 +205,32 @@ public class GenerateFT8 {
      * 旧接口保留，仅供旧 JNI / 旧逻辑调试
      * 新逻辑建议直接走 GenerateFTx
      */
+    public static String getPackedTypeInfo(String text) {
+        if (text == null) {
+            return "";
+        }
+
+        String normalized = text.trim().toUpperCase();
+        if (normalized.length() == 0) {
+            return "";
+        }
+
+        byte[] packed = new byte[FTX_LDPC_K_BYTES];
+        if (pack77(normalized, packed) != 0) {
+            return "";
+        }
+
+        int b8 = packed[8] & 0xFF;
+        int b9 = packed[9] & 0xFF;
+        int i3 = (b9 >> 3) & 0x07;
+        int n3 = 0;
+        if (i3 == 0) {
+            n3 = ((b8 << 2) & 0x04) | ((b9 >> 6) & 0x03);
+        }
+
+        return Ft8Message.getCommandInfoByI3N3(i3, n3);
+    }
+
     public static float[] generateFt8ByA91(byte[] a91, float frequency, int sample_rate) {
         if (a91 == null) {
             return null;

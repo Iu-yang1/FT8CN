@@ -45,6 +45,8 @@ public class Ft8Message {
 
     public String modifier = null;//目标呼号的修饰符 如CQ POTA BG7YOZ OL50中的POTA
 
+    public String txRawText = null;//发射端手动输入的原始报文
+    public boolean useTxRawText = false;//是否优先使用 txRawText 进行发射/显示
     public String extraInfo = null;
     public String maidenGrid = null;
 
@@ -200,6 +202,8 @@ public class Ft8Message {
             dx_call_to2 = message.dx_call_to2;
             maidenGrid = message.maidenGrid;
             modifier = message.modifier;
+            txRawText = message.txRawText;
+            useTxRawText = message.useTxRawText;
             report = message.report;
 
             callToHash10 = message.callToHash10;
@@ -286,11 +290,15 @@ public class Ft8Message {
      */
     @SuppressLint("DefaultLocale")
     public String getMessageText() {
+        if (useTxRawText) {
+            return normalizeTxRawText();
+        }
+
         String safeCallTo = callsignTo == null ? "" : callsignTo;
         String safeCallFrom = callsignFrom == null ? "" : callsignFrom;
         String safeExtraInfo = extraInfo == null ? "" : extraInfo;
 
-        if (i3 == 0 && n3 == 0) {//说明是自由文本
+        if (i3 == 0 && n3 == 0) {//自由文本
             if (safeExtraInfo.length() < 13) {
                 return String.format("%-13s", safeExtraInfo.toUpperCase());
             } else {
@@ -298,7 +306,7 @@ public class Ft8Message {
             }
         }
 
-        if (i3 == 0 && (n3 == 3 || n3 == 4)) {//说明是野外日
+        if (i3 == 0 && (n3 == 3 || n3 == 4)) {//arrl
             return String.format("%s %s %s%d%s %s",
                     safeCallTo,
                     safeCallFrom,
@@ -309,7 +317,7 @@ public class Ft8Message {
             ).trim();
         }
 
-        if (i3 == 0 && (n3 == 1)) {//说明是DXpedition
+        if (i3 == 0 && (n3 == 1)) {//DXpedition
             String foxDisplayCallsign = getDxpeditionFoxCallsign();
             if (foxDisplayCallsign.length() == 0) {
                 foxDisplayCallsign = safeCallFrom;
@@ -356,6 +364,20 @@ public class Ft8Message {
         }
 
         return String.format("%s %s %s", safeCallTo, safeCallFrom, safeExtraInfo).trim();
+    }
+
+    public void setTransmitRawText(String text) {
+        txRawText = text;
+        useTxRawText = true;
+    }
+
+    public void clearTransmitRawText() {
+        txRawText = null;
+        useTxRawText = false;
+    }
+
+    public boolean hasTransmitRawText() {
+        return useTxRawText && normalizeTxRawText().length() > 0;
     }
 
     /**
@@ -450,6 +472,13 @@ public class Ft8Message {
             return "";
         }
         return value.trim().toUpperCase();
+    }
+
+    private String normalizeTxRawText() {
+        if (txRawText == null) {
+            return "";
+        }
+        return txRawText.trim().toUpperCase();
     }
 
     private String formatReportString(int reportValue) {

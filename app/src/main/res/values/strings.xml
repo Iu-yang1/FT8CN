@@ -389,6 +389,8 @@
     <string name="tracker_qso_text">QSO</string>
     <string name="tracker_new_zone_found">New zone found : %s</string>
     <string name="transmit_freeText">Please enter free text</string>
+    <string name="transmit_type_hint">Will transmit as: %1$s</string>
+    <string name="transmit_type_hint_empty">Enter text to preview the packed type</string>
     <string name="trans_free_text_mode">Free text mode</string>
     <string name="trans_standard_messge_mode">Standard Message Mode</string>
     <string name="launch_supervision_ignore">Ignore</string>

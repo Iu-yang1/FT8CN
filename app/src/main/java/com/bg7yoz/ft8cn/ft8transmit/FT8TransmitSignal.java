@@ -49,6 +49,8 @@ public class FT8TransmitSignal {
     private final Object transmitStateLock = new Object();
     private int lastTransmittedFunctionOrder = -1;
     private Ft8Message lastTransmittedMessage = null;
+    // 【优化】防止立即发射时序竞争：记录上次发射尝试的周期索引，避免同一周期重复触发
+    private long lastTransmitAttemptSequence = -1;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
     public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();
     private long messageStartTime = 0;
@@ -156,9 +158,14 @@ public class FT8TransmitSignal {
 
         resetTargetReport();
 
-        if (UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM()) == sequential) {
+        // 【优化】立即发射时添加去重检查，防止周期边界重复触发
+        int currentSeq = UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM());
+        long currentFullSeq = UtcTimer.getSystemTime() / FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode());
+
+        if (currentSeq == sequential && currentFullSeq != lastTransmitAttemptSequence) {
             if ((UtcTimer.getSystemTime() % FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode()))
                     < FT8Common.getImmediateTxWindowMs(GeneralVariables.getSignalMode())) {
+                lastTransmitAttemptSequence = currentFullSeq;
                 setTransmitting(false);
                 doTransmit();
             }
@@ -347,6 +354,7 @@ public class FT8TransmitSignal {
         if (transmitFreeText) {
             msg = new Ft8Message(GeneralVariables.getSignalMode(), "CQ",
                     GeneralVariables.myCallsign, freeText);
+            msg.setTransmitRawText(freeText);
             msg.i3 = 0;
             msg.n3 = 0;
         } else {
@@ -543,16 +551,30 @@ public class FT8TransmitSignal {
         }
     }
 
+    /**
+     * 【优化】播放完成后的清理工作
+     * 改进点：立即释放 AudioTrack 资源，避免长时间运行时资源累积
+     */
     private void afterPlayAudio() {
         int transmittedOrder = lastTransmittedFunctionOrder > 0
                 ? lastTransmittedFunctionOrder
                 : functionOrder;
         notifyAfterTransmit(transmittedOrder);
-        updateTransmittingState(false);
+
+        // 【优化】先释放音频资源再更新状态，确保资源及时回收
         if (audioTrack != null) {
-            audioTrack.release();
-            audioTrack = null;
+            try {
+                audioTrack.stop();     // 停止播放
+                audioTrack.release();   // 释放资源
+            } catch (Exception e) {
+                Log.w(TAG, "Error releasing AudioTrack: " + e.getMessage());
+            } finally {
+                audioTrack = null;      // 清空引用
+            }
         }
+
+        updateTransmittingState(false);
+
         if (transmittedOrder == 5 && activated) {
             resetToCQ();
             mutableFunctionOrder.postValue(functionOrder);
@@ -1154,7 +1176,11 @@ public class FT8TransmitSignal {
     }
 
     public void setFreeText(String freeText) {
-        this.freeText = freeText;
+        this.freeText = freeText == null ? "" : freeText;
+    }
+
+    public String getFreeText() {
+        return freeText == null ? "" : freeText;
     }
 
     public void setTransmitFreeText(boolean transmitFreeText) {

@@ -29,4 +29,8 @@ void ft8_encode(const uint8_t* payload, uint8_t* tones);
 /// @param[out] tones  - array of FT4_NN (105) bytes to store the generated tones (encoded as 0..3)
 void ft4_encode(const uint8_t* payload, uint8_t* tones);
 
+/// Encode a 91-bit source+CRC payload into the 174-bit LDPC codeword.
+/// AP-lite reuses the exact same encoder so transmit and prior codewords stay identical.
+void ftx_encode_174(const uint8_t* message, uint8_t* codeword);
+
 #endif // _INCLUDE_ENCODE_H_

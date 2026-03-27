@@ -545,4 +545,6 @@
     <string name="alram_switch">告警开关</string>
     <string name="config_enable_pskreporter">PSKReporter</string> <!-- PSK -->
 
+    <string name="transmit_type_hint">当前将按：%1$s 发射</string>
+    <string name="transmit_type_hint_empty">输入文本后显示当前编码类型</string>
 </resources>

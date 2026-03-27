@@ -21,7 +21,7 @@ android {
         minSdk 23
         targetSdk 33
         versionCode 1
-        versionName 'ver0.4-FT4'
+        versionName 'ver0.5-FT4'
 
         buildFeatures {
             dataBinding true

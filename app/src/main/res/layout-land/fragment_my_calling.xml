@@ -187,6 +187,7 @@
                     android:layout_width="0dp"
                     android:layout_height="32dp"
                     android:layout_marginStart="4dp"
+                    android:layout_marginTop="2dp"
                     android:layout_marginEnd="4dp"
                     android:autofillHints=""
                     android:background="@drawable/editor_style"
@@ -194,10 +195,26 @@
                     android:ems="10"
                     android:hint="@string/transmit_freeText"
                     android:inputType="text"
-                    app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintEnd_toStartOf="@+id/resetToCQImageView"
                     app:layout_constraintStart_toEndOf="@+id/pauseTransmittingImageButton"
                     app:layout_constraintTop_toTopOf="parent"
+                    tools:ignore="TextContrastCheck" />
+
+            <TextView
+                    android:id="@+id/transFreeTextTypeTextView"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginBottom="2dp"
+                    android:text="@string/transmit_type_hint_empty"
+                    android:textSize="10sp"
+                    android:visibility="gone"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toStartOf="@+id/resetToCQImageView"
+                    app:layout_constraintStart_toEndOf="@+id/pauseTransmittingImageButton"
+                    app:layout_constraintTop_toBottomOf="@+id/transFreeTextEdit"
                     tools:ignore="TextContrastCheck" />
 
             <ImageButton
