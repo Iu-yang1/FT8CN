@@ -84,7 +84,7 @@ public class ImportSharedLogs {
                                     int valueLen = Integer.parseInt(ttt[1]);//字段长度
                                     if (valueLen > 0) {
                                         if (values[1].length() < valueLen) {
-                                            valueLen = values[1].length() - 1;
+                                            valueLen = values[1].length();
                                         }
                                         String value = values[1].substring(0, valueLen);//字段值
                                         record.put(name.toUpperCase(), value);//保存字段,key要大写

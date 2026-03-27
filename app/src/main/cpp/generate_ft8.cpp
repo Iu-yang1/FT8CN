@@ -43,61 +43,27 @@ char *Jstring2CStr(JNIEnv *env, jstring jstr) {
 }
 
 /**
- * 读取 Java Ft8Message 的 String 字段
- */
-static jstring getStringField(JNIEnv *env, jobject obj, const char *fieldName) {
-    jclass cls = env->GetObjectClass(obj);
-    jfieldID fid = env->GetFieldID(cls, fieldName, "Ljava/lang/String;");
-    if (fid == nullptr) return nullptr;
-    return (jstring) env->GetObjectField(obj, fid);
-}
-
-/**
- * 读取 Java Ft8Message 的 int 字段
- */
-static jint getIntField(JNIEnv *env, jobject obj, const char *fieldName) {
-    jclass cls = env->GetObjectClass(obj);
-    jfieldID fid = env->GetFieldID(cls, fieldName, "I");
-    if (fid == nullptr) return 0;
-    return env->GetIntField(obj, fid);
-}
-
-/**
  * 根据 Java Ft8Message 组装待编码文本
- * 与 Java 层 Ft8Message.getMessageText() 的主路径保持一致
+ * 直接复用 Java 层 Ft8Message.getMessageText()，避免双端格式分叉
  */
 static void buildMessageText(JNIEnv *env, jobject msgObj, char *outText, int outSize) {
-    jstring callsignToStr = getStringField(env, msgObj, "callsignTo");
-    jstring callsignFromStr = getStringField(env, msgObj, "callsignFrom");
-    jstring extraInfoStr = getStringField(env, msgObj, "extraInfo");
-    jstring modifierStr = getStringField(env, msgObj, "modifier");
-
-    const char *callsignTo = callsignToStr ? env->GetStringUTFChars(callsignToStr, 0) : "";
-    const char *callsignFrom = callsignFromStr ? env->GetStringUTFChars(callsignFromStr, 0) : "";
-    const char *extraInfo = extraInfoStr ? env->GetStringUTFChars(extraInfoStr, 0) : "";
-    const char *modifier = modifierStr ? env->GetStringUTFChars(modifierStr, 0) : nullptr;
-
-    int i3 = getIntField(env, msgObj, "i3");
-    int n3 = getIntField(env, msgObj, "n3");
-
     memset(outText, 0, outSize);
-
-    // 自由文本
-    if (i3 == 0 && n3 == 0) {
-        snprintf(outText, outSize, "%s", extraInfo);
-    } else {
-        // CQ 修饰符
-        if (modifier != nullptr && strlen(modifier) > 0 && strcmp(callsignTo, "CQ") == 0) {
-            snprintf(outText, outSize, "%s %s %s %s", callsignTo, modifier, callsignFrom, extraInfo);
-        } else {
-            snprintf(outText, outSize, "%s %s %s", callsignTo, callsignFrom, extraInfo);
-        }
+    jclass cls = env->GetObjectClass(msgObj);
+    jmethodID mid = env->GetMethodID(cls, "getMessageText", "()Ljava/lang/String;");
+    if (mid == nullptr) {
+        return;
     }
 
-    if (callsignToStr) env->ReleaseStringUTFChars(callsignToStr, callsignTo);
-    if (callsignFromStr) env->ReleaseStringUTFChars(callsignFromStr, callsignFrom);
-    if (extraInfoStr) env->ReleaseStringUTFChars(extraInfoStr, extraInfo);
-    if (modifierStr && modifier) env->ReleaseStringUTFChars(modifierStr, modifier);
+    jstring textObj = (jstring) env->CallObjectMethod(msgObj, mid);
+    if (textObj == nullptr) {
+        return;
+    }
+
+    const char *text = env->GetStringUTFChars(textObj, 0);
+    snprintf(outText, outSize, "%s", text == nullptr ? "" : text);
+    if (text != nullptr) {
+        env->ReleaseStringUTFChars(textObj, text);
+    }
 }
 
 extern "C"

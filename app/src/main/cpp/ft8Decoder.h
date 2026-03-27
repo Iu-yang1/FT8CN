@@ -34,6 +34,8 @@ typedef struct {
     monitor_config_t mon_cfg;
     uint8_t a91[FTX_LDPC_K_BYTES];//用于生成减法代码的数据
     int kLDPC_iterations;//ldpc 迭代次数，数值越大，精度越高，速度越慢：20或100
+    ap_hints_t ap_hints;
+    // AP-lite hints live on the decoder so one decode cycle can reuse them across candidates.
 } decoder_t;
 
 typedef struct {

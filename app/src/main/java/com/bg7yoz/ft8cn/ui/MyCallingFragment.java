@@ -42,6 +42,7 @@ import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
 import com.bg7yoz.ft8cn.ft8transmit.FunctionOfTransmit;
+import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
 import com.bg7yoz.ft8cn.ft8transmit.TransmitCallsign;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
@@ -463,6 +464,7 @@ public class MyCallingFragment extends Fragment {
             @Override
             public void afterTextChanged(Editable editable) {
                 mainViewModel.ft8TransmitSignal.setFreeText(editable.toString().toUpperCase());
+                updateFreeTextTypeHint();
             }
         });
 
@@ -499,9 +501,13 @@ public class MyCallingFragment extends Fragment {
     private void showFreeTextEdit() {
         if (mainViewModel.getTransitIsFreeText()) {
             binding.transFreeTextEdit.setVisibility(View.VISIBLE);
+            binding.transFreeTextTypeTextView.setVisibility(View.VISIBLE);
             binding.functionOrderSpinner.setVisibility(View.GONE);
+            syncFreeTextInput();
+            updateFreeTextTypeHint();
         } else {
             binding.transFreeTextEdit.setVisibility(View.GONE);
+            binding.transFreeTextTypeTextView.setVisibility(View.GONE);
             binding.functionOrderSpinner.setVisibility(View.VISIBLE);
         }
     }
@@ -509,6 +515,32 @@ public class MyCallingFragment extends Fragment {
     /**
      * 设置列表滑动动作
      */
+    private void syncFreeTextInput() {
+        String currentFreeText = mainViewModel.ft8TransmitSignal.getFreeText();
+        Editable editable = binding.transFreeTextEdit.getText();
+        String currentInput = editable == null ? "" : editable.toString();
+        if (!currentInput.equals(currentFreeText)) {
+            binding.transFreeTextEdit.setText(currentFreeText);
+            binding.transFreeTextEdit.setSelection(binding.transFreeTextEdit.getText().length());
+        }
+    }
+
+    private void updateFreeTextTypeHint() {
+        if (binding == null || !mainViewModel.getTransitIsFreeText()) {
+            return;
+        }
+
+        Editable editable = binding.transFreeTextEdit.getText();
+        String input = editable == null ? "" : editable.toString();
+        String typeInfo = GenerateFT8.getPackedTypeInfo(input);
+        if (typeInfo.length() == 0) {
+            binding.transFreeTextTypeTextView.setText(R.string.transmit_type_hint_empty);
+            return;
+        }
+
+        binding.transFreeTextTypeTextView.setText(getString(R.string.transmit_type_hint, typeInfo));
+    }
+
     private void initRecyclerViewAction() {
         new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(ItemTouchHelper.ANIMATION_TYPE_DRAG,
                 ItemTouchHelper.START | ItemTouchHelper.END) {

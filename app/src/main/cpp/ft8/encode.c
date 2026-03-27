@@ -19,8 +19,9 @@ static uint8_t parity8(uint8_t x)
 // Arguments:
 // [IN] message   - array of 91 bits stored as 12 bytes (MSB first)
 // [OUT] codeword - array of 174 bits stored as 22 bytes (MSB first)
-static void encode174(const uint8_t* message, uint8_t* codeword)
+void ftx_encode_174(const uint8_t* message, uint8_t* codeword)
 {
+    // AP-lite reuses the same LDPC encoder instead of maintaining a second codeword path.
     // This implementation accesses the generator bits straight from the packed binary representation in kFTXLDPCGenerator
 
     // Fill the codeword with message and zeros, as we will only update binary ones later
@@ -71,7 +72,7 @@ void ft8_encode(const uint8_t* payload, uint8_t* tones)
     ftx_add_crc(payload, a91);
 
     uint8_t codeword[FTX_LDPC_N_BYTES];
-    encode174(a91, codeword);
+    ftx_encode_174(a91, codeword);
 
 
 
@@ -143,7 +144,7 @@ void ft4_encode(const uint8_t* payload, uint8_t* tones)
     ftx_add_crc(payload_xor, a91);
 
     uint8_t codeword[FTX_LDPC_N_BYTES];
-    encode174(a91, codeword); // 91 bits -> 174 bits
+    ftx_encode_174(a91, codeword); // 91 bits -> 174 bits
 
     // Message structure: R S4_1 D29 S4_2 D29 S4_3 D29 S4_4 R
     // Total symbols: 105 (FT4_NN)

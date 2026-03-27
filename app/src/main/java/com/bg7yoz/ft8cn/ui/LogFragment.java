@@ -67,6 +67,11 @@ public class LogFragment extends Fragment {
     private int lastItemPosition;
     private ShareLogsProgressDialog dialog = null;//生成共享log的对话框
 
+    // 查询防抖机制：避免快速输入或滚动时触发大量数据库查询
+    private final android.os.Handler debounceHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable pendingQueryRunnable = null;
+    private static final int DEBOUNCE_DELAY_MS = 300; // 防抖延迟300毫秒
+
 
     public LogFragment() {
         // Required empty public constructor
@@ -132,7 +137,8 @@ public class LogFragment extends Fragment {
             @Override
             public void afterTextChanged(Editable editable) {
                 mainViewModel.queryKey = editable.toString();
-                queryByCallsign(mainViewModel.queryKey, 0);
+                // 用户输入时使用防抖查询，避免每次按键都触发数据库查询
+                queryByCallsignDebounced(mainViewModel.queryKey, 0);
             }
         });
 
@@ -507,9 +513,36 @@ public class LogFragment extends Fragment {
     }
 
     /**
-     * 查询日志
+     * 带防抖的查询方法
+     * 用于用户输入场景，避免频繁触发数据库查询
      *
      * @param callsign 呼号
+     * @param offset 偏移量
+     */
+    private void queryByCallsignDebounced(String callsign, int offset) {
+        // 取消之前待执行的查询
+        if (pendingQueryRunnable != null) {
+            debounceHandler.removeCallbacks(pendingQueryRunnable);
+        }
+
+        // 创建新的查询任务
+        pendingQueryRunnable = new Runnable() {
+            @Override
+            public void run() {
+                queryByCallsign(callsign, offset);
+                pendingQueryRunnable = null;
+            }
+        };
+
+        // 延迟执行查询（300ms后执行，如果期间有新输入会被取消）
+        debounceHandler.postDelayed(pendingQueryRunnable, DEBOUNCE_DELAY_MS);
+    }
+
+    /**
+     * 查询日志（立即执行，无防抖）
+     *
+     * @param callsign 呼号
+     * @param offset 偏移量
      */
     private void queryByCallsign(String callsign, int offset) {
         loading = true;//开始读数据
@@ -606,6 +639,12 @@ public class LogFragment extends Fragment {
                 dialog.dismiss();
                 dialog = null;
             }
+        }
+
+        // 【优化】清理防抖Handler，避免内存泄漏
+        if (pendingQueryRunnable != null) {
+            debounceHandler.removeCallbacks(pendingQueryRunnable);
+            pendingQueryRunnable = null;
         }
 
         super.onDestroy();
