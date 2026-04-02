@@ -121,7 +121,7 @@ public class FT8TransmitSignal {
     public void restartByCurrentMode() {
         boolean running = utcTimer != null && utcTimer.isRunning();
         if (utcTimer != null) {
-            utcTimer.stop();
+            utcTimer.destroy();
         }
         buildUtcTimer();
         if (running) {
@@ -133,7 +133,7 @@ public class FT8TransmitSignal {
     public void release() {
         GeneralVariables.mutableVolumePercent.removeObserver(volumePercentObserver);
         if (utcTimer != null) {
-            utcTimer.stop();
+            utcTimer.destroy();
         }
         setActivated(false);
         doTransmitThreadPool.shutdownNow();

@@ -78,7 +78,9 @@ public class FT8SignalListener {
      */
     public void restartByCurrentMode() {
         boolean running = isListening();
-        stopListen();
+        if (utcTimer != null) {
+            utcTimer.destroy();
+        }
         buildUtcTimer();
         if (running) {
             startListen();
@@ -98,7 +100,9 @@ public class FT8SignalListener {
     }
 
     public void release() {
-        stopListen();
+        if (utcTimer != null) {
+            utcTimer.destroy();
+        }
     }
 
     public boolean isListening() {

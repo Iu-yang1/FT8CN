@@ -29,6 +29,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 public class UtcTimer {
     /**
@@ -79,6 +80,7 @@ public class UtcTimer {
      */
     private int time_sec = 0;
     private volatile long lastTriggeredSlotIndex = Long.MIN_VALUE;
+    private volatile boolean destroyed = false;
 
     private final ExecutorService cachedThreadPool = Executors.newCachedThreadPool();
     private final Runnable doSomething = new Runnable() {
@@ -177,6 +179,9 @@ public class UtcTimer {
         return new TimerTask() {
             @Override
             public void run() {
+                if (destroyed) {
+                    return;
+                }
                 doHeartBeatEvent(onUtcTimer);
             }
         };
@@ -187,6 +192,9 @@ public class UtcTimer {
             @Override
             public void run() {
                 try {
+                    if (destroyed) {
+                        return;
+                    }
                     utc = getSystemTime();
                     long currentSlotIndex = getSlotIndex(utc);
 
@@ -195,7 +203,11 @@ public class UtcTimer {
 
                     if (running && currentSlotIndex > lastTriggeredSlotIndex) {
                         lastTriggeredSlotIndex = currentSlotIndex;
-                        cachedThreadPool.execute(doSomething);
+                        try {
+                            cachedThreadPool.execute(doSomething);
+                        } catch (RejectedExecutionException ignored) {
+                            return;
+                        }
 
                         if (doOnce) {
                             running = false;
@@ -215,7 +227,13 @@ public class UtcTimer {
      * 心跳动作
      */
     private void doHeartBeatEvent(OnUtcTimer onUtcTimer) {
-        heartBeatThreadPool.execute(doHeartBeat);
+        if (destroyed) {
+            return;
+        }
+        try {
+            heartBeatThreadPool.execute(doHeartBeat);
+        } catch (RejectedExecutionException ignored) {
+        }
     }
 
     public void stop() {
@@ -223,6 +241,9 @@ public class UtcTimer {
     }
 
     public void start() {
+        if (destroyed) {
+            return;
+        }
         lastTriggeredSlotIndex = getSlotIndex(getSystemTime());
         running = true;
     }
@@ -232,8 +253,21 @@ public class UtcTimer {
     }
 
     public void delete() {
+        destroy();
+    }
+
+    public synchronized void destroy() {
+        if (destroyed) {
+            return;
+        }
+        destroyed = true;
+        running = false;
         secTimer.cancel();
+        secTimer.purge();
         heartBeatTimer.cancel();
+        heartBeatTimer.purge();
+        cachedThreadPool.shutdownNow();
+        heartBeatThreadPool.shutdownNow();
     }
 
     /**
