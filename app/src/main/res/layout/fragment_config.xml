@@ -307,7 +307,7 @@
                                 android:autofillHints=""
                                 android:background="@drawable/editor_style"
                                 android:ems="10"
-                                android:hint="留空使用默认 time.windows.com"
+                                android:hint="留空使用默认 pool.ntp.org"
                                 android:importantForAutofill="no"
                                 android:inputType="textUri|textNoSuggestions"
                                 android:minHeight="32dp"
