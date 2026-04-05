@@ -398,11 +398,11 @@ public class GeneralVariables {
     public static String getExperimentalCodecModeString() {
         switch (experimentalCodecMode) {
             case EXP_CODEC_MODE_4FSK:
-                return "EXP-4FSK";
+                return "4FSK";
             case EXP_CODEC_MODE_CPFSK:
-                return "EXP-CPFSK";
+                return "CPFSK";
             default:
-                return "EXP";
+                return "MODE";
         }
     }
 

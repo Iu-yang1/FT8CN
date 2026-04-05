@@ -46,6 +46,7 @@ import com.bg7yoz.ft8cn.database.OperationBand;
 import com.bg7yoz.ft8cn.flex.FlexRadio;
 import com.bg7yoz.ft8cn.ft8listener.FT8SignalListener;
 import com.bg7yoz.ft8cn.ft8listener.OnFt8Listen;
+import com.bg7yoz.ft8cn.ft8transmit.GenerateFTx;
 import com.bg7yoz.ft8cn.ft8transmit.FT8TransmitSignal;
 import com.bg7yoz.ft8cn.ft8transmit.OnDoTransmitted;
 import com.bg7yoz.ft8cn.ft8transmit.OnTransmitSuccess;
@@ -293,14 +294,21 @@ public class MainViewModel extends ViewModel {
 
                 mutableFt8MessageList.postValue(ft8Messages);
                 mutableTimerOffset.postValue(time_sec);
+                currentMessages = messages;
+
+                if (GeneralVariables.isExperimentalCodecEnabled()) {
+                    // Experimental packets are plain-text debug frames, not FT8/FT4
+                    // messages, so we stop before FT-specific auto-flow/logging code.
+                    currentDecodeCount = messages.size();
+                    mutable_Decoded_Counter.postValue(currentDecodeCount);
+                    return;
+                }
 
                 findIncludedCallsigns(messages);
 
                 if (ft8TransmitSignal != null) {
                     ft8TransmitSignal.parseMessageToFunction(messages);
                 }
-
-                currentMessages = messages;
 
                 if (isDeep) {
                     currentDecodeCount += messages.size();
@@ -386,6 +394,28 @@ public class MainViewModel extends ViewModel {
                     if (baseRig != null) {
                         baseRig.setPTT(false);
                         if (needControlSco()) startSco();
+                    }
+                }
+
+                if (GeneralVariables.isExperimentalCodecEnabled()
+                        && ft8SignalListener != null
+                        && message != null) {
+                    // Experimental mode is used as a local modem bring-up path,
+                    // so decode the exact transmitted waveform directly instead
+                    // of relying on acoustic leakage or rig-side monitor audio.
+                    float[] loopbackWave = GenerateFTx.generateFtX(
+                            new Ft8Message(message),
+                            GeneralVariables.getBaseFrequency(),
+                            FT8Common.SAMPLE_RATE,
+                            message.signalFormat
+                    );
+                    if (loopbackWave != null) {
+                        ft8SignalListener.decodeExperimentalLoopback(
+                                UtcTimer.getSystemTime(),
+                                loopbackWave,
+                                FT8Common.SAMPLE_RATE,
+                                message.signalFormat
+                        );
                     }
                 }
             }

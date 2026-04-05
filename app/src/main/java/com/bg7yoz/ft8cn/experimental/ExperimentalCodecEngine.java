@@ -40,6 +40,7 @@ public final class ExperimentalCodecEngine {
         public final int preambleScore;
         public final int symbolOffset;
         public final int codecMode;
+        public final int estimatedSnrDb;
 
         private DecodeResult(
                 boolean frameFound,
@@ -48,7 +49,8 @@ public final class ExperimentalCodecEngine {
                 int payloadLength,
                 int preambleScore,
                 int symbolOffset,
-                int codecMode
+                int codecMode,
+                int estimatedSnrDb
         ) {
             this.frameFound = frameFound;
             this.crcOk = crcOk;
@@ -57,10 +59,23 @@ public final class ExperimentalCodecEngine {
             this.preambleScore = preambleScore;
             this.symbolOffset = symbolOffset;
             this.codecMode = codecMode;
+            this.estimatedSnrDb = estimatedSnrDb;
         }
 
         public static DecodeResult empty(int codecMode) {
-            return new DecodeResult(false, false, "", 0, 0, -1, codecMode);
+            return new DecodeResult(false, false, "", 0, 0, -1, codecMode, -99);
+        }
+    }
+
+    private static final class DemodulatedSymbols {
+        public final int[] symbols;
+        public final float[] bestToneEnergy;
+        public final float[] averageOtherToneEnergy;
+
+        private DemodulatedSymbols(int[] symbols, float[] bestToneEnergy, float[] averageOtherToneEnergy) {
+            this.symbols = symbols;
+            this.bestToneEnergy = bestToneEnergy;
+            this.averageOtherToneEnergy = averageOtherToneEnergy;
         }
     }
 
@@ -127,7 +142,14 @@ public final class ExperimentalCodecEngine {
         int bestQuality = Integer.MIN_VALUE;
 
         for (int offset = 0; offset < samplesPerSymbol; offset += offsetStep) {
-            int[] symbols = demodulateSymbols(samples, offset, samplesPerSymbol, sampleRate, tones);
+            DemodulatedSymbols demodulated = demodulateSymbols(
+                    samples,
+                    offset,
+                    samplesPerSymbol,
+                    sampleRate,
+                    tones
+            );
+            int[] symbols = demodulated.symbols;
             if (symbols.length < PREAMBLE_SYMBOL_COUNT + 20) {
                 continue;
             }
@@ -139,7 +161,13 @@ public final class ExperimentalCodecEngine {
                 }
 
                 int payloadStart = start + PREAMBLE_SYMBOL_COUNT;
-                DecodeResult candidate = tryParseFrame(symbols, payloadStart, preambleScore, offset, codecMode);
+                DecodeResult candidate = tryParseFrame(
+                        demodulated,
+                        payloadStart,
+                        preambleScore,
+                        offset,
+                        codecMode
+                );
                 if (!candidate.frameFound) {
                     continue;
                 }
@@ -222,7 +250,7 @@ public final class ExperimentalCodecEngine {
         return output;
     }
 
-    private static int[] demodulateSymbols(
+    private static DemodulatedSymbols demodulateSymbols(
             float[] samples,
             int offset,
             int samplesPerSymbol,
@@ -231,14 +259,17 @@ public final class ExperimentalCodecEngine {
     ) {
         int count = (samples.length - offset) / samplesPerSymbol;
         if (count <= 0) {
-            return new int[0];
+            return new DemodulatedSymbols(new int[0], new float[0], new float[0]);
         }
         int[] symbols = new int[count];
+        float[] bestToneEnergy = new float[count];
+        float[] averageOtherToneEnergy = new float[count];
 
         for (int symbolIndex = 0; symbolIndex < count; symbolIndex++) {
             int start = offset + symbolIndex * samplesPerSymbol;
             double bestEnergy = -1.0;
             int bestSymbol = 0;
+            double totalEnergy = 0.0;
 
             for (int toneIndex = 0; toneIndex < 4; toneIndex++) {
                 double re = 0.0;
@@ -250,14 +281,20 @@ public final class ExperimentalCodecEngine {
                     im -= x * Math.sin(phase);
                 }
                 double energy = re * re + im * im;
+                totalEnergy += energy;
                 if (energy > bestEnergy) {
                     bestEnergy = energy;
                     bestSymbol = toneIndex;
                 }
             }
             symbols[symbolIndex] = bestSymbol;
+            bestToneEnergy[symbolIndex] = (float) Math.max(bestEnergy, 1.0e-12);
+            averageOtherToneEnergy[symbolIndex] = (float) Math.max(
+                    (totalEnergy - bestEnergy) / 3.0,
+                    1.0e-12
+            );
         }
-        return symbols;
+        return new DemodulatedSymbols(symbols, bestToneEnergy, averageOtherToneEnergy);
     }
 
     private static int scorePreamble(int[] symbols, int start) {
@@ -271,12 +308,13 @@ public final class ExperimentalCodecEngine {
     }
 
     private static DecodeResult tryParseFrame(
-            int[] symbols,
+            DemodulatedSymbols demodulated,
             int payloadStartSymbol,
             int preambleScore,
             int offset,
             int codecMode
     ) {
+        int[] symbols = demodulated.symbols;
         int totalPayloadSymbols = symbols.length - payloadStartSymbol;
         if (totalPayloadSymbols < 20) {
             return DecodeResult.empty(codecMode);
@@ -314,6 +352,13 @@ public final class ExperimentalCodecEngine {
             text = "";
         }
 
+        // Approximate SNR from the non-coherent 4-tone detector output.
+        // This keeps the UI comparable across experimental packets without
+        // pretending to be the exact FT8/FT4 waterfall SNR definition.
+        int frameStartSymbol = Math.max(0, payloadStartSymbol - PREAMBLE_SYMBOL_COUNT);
+        int frameSymbolCount = PREAMBLE_SYMBOL_COUNT + 20 + payloadLength * 4;
+        int estimatedSnrDb = estimateFrameSnrDb(demodulated, frameStartSymbol, frameSymbolCount);
+
         return new DecodeResult(
                 true,
                 crcOk,
@@ -321,8 +366,33 @@ public final class ExperimentalCodecEngine {
                 payloadLength,
                 preambleScore,
                 offset,
-                codecMode
+                codecMode,
+                estimatedSnrDb
         );
+    }
+
+    private static int estimateFrameSnrDb(DemodulatedSymbols demodulated, int startSymbol, int symbolCount) {
+        int endSymbol = Math.min(demodulated.symbols.length, startSymbol + symbolCount);
+        if (endSymbol <= startSymbol) {
+            return -99;
+        }
+
+        double signalEnergy = 0.0;
+        double noiseEnergy = 0.0;
+        for (int i = startSymbol; i < endSymbol; i++) {
+            signalEnergy += Math.max(
+                    demodulated.bestToneEnergy[i] - demodulated.averageOtherToneEnergy[i],
+                    1.0e-12
+            );
+            noiseEnergy += Math.max(demodulated.averageOtherToneEnergy[i], 1.0e-12);
+        }
+
+        double snrLinear = signalEnergy / Math.max(noiseEnergy, 1.0e-12);
+        double snrDb = 10.0 * Math.log10(Math.max(snrLinear, 1.0e-12));
+
+        // Light calibration so the displayed number stays in a practical range
+        // for weak-signal testing instead of reporting very optimistic ratios.
+        return (int) Math.round(snrDb - 6.0);
     }
 
     private static int getSamplesPerSymbol(int sampleRate) {
