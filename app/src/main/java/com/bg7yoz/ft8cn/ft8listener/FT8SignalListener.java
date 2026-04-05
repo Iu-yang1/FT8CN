@@ -18,6 +18,8 @@ import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
+import com.bg7yoz.ft8cn.experimental.ExperimentalCodecBridge;
+import com.bg7yoz.ft8cn.experimental.ExperimentalCodecEngine;
 import com.bg7yoz.ft8cn.timer.OnUtcTimer;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
@@ -263,6 +265,11 @@ public class FT8SignalListener {
                     onFt8Listen.beforeListen(utc);
                 }
 
+                // Optional sidecar probe for experimental modem bring-up.
+                if (GeneralVariables.isExperimentalCodecEnabled()) {
+                    runExperimentalCodecProbe(voiceData);
+                }
+
                 boolean isFt8 = (decodeMode == FT8Common.FT8_MODE);
 
                 // 初始化解码器，按本轮固定模式选择 FT8 / FT4
@@ -474,6 +481,53 @@ public class FT8SignalListener {
             }
         }
         return false;
+    }
+
+    private void runExperimentalCodecProbe(float[] voiceData) {
+        try {
+            int sampleRate = FT8Common.SAMPLE_RATE;
+            float baseFreq = GeneralVariables.getBaseFrequency();
+            int codecMode = GeneralVariables.experimentalCodecMode;
+
+            float[] probe = ExperimentalCodecBridge.analyzeFirstSymbolEnergies(
+                    voiceData,
+                    sampleRate,
+                    ExperimentalCodecBridge.PROBE_SYMBOL_SAMPLES,
+                    ExperimentalCodecBridge.PROBE_TONES_HZ
+            );
+            if (probe != null && probe.length >= 5) {
+                int bestTone = Math.round(probe[4]);
+                Log.d(TAG, String.format(
+                        "EXP probe best=%d e=[%.3f, %.3f, %.3f, %.3f] v=%s",
+                        bestTone,
+                        probe[0],
+                        probe[1],
+                        probe[2],
+                        probe[3],
+                        ExperimentalCodecBridge.getNativeVersion()
+                ));
+            }
+
+            ExperimentalCodecEngine.DecodeResult result = ExperimentalCodecEngine.decodeWave(
+                    voiceData,
+                    baseFreq,
+                    sampleRate,
+                    codecMode
+            );
+            if (result.frameFound) {
+                Log.d(TAG, String.format(
+                        "EXP decode mode=%d crc=%s len=%d preamble=%d offset=%d text=%s",
+                        result.codecMode,
+                        result.crcOk ? "OK" : "FAIL",
+                        result.payloadLength,
+                        result.preambleScore,
+                        result.symbolOffset,
+                        result.payloadText
+                ));
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "EXP probe failed: " + t.getMessage());
+        }
     }
 
     @Override

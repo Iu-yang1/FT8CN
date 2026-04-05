@@ -1706,7 +1706,7 @@
 
 
                     <androidx.constraintlayout.widget.ConstraintLayout
-                            android:id="@+id/alarmSwitchLayout"
+                            android:id="@+id/experimentalCodecLayout"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
@@ -1714,6 +1714,106 @@
                             app:layout_constraintEnd_toEndOf="parent"
                             app:layout_constraintStart_toStartOf="parent"
                             app:layout_constraintTop_toBottomOf="@+id/decodeModeLayout">
+
+                        <TextView
+                                android:id="@+id/experimentalCodecText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="6dp"
+                                android:text="@string/experimental_codec_debug"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toTopOf="parent" />
+
+                        <Switch
+                                android:id="@+id/experimentalCodecSwitch"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:checked="false"
+                                android:text="@string/experimental_codec_off"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                android:thumbTint="?attr/colorPrimary"
+                                android:thumbTintMode="multiply"
+                                android:trackTint="@color/button_start_color"
+                                app:layout_constraintEnd_toStartOf="@+id/experimentalCodecHelpButton"
+                                app:layout_constraintStart_toEndOf="@+id/experimentalCodecText"
+                                app:layout_constraintTop_toTopOf="parent"
+                                tools:ignore="TouchTargetSizeCheck,UseSwitchCompatOrMaterialXml" />
+
+                        <ImageButton
+                                android:id="@+id/experimentalCodecHelpButton"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginEnd="8dp"
+                                android:background="@drawable/imagebutton_transparent_style"
+                                android:contentDescription="@string/help"
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintTop_toTopOf="parent"
+                                app:srcCompat="@drawable/ic_baseline_info_32"
+                                tools:ignore="TouchTargetSizeCheck,DuplicateSpeakableTextCheck" />
+
+                        <TextView
+                                android:id="@+id/experimentalCodecModeText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginBottom="6dp"
+                                android:text="@string/experimental_codec_modulation"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                app:layout_constraintBottom_toBottomOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/experimentalCodecSwitch" />
+
+                        <com.bg7yoz.ft8cn.ui.RadioGroupFt8cn
+                                android:id="@+id/experimentalCodecModeRadioGroup"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginEnd="8dp"
+                                android:layout_marginBottom="6dp"
+                                android:orientation="horizontal"
+                                app:layout_constraintBottom_toBottomOf="parent"
+                                app:layout_constraintEnd_toStartOf="@+id/experimentalCodecHelpButton"
+                                app:layout_constraintStart_toEndOf="@+id/experimentalCodecModeText"
+                                app:layout_constraintTop_toBottomOf="@+id/experimentalCodecSwitch">
+
+                            <RadioButton
+                                    android:id="@+id/experimentalCodec4fskRadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="@string/experimental_codec_4fsk"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/experimentalCodecCpfskRadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="@string/experimental_codec_cpfsk"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                        </com.bg7yoz.ft8cn.ui.RadioGroupFt8cn>
+
+                    </androidx.constraintlayout.widget.ConstraintLayout>
+
+
+                    <androidx.constraintlayout.widget.ConstraintLayout
+                            android:id="@+id/alarmSwitchLayout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:background="@drawable/editor_layout_style"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@+id/experimentalCodecLayout">
 
                         <TextView
                                 android:id="@+id/alarmSwitchText"

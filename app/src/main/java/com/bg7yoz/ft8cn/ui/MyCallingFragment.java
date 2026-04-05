@@ -57,6 +57,14 @@ public class MyCallingFragment extends Fragment {
     private CallingListAdapter transmitCallListAdapter;
     private FunctionOrderSpinnerAdapter functionOrderSpinnerAdapter;
 
+    private boolean isExperimentalManualTxMode() {
+        return GeneralVariables.isExperimentalCodecEnabled();
+    }
+
+    private String getCurrentModeLabel() {
+        return GeneralVariables.getActiveModeLabel();
+    }
+
     static {
         System.loadLibrary("ft8cn");
     }
@@ -191,7 +199,7 @@ public class MyCallingFragment extends Fragment {
 
         updateSignalModeUI();
 
-        ToastMessage.show("切换到 " + FT8Common.modeToString(mode));
+        ToastMessage.show("切换到 " + getCurrentModeLabel());
     }
 
     /**
@@ -210,7 +218,7 @@ public class MyCallingFragment extends Fragment {
         // 更新发射频率标题
         binding.baseFrequencyTextView.setText(String.format(
                 "[%s] " + GeneralVariables.getStringFromResource(R.string.sound_frequency_is),
-                FT8Common.modeToString(mode),
+                getCurrentModeLabel(),
                 GeneralVariables.getBaseFrequency()
         ));
 
@@ -220,11 +228,11 @@ public class MyCallingFragment extends Fragment {
             if (GeneralVariables.toModifier != null) {
                 binding.toCallsignTextView.setText(String.format(
                         GeneralVariables.getStringFromResource(R.string.target_callsign),
-                        "[" + FT8Common.modeToString(mode) + "] " + transmitCallsign.callsign + " " + GeneralVariables.toModifier));
+                        "[" + getCurrentModeLabel() + "] " + transmitCallsign.callsign + " " + GeneralVariables.toModifier));
             } else {
                 binding.toCallsignTextView.setText(String.format(
                         GeneralVariables.getStringFromResource(R.string.target_callsign),
-                        "[" + FT8Common.modeToString(mode) + "] " + transmitCallsign.callsign));
+                        "[" + getCurrentModeLabel() + "] " + transmitCallsign.callsign));
             }
         }
     }
@@ -274,7 +282,11 @@ public class MyCallingFragment extends Fragment {
         mainViewModel.timerSec.observe(getViewLifecycleOwner(), new Observer<Long>() {
             @Override
             public void onChanged(Long aLong) {
-                binding.timerTextView.setText("[" + FT8Common.modeToString(GeneralVariables.getSignalMode()) + "] "
+                if (isExperimentalManualTxMode()) {
+                    binding.timerTextView.setText("[" + getCurrentModeLabel() + "] MANUAL TX");
+                    return;
+                }
+                binding.timerTextView.setText("[" + getCurrentModeLabel() + "] "
                         + UtcTimer.getTimeStr(aLong));
             }
         });
@@ -286,7 +298,7 @@ public class MyCallingFragment extends Fragment {
             public void onChanged(Float aFloat) {
                 binding.baseFrequencyTextView.setText(String.format(
                         "[%s] " + GeneralVariables.getStringFromResource(R.string.sound_frequency_is),
-                        FT8Common.modeToString(GeneralVariables.getSignalMode()),
+                        getCurrentModeLabel(),
                         aFloat));
             }
         });
@@ -307,7 +319,9 @@ public class MyCallingFragment extends Fragment {
                     binding.setTransmitImageButton.setImageResource(R.drawable.ic_baseline_send_red_48);
                     binding.setTransmitImageButton.setAnimation(AnimationUtils.loadAnimation(getContext(), R.anim.view_blink));
                 } else {
-                    if (mainViewModel.ft8TransmitSignal.isActivated() && mainViewModel.hamRecorder.isRunning()) {
+                    if (!isExperimentalManualTxMode()
+                            && mainViewModel.ft8TransmitSignal.isActivated()
+                            && mainViewModel.hamRecorder.isRunning()) {
                         binding.setTransmitImageButton.setImageResource(R.drawable.ic_baseline_send_white_48);
                     } else {
                         binding.setTransmitImageButton.setImageResource(R.drawable.ic_baseline_cancel_schedule_send_off);
@@ -379,12 +393,12 @@ public class MyCallingFragment extends Fragment {
                 if (GeneralVariables.toModifier != null) {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
-                            "[" + FT8Common.modeToString(GeneralVariables.getSignalMode()) + "] "
+                            "[" + getCurrentModeLabel() + "] "
                                     + transmitCallsign.callsign + " " + GeneralVariables.toModifier));
                 } else {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
-                            "[" + FT8Common.modeToString(GeneralVariables.getSignalMode()) + "] "
+                            "[" + getCurrentModeLabel() + "] "
                                     + transmitCallsign.callsign));
                 }
             }
@@ -395,9 +409,14 @@ public class MyCallingFragment extends Fragment {
             @SuppressLint("DefaultLocale")
             @Override
             public void onChanged(Integer integer) {
+                if (isExperimentalManualTxMode()) {
+                    binding.transmittingSequentialTextView.setText(
+                            "[" + getCurrentModeLabel() + "] MANUAL");
+                    return;
+                }
                 binding.transmittingSequentialTextView.setText(
                         String.format("[%s] " + GeneralVariables.getStringFromResource(R.string.transmission_sequence),
-                                FT8Common.modeToString(GeneralVariables.getSignalMode()),
+                                getCurrentModeLabel(),
                                 integer));
             }
         });
@@ -406,6 +425,10 @@ public class MyCallingFragment extends Fragment {
         binding.setTransmitImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (isExperimentalManualTxMode()) {
+                    // Experimental TX is intentionally triggered from the CQ button near the text box.
+                    return;
+                }
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.restTransmitting();
                 }
@@ -421,7 +444,7 @@ public class MyCallingFragment extends Fragment {
             public void onChanged(Integer count) {
                 binding.decoderCounterTextView.setText(String.format(
                         "[%s] " + GeneralVariables.getStringFromResource(R.string.message_count),
-                        FT8Common.modeToString(GeneralVariables.getSignalMode()),
+                        getCurrentModeLabel(),
                         GeneralVariables.transmitMessages.size()));
 
                 transmitCallListAdapter.notifyDataSetChanged();
@@ -446,6 +469,14 @@ public class MyCallingFragment extends Fragment {
         binding.resetToCQImageView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (isExperimentalManualTxMode()) {
+                    if (mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() == null) {
+                        mainViewModel.ft8TransmitSignal.restTransmitting();
+                    }
+                    mainViewModel.ft8TransmitSignal.transmitNow();
+                    GeneralVariables.resetLaunchSupervision();
+                    return;
+                }
                 mainViewModel.ft8TransmitSignal.resetToCQ();
                 GeneralVariables.resetLaunchSupervision();//复位自动监管
             }

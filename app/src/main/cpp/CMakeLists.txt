@@ -9,6 +9,7 @@ add_library(
         generate_ft8.cpp
         ft8Listener.cpp
         ft8Spectrum.cpp
+        experimentalCodec.cpp
 
         fft/kiss_fftr.c
         fft/kiss_fft.c
@@ -27,6 +28,7 @@ add_library(
         ft8Decoder.c
         ft8Encoder.c
         spectrum_data.c
+        experimental/experimental_modem.c
 )
 
 find_library(

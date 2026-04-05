@@ -2061,6 +2061,7 @@ public class DatabaseOpr extends SQLiteOpenHelper {
 
             String querySQL = "select keyName,Value from config ";
             Cursor cursor = db.rawQuery(querySQL, null);
+            boolean hasExpCodecMode = false;
             while (cursor.moveToNext()) {
                 String result = cursor.getString(cursor.getColumnIndex("Value"));
                 String name = cursor.getString(cursor.getColumnIndex("KeyName"));
@@ -2185,6 +2186,22 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("deepMode")) {
                     GeneralVariables.deepDecodeMode = result.equals("1");
                 }
+                if (name.equalsIgnoreCase("expCodecDebug")) {
+                    GeneralVariables.experimentalCodecDebugMode = result.equals("1");
+                }
+                if (name.equalsIgnoreCase("expCodecMode")) {
+                    hasExpCodecMode = true;
+                    try {
+                        int value = Integer.parseInt(result);
+                        if (value < GeneralVariables.EXP_CODEC_MODE_OFF
+                                || value > GeneralVariables.EXP_CODEC_MODE_CPFSK) {
+                            value = GeneralVariables.EXP_CODEC_MODE_OFF;
+                        }
+                        GeneralVariables.experimentalCodecMode = value;
+                    } catch (Exception e) {
+                        GeneralVariables.experimentalCodecMode = GeneralVariables.EXP_CODEC_MODE_OFF;
+                    }
+                }
                 if (name.equalsIgnoreCase("dataBits")) {
                     GeneralVariables.serialDataBits = Integer.parseInt(result);
                 }
@@ -2281,6 +2298,14 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                     }
                 }
             }
+
+            // Compatibility: older versions only persisted expCodecDebug.
+            if (!hasExpCodecMode) {
+                GeneralVariables.experimentalCodecMode = GeneralVariables.experimentalCodecDebugMode
+                        ? GeneralVariables.EXP_CODEC_MODE_4FSK
+                        : GeneralVariables.EXP_CODEC_MODE_OFF;
+            }
+            GeneralVariables.experimentalCodecDebugMode = GeneralVariables.isExperimentalCodecEnabled();
 
             if (GeneralVariables.ntpServerIndex == GeneralVariables.NTP_SERVER_INDEX_CUSTOM
                     && GeneralVariables.ntpCustomServer == null) {

@@ -49,7 +49,7 @@ public class FT8TransmitSignal {
     private final Object transmitStateLock = new Object();
     private int lastTransmittedFunctionOrder = -1;
     private Ft8Message lastTransmittedMessage = null;
-    // 【优化】防止立即发射时序竞争：记录上次发射尝试的周期索引，避免同一周期重复触发
+    //防止立即发射时序竞争：记录上次发射尝试的周期索引，避免同一周期重复触发
     private long lastTransmitAttemptSequence = -1;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
     public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();
@@ -102,6 +102,9 @@ public class FT8TransmitSignal {
 
             @Override
             public void doOnSecTimer(long utc) {
+                if (isExperimentalManualTxMode()) {
+                    return;
+                }
 
                 if (GeneralVariables.isLaunchSupervisionTimeout()) {
                     setActivated(false);
@@ -152,13 +155,22 @@ public class FT8TransmitSignal {
             return;
         }
 
+        if (isExperimentalManualTxMode()) {
+            if (!activated) {
+                setActivated(true);
+            }
+            setTransmitting(false);
+            doTransmit();
+            return;
+        }
+
         ToastMessage.show(String.format(GeneralVariables.getStringFromResource(R.string.adjust_call_target)
                 , toCallsign.callsign));
 
 
         resetTargetReport();
 
-        // 【优化】立即发射时添加去重检查，防止周期边界重复触发
+        // 立即发射时添加去重检查，防止周期边界重复触发
         int currentSeq = UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM());
         long currentFullSeq = UtcTimer.getSystemTime() / FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode());
 
@@ -174,7 +186,7 @@ public class FT8TransmitSignal {
 
 
     public void doTransmit() {
-        if (!activated) {
+        if (!activated && !isExperimentalManualTxMode()) {
             return;
         }
         synchronized (transmitStateLock) {
@@ -367,7 +379,7 @@ public class FT8TransmitSignal {
 
     private void postTransmittingMessage(Ft8Message msg) {
         mutableTransmittingMessage.postValue(String.format("[%s] (%.0fHz) %s",
-                FT8Common.modeToString(GeneralVariables.getSignalMode()),
+                GeneralVariables.getActiveModeLabel(),
                 GeneralVariables.getBaseFrequency(),
                 msg.getMessageText()));
     }
@@ -574,6 +586,11 @@ public class FT8TransmitSignal {
         }
 
         updateTransmittingState(false);
+
+        if (isExperimentalManualTxMode() && activated) {
+            // Experimental chain uses one-shot manual TX: stop right after each frame.
+            setActivated(false);
+        }
 
         if (transmittedOrder == 5 && activated) {
             resetToCQ();
@@ -951,6 +968,9 @@ public class FT8TransmitSignal {
     }
 
     public void parseMessageToFunction(ArrayList<Ft8Message> msgList) {
+        if (isExperimentalManualTxMode()) {
+            return;
+        }
         if (GeneralVariables.myCallsign.length() < 3) {
             return;
         }
@@ -1190,6 +1210,10 @@ public class FT8TransmitSignal {
         } else {
             ToastMessage.show((GeneralVariables.getStringFromResource(R.string.trans_standard_messge_mode)));
         }
+    }
+
+    private boolean isExperimentalManualTxMode() {
+        return GeneralVariables.isExperimentalCodecEnabled();
     }
 
     private static class DoTransmitRunnable implements Runnable {
