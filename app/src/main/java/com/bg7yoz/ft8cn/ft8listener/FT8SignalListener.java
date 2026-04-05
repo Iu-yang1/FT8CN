@@ -18,6 +18,8 @@ import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
+import com.bg7yoz.ft8cn.experimental.ExperimentalCodecBridge;
+import com.bg7yoz.ft8cn.experimental.ExperimentalCodecEngine;
 import com.bg7yoz.ft8cn.timer.OnUtcTimer;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
@@ -253,6 +255,13 @@ public class FT8SignalListener {
      * @param decodeMode 本轮固定模式，避免线程运行过程中模式切换导致同一轮解码混用 FT8 / FT4
      */
     public void decodeFt8(long utc, float[] voiceData, int decodeMode) {
+        if (GeneralVariables.isExperimentalCodecEnabled()) {
+            // Experimental modem bypasses the FT8/FT4 native decoder but still
+            // feeds results through the same UI callback path.
+            decodeExperimentalAsync(utc, voiceData, FT8Common.SAMPLE_RATE, decodeMode, "rx");
+            return;
+        }
+
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -373,6 +382,51 @@ public class FT8SignalListener {
         }).start();
     }
 
+    public void decodeExperimentalLoopback(long utc, float[] voiceData, int sampleRate, int decodeMode) {
+        if (!GeneralVariables.isExperimentalCodecEnabled()) {
+            return;
+        }
+        decodeExperimentalAsync(utc, voiceData, sampleRate, decodeMode, "loopback");
+    }
+
+    private void decodeExperimentalAsync(long utc, float[] voiceData, int sampleRate, int decodeMode,
+                                         String sourceTag) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                long time = System.currentTimeMillis();
+                final int slotTimeM = FT8Common.getSlotTimeM(decodeMode);
+
+                if (onFt8Listen != null) {
+                    onFt8Listen.beforeListen(utc);
+                }
+
+                ArrayList<Ft8Message> messages = runExperimentalDecode(utc, voiceData, sampleRate, decodeMode);
+
+                timeSec = System.currentTimeMillis() - time;
+                if (onFt8Listen != null) {
+                    onFt8Listen.afterDecode(
+                            utc,
+                            averageOffset(messages),
+                            UtcTimer.sequential(utc, slotTimeM),
+                            messages,
+                            false
+                    );
+                    onFt8Listen.afterDecodeFinished(utc, timeSec);
+                }
+
+                decodeTimeSec.postValue(timeSec);
+                Log.d(TAG, String.format(
+                        "EXP decode source=%s time=%dms mode=%s count=%d",
+                        sourceTag,
+                        timeSec,
+                        GeneralVariables.getActiveModeLabel(),
+                        messages.size()
+                ));
+            }
+        }).start();
+    }
+
     /**
      * 执行单轮同步与解码
      *
@@ -474,6 +528,81 @@ public class FT8SignalListener {
             }
         }
         return false;
+    }
+
+    private ArrayList<Ft8Message> runExperimentalDecode(long utc, float[] voiceData, int sampleRate,
+                                                        int decodeMode) {
+        ArrayList<Ft8Message> messages = new ArrayList<>();
+        try {
+            float baseFreq = GeneralVariables.getBaseFrequency();
+            int codecMode = GeneralVariables.experimentalCodecMode;
+
+            float[] probe = ExperimentalCodecBridge.analyzeFirstSymbolEnergies(
+                    voiceData,
+                    sampleRate,
+                    ExperimentalCodecBridge.PROBE_SYMBOL_SAMPLES,
+                    ExperimentalCodecBridge.PROBE_TONES_HZ
+            );
+            if (probe != null && probe.length >= 5) {
+                int bestTone = Math.round(probe[4]);
+                Log.d(TAG, String.format(
+                        "EXP probe best=%d e=[%.3f, %.3f, %.3f, %.3f] v=%s",
+                        bestTone,
+                        probe[0],
+                        probe[1],
+                        probe[2],
+                        probe[3],
+                        ExperimentalCodecBridge.getNativeVersion()
+                ));
+            }
+
+            ExperimentalCodecEngine.DecodeResult result = ExperimentalCodecEngine.decodeWave(
+                    voiceData,
+                    baseFreq,
+                    sampleRate,
+                    codecMode
+            );
+            if (result.frameFound) {
+                Log.d(TAG, String.format(
+                        "EXP decode mode=%d crc=%s len=%d preamble=%d offset=%d snr=%ddB text=%s",
+                        result.codecMode,
+                        result.crcOk ? "OK" : "FAIL",
+                        result.payloadLength,
+                        result.preambleScore,
+                        result.symbolOffset,
+                        result.estimatedSnrDb,
+                        result.payloadText
+                ));
+
+                if (result.crcOk && result.payloadText != null && result.payloadText.trim().length() > 0) {
+                    messages.add(buildExperimentalMessage(utc, decodeMode, sampleRate, baseFreq, result));
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "EXP probe failed: " + t.getMessage());
+        }
+        return messages;
+    }
+
+    private Ft8Message buildExperimentalMessage(long utc, int decodeMode, int sampleRate,
+                                                float baseFreq,
+                                                ExperimentalCodecEngine.DecodeResult result) {
+        Ft8Message message = new Ft8Message(decodeMode);
+        message.utcTime = utc;
+        message.band = GeneralVariables.band;
+        message.signalFormat = decodeMode;
+        message.isValid = result.crcOk;
+        message.snr = result.estimatedSnrDb;
+        message.time_sec = (float) result.symbolOffset / Math.max(1, sampleRate);
+        message.freq_hz = baseFreq;
+        message.score = result.preambleScore;
+        message.messageHash = result.payloadText.hashCode();
+        message.i3 = 0;
+        message.n3 = 0;
+        message.extraInfo = result.payloadText;
+        // Keep the full recovered text visible instead of forcing FT8 free-text truncation.
+        message.setTransmitRawText(result.payloadText);
+        return message;
     }
 
     @Override

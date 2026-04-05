@@ -60,6 +60,13 @@ public class GeneralVariables {
      * 是否开启深度解码
      */
     public static boolean deepDecodeMode = true;
+    // Experimental modem modes for 4FSK/CPFSK bring-up.
+    public static final int EXP_CODEC_MODE_OFF = 0;
+    public static final int EXP_CODEC_MODE_4FSK = 1;
+    public static final int EXP_CODEC_MODE_CPFSK = 2;
+    // Compatibility flag kept for existing config key `expCodecDebug`.
+    public static boolean experimentalCodecDebugMode = false;
+    public static int experimentalCodecMode = EXP_CODEC_MODE_OFF;
 
     /**
      * 当前数字模式
@@ -378,6 +385,32 @@ public class GeneralVariables {
      */
     public static int getCurrentImmediateTxWindowMs() {
         return FT8Common.getImmediateTxWindowMs(signalMode);
+    }
+
+    public static boolean isExperimentalCodecEnabled() {
+        return experimentalCodecMode != EXP_CODEC_MODE_OFF;
+    }
+
+    public static boolean isExperimentalCpfskMode() {
+        return experimentalCodecMode == EXP_CODEC_MODE_CPFSK;
+    }
+
+    public static String getExperimentalCodecModeString() {
+        switch (experimentalCodecMode) {
+            case EXP_CODEC_MODE_4FSK:
+                return "4FSK";
+            case EXP_CODEC_MODE_CPFSK:
+                return "CPFSK";
+            default:
+                return "MODE";
+        }
+    }
+
+    public static String getActiveModeLabel() {
+        if (isExperimentalCodecEnabled()) {
+            return getExperimentalCodecModeString();
+        }
+        return FT8Common.modeToString(signalMode);
     }
 
     public static String getCloudlogServerAddress() {

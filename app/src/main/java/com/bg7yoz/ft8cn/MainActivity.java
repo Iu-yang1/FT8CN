@@ -347,6 +347,13 @@ public class MainActivity extends AppCompatActivity {
 
         int slotTimeM = GeneralVariables.getCurrentSlotTimeM(); // 0.1秒单位
         int slotTimeMs = GeneralVariables.getCurrentSlotTimeMillisecond(); // 毫秒
+        if (GeneralVariables.isExperimentalCodecEnabled()) {
+            binding.utcProgressBar.setBackgroundColor(getColor(R.color.progresss_bar_back_color));
+            binding.utcProgressBar.setMax(1000);
+            binding.utcProgressBar.setProgress(0);
+            return;
+        }
+
         long nowUtc = UtcTimer.getSystemTime();
 
         if (slotTimeMs <= 0) {

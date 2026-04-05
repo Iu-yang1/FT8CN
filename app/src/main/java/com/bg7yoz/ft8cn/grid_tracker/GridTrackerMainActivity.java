@@ -93,6 +93,47 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         }
     };
 
+    private boolean isExperimentalManualTxMode() {
+        return GeneralVariables.isExperimentalCodecEnabled();
+    }
+
+    private String getCurrentModeLabel() {
+        return GeneralVariables.getActiveModeLabel();
+    }
+
+    private void updateTrackerTargetVisibility() {
+        if (binding == null || mainViewModel == null) {
+            return;
+        }
+
+        if (isExperimentalManualTxMode()) {
+            // Experimental mode sends one frame per click and never stays armed,
+            // so keep the last selected target visible for manual operation.
+            binding.trackerTargetTextView.setVisibility(
+                    mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() == null
+                            ? View.GONE
+                            : View.VISIBLE
+            );
+            return;
+        }
+
+        binding.trackerTargetTextView.setVisibility(
+                mainViewModel.ft8TransmitSignal.isActivated() ? View.VISIBLE : View.GONE
+        );
+    }
+
+    private void armTransmitFlowIfNeeded(Ft8Message sourceMessage) {
+        if (isExperimentalManualTxMode()) {
+            return;
+        }
+        if (!mainViewModel.ft8TransmitSignal.isActivated()) {
+            mainViewModel.ft8TransmitSignal.setActivated(true);
+            if (sourceMessage != null) {
+                GeneralVariables.transmitMessages.add(sourceMessage);
+            }
+        }
+    }
+
     @SuppressLint("NotifyDataSetChanged")
     protected void doAfterCreate() {
         callingListAdapter.notifyDataSetChanged();
@@ -377,6 +418,15 @@ public class GridTrackerMainActivity extends AppCompatActivity {
             return;
         }
 
+        if (isExperimentalManualTxMode()) {
+            // Experimental mode does not use FT8/FT4 slot arming, so keep the
+            // tracker progress bar static instead of showing a misleading cycle.
+            binding.utcProgressBar.setBackgroundColor(getColor(R.color.progresss_bar_back_color));
+            binding.utcProgressBar.setMax(1000);
+            binding.utcProgressBar.setProgress(0);
+            return;
+        }
+
         int slotTimeM = GeneralVariables.getCurrentSlotTimeM();
         int slotTimeMs = GeneralVariables.getCurrentSlotTimeMillisecond();
         long nowUtc = UtcTimer.getSystemTime();
@@ -619,6 +669,17 @@ public class GridTrackerMainActivity extends AppCompatActivity {
                 , new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
+                        if (isExperimentalManualTxMode()) {
+                            // Grid tracker has no dedicated CQ button, so reuse the
+                            // floating TX button as the experimental one-shot trigger.
+                            if (mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() == null) {
+                                mainViewModel.ft8TransmitSignal.restTransmitting();
+                            }
+                            mainViewModel.ft8TransmitSignal.transmitNow();
+                            GeneralVariables.resetLaunchSupervision();
+                            return;
+                        }
+
                         if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                             mainViewModel.ft8TransmitSignal.restTransmitting();
                         }
@@ -662,7 +723,8 @@ public class GridTrackerMainActivity extends AppCompatActivity {
             public void onChanged(TransmitCallsign transmitCallsign) {
                 binding.trackerTargetTextView.setText(String.format(
                         GeneralVariables.getStringFromResource(R.string.target_callsign)
-                        , transmitCallsign.callsign));
+                        , "[" + getCurrentModeLabel() + "] " + transmitCallsign.callsign));
+                updateTrackerTargetVisibility();
             }
         });
 
@@ -670,17 +732,15 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         Observer<Boolean> transmittingObserver = new Observer<Boolean>() {
             @Override
             public void onChanged(Boolean aBoolean) {
-                if (mainViewModel.ft8TransmitSignal.isActivated()) {
-                    binding.trackerTargetTextView.setVisibility(View.VISIBLE);
-                } else {
-                    binding.trackerTargetTextView.setVisibility(View.GONE);
-                }
+                updateTrackerTargetVisibility();
 
                 if (mainViewModel.ft8TransmitSignal.isTransmitting()) {
                     transButton.setImageResource(R.drawable.ic_baseline_send_red_48);
                     transButton.setAnimation(AnimationUtils.loadAnimation(getBaseContext(), R.anim.view_blink));
                 } else {
-                    if (mainViewModel.ft8TransmitSignal.isActivated() && mainViewModel.hamRecorder.isRunning()) {
+                    if (!isExperimentalManualTxMode()
+                            && mainViewModel.ft8TransmitSignal.isActivated()
+                            && mainViewModel.hamRecorder.isRunning()) {
                         transButton.setImageResource(R.drawable.ic_baseline_send_white_48);
                     } else {
                         transButton.setImageResource(R.drawable.ic_baseline_cancel_schedule_send_off);
@@ -760,10 +820,8 @@ public class GridTrackerMainActivity extends AppCompatActivity {
      */
     private void doCallNow(Ft8Message message) {
         mainViewModel.addFollowCallsign(message.getCallsignFrom());
-        if (!mainViewModel.ft8TransmitSignal.isActivated()) {
-            mainViewModel.ft8TransmitSignal.setActivated(true);
-            GeneralVariables.transmitMessages.add(message);
-        }
+        // Auto-mode still arms the scheduler first; experimental mode stays one-shot.
+        armTransmitFlowIfNeeded(message);
 
         mainViewModel.ft8TransmitSignal.setTransmit(message.getFromCallTransmitCallsign()
                 , 1, message.extraInfo);
@@ -885,9 +943,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         switch (item.getItemId()) {
             case 1:
                 Log.d(TAG, "呼叫：" + ft8Message.getCallsignTo());
-                if (!mainViewModel.ft8TransmitSignal.isActivated()) {
-                    mainViewModel.ft8TransmitSignal.setActivated(true);
-                }
+                armTransmitFlowIfNeeded(null);
                 mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getToCallTransmitCallsign()
                         , 1, ft8Message.extraInfo);
                 mainViewModel.ft8TransmitSignal.transmitNow();
@@ -901,10 +957,7 @@ public class GridTrackerMainActivity extends AppCompatActivity {
             case 4:
                 Log.d(TAG, "回复：" + ft8Message.getCallsignFrom());
                 mainViewModel.addFollowCallsign(ft8Message.getCallsignFrom());
-                if (!mainViewModel.ft8TransmitSignal.isActivated()) {
-                    mainViewModel.ft8TransmitSignal.setActivated(true);
-                    GeneralVariables.transmitMessages.add(ft8Message);
-                }
+                armTransmitFlowIfNeeded(ft8Message);
                 mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getFromCallTransmitCallsign()
                         , -1, ft8Message.extraInfo);
                 mainViewModel.ft8TransmitSignal.transmitNow();

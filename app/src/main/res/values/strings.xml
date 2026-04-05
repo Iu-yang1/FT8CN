@@ -15,6 +15,13 @@
     <string name="message">Message</string>
     <string name="freq">Freq</string>
     <string name="decode">Decode</string>
+    <string name="experimental_codec_debug">实验性编解码模式</string>
+    <string name="experimental_codec_on">实验模式：开</string>
+    <string name="experimental_codec_off">实验模式：关</string>
+    <string name="experimental_codec_modulation">调制方式</string>
+    <string name="experimental_codec_4fsk">4FSK</string>
+    <string name="experimental_codec_cpfsk">CPFSK</string>
+    <string name="experimental_codec_help">用于实验链路调试,开启后发射端改为 4FSK/CPFSK 波形，接收端同时尝试实验解码并输出日志；FT8/FT4 正式解码链仍会并行运行。</string>
     <string name="delete">Delete</string>
     <string name="sequence">S.</string>
     <string name="dist">Distance</string>

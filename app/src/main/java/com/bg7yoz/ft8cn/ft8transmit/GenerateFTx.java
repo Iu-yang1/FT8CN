@@ -4,6 +4,8 @@ import android.util.Log;
 
 import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
+import com.bg7yoz.ft8cn.GeneralVariables;
+import com.bg7yoz.ft8cn.experimental.ExperimentalCodecEngine;
 
 /**
  * FT8 / FT4 统一发射入口
@@ -37,6 +39,23 @@ public final class GenerateFTx {
             return null;
         }
         msg.signalFormat = mode;
+
+        if (GeneralVariables.isExperimentalCodecEnabled()) {
+            Log.d(TAG, String.format(
+                    "EXP TX active: codecMode=%d, txMode=%s, sampleRate=%d, f=%.1f",
+                    GeneralVariables.experimentalCodecMode,
+                    FT8Common.modeToString(mode),
+                    sampleRate,
+                    frequency
+            ));
+            return ExperimentalCodecEngine.generateTxWave(
+                    msg,
+                    frequency,
+                    sampleRate,
+                    mode,
+                    GeneralVariables.experimentalCodecMode
+            );
+        }
         return generateFtXNative(msg, frequency, sampleRate, mode);
     }
 

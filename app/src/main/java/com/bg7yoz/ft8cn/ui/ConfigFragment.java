@@ -17,6 +17,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.CompoundButton;
+import android.widget.RadioGroup;
 
 import androidx.annotation.NonNull;
 import androidx.fragment.app.Fragment;
@@ -367,6 +368,7 @@ public class ConfigFragment extends Fragment {
 
         //设置解码模式
         setDecodeMode();
+        setExperimentalCodecSwitch();
 
         //设置音频输出的位数
         setAudioOutputBitsMode();
@@ -1130,6 +1132,75 @@ public class ConfigFragment extends Fragment {
 
     }
 
+    private void setExperimentalCodecSwitch() {
+        // Keep experimental path opt-in so production FT8/FT4 behavior is unchanged by default.
+        binding.experimentalCodecSwitch.setOnCheckedChangeListener(null);
+        boolean enabled = GeneralVariables.isExperimentalCodecEnabled();
+        binding.experimentalCodecSwitch.setChecked(enabled);
+        setExperimentalCodecSwitchText();
+        setExperimentalCodecModeGroupEnabled(enabled);
+        setExperimentalCodecModeSelection();
+        binding.experimentalCodecSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+                if (checked) {
+                    if (GeneralVariables.experimentalCodecMode == GeneralVariables.EXP_CODEC_MODE_OFF) {
+                        GeneralVariables.experimentalCodecMode = GeneralVariables.EXP_CODEC_MODE_4FSK;
+                    }
+                } else {
+                    GeneralVariables.experimentalCodecMode = GeneralVariables.EXP_CODEC_MODE_OFF;
+                }
+                GeneralVariables.experimentalCodecDebugMode = checked;
+                writeConfig("expCodecDebug", checked ? "1" : "0");
+                writeConfig("expCodecMode", String.valueOf(GeneralVariables.experimentalCodecMode));
+                setExperimentalCodecSwitchText();
+                setExperimentalCodecModeGroupEnabled(checked);
+                setExperimentalCodecModeSelection();
+            }
+        });
+
+    }
+
+    private void setExperimentalCodecSwitchText() {
+        if (binding.experimentalCodecSwitch.isChecked()) {
+            binding.experimentalCodecSwitch.setText(getString(R.string.experimental_codec_on));
+        } else {
+            binding.experimentalCodecSwitch.setText(getString(R.string.experimental_codec_off));
+        }
+    }
+
+    private void setExperimentalCodecModeGroupEnabled(boolean enabled) {
+        binding.experimentalCodecModeText.setEnabled(enabled);
+        binding.experimentalCodecModeRadioGroup.setEnabled(enabled);
+        binding.experimentalCodec4fskRadioButton.setEnabled(enabled);
+        binding.experimentalCodecCpfskRadioButton.setEnabled(enabled);
+    }
+
+    private void setExperimentalCodecModeSelection() {
+        binding.experimentalCodecModeRadioGroup.setOnCheckedChangeListener(null);
+        if (GeneralVariables.experimentalCodecMode == GeneralVariables.EXP_CODEC_MODE_CPFSK) {
+            binding.experimentalCodecCpfskRadioButton.setChecked(true);
+        } else {
+            binding.experimentalCodec4fskRadioButton.setChecked(true);
+        }
+        binding.experimentalCodecModeRadioGroup.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(RadioGroup radioGroup, int checkedId) {
+                if (!binding.experimentalCodecSwitch.isChecked()) {
+                    return;
+                }
+                if (checkedId == binding.experimentalCodecCpfskRadioButton.getId()) {
+                    GeneralVariables.experimentalCodecMode = GeneralVariables.EXP_CODEC_MODE_CPFSK;
+                } else {
+                    GeneralVariables.experimentalCodecMode = GeneralVariables.EXP_CODEC_MODE_4FSK;
+                }
+                GeneralVariables.experimentalCodecDebugMode = true;
+                writeConfig("expCodecDebug", "1");
+                writeConfig("expCodecMode", String.valueOf(GeneralVariables.experimentalCodecMode));
+            }
+        });
+    }
+
 
     /**
      * 设置音频输出的位数
@@ -1558,6 +1629,15 @@ public class ConfigFragment extends Fragment {
         });
 
         //音频输出帮助
+        binding.experimentalCodecHelpButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity()
+                        , GeneralVariables.getStringFromResource(R.string.experimental_codec_help)
+                        , true).show();
+            }
+        });
+
         binding.audioOutputImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
