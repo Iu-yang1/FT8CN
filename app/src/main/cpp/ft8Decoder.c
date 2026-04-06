@@ -1,5 +1,5 @@
 //
-// Created by jmsmf on 2022/4/24.
+// 由 jmsmf 创建于 2022/4/24。
 //
 
 #include "ft8Decoder.h"

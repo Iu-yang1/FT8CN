@@ -721,6 +721,10 @@ public class GridTrackerMainActivity extends AppCompatActivity {
         mainViewModel.ft8TransmitSignal.mutableToCallsign.observe(this, new Observer<TransmitCallsign>() {
             @Override
             public void onChanged(TransmitCallsign transmitCallsign) {
+                if (transmitCallsign == null) {
+                    binding.trackerTargetTextView.setVisibility(View.GONE);
+                    return;
+                }
                 binding.trackerTargetTextView.setText(String.format(
                         GeneralVariables.getStringFromResource(R.string.target_callsign)
                         , "[" + getCurrentModeLabel() + "] " + transmitCallsign.callsign));

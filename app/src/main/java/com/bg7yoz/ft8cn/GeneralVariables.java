@@ -843,7 +843,13 @@ public class GeneralVariables {
     }
 
     public static String getGridByCallsign(String callsign, DatabaseOpr db) {
+        if (callsign == null) {
+            return "";
+        }
         String s = callsign.replace("<", "").replace(">", "");
+        if (s.trim().length() == 0) {
+            return "";
+        }
         if (getCallsignHasGrid(s)) {
             return callsignAndGrids.get(s);
         } else {

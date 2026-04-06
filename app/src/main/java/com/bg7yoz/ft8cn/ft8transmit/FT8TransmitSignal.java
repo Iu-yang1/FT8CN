@@ -25,6 +25,7 @@ import com.bg7yoz.ft8cn.ui.ToastMessage;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 发射控制与自动通联流程。
@@ -51,6 +52,8 @@ public class FT8TransmitSignal {
     private Ft8Message lastTransmittedMessage = null;
     //防止立即发射时序竞争：记录上次发射尝试的周期索引，避免同一周期重复触发
     private long lastTransmitAttemptSequence = -1;
+    // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
+    private long lastManualTransmitRequestMs = 0L;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
     public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();
     private long messageStartTime = 0;
@@ -159,7 +162,12 @@ public class FT8TransmitSignal {
             if (!activated) {
                 setActivated(true);
             }
-            setTransmitting(false);
+            long now = System.currentTimeMillis();
+            if (now - lastManualTransmitRequestMs < 300L) {
+                Log.w(TAG, "transmitNow ignored: duplicate manual trigger");
+                return;
+            }
+            lastManualTransmitRequestMs = now;
             doTransmit();
             return;
         }
@@ -189,12 +197,6 @@ public class FT8TransmitSignal {
         if (!activated && !isExperimentalManualTxMode()) {
             return;
         }
-        synchronized (transmitStateLock) {
-            if (isTransmitting) {
-                Log.w(TAG, "doTransmit ignored: transmit already in progress");
-                return;
-            }
-        }
         if (!transmitFreeText && functionOrder != 6 && toCallsign == null) {
             Log.w(TAG, "doTransmit ignored: target callsign is null");
             return;
@@ -207,8 +209,29 @@ public class FT8TransmitSignal {
             setActivated(false);
             return;
         }
+        boolean reserveBeforeQueue = isExperimentalManualTxMode();
+        synchronized (transmitStateLock) {
+            if (isTransmitting) {
+                Log.w(TAG, "doTransmit ignored: transmit already in progress");
+                return;
+            }
+            if (reserveBeforeQueue) {
+                // For manual experimental TX we reserve the state before queueing
+                // to prevent duplicate click events from dispatching two jobs.
+                isTransmitting = true;
+                mutableIsTransmitting.postValue(true);
+            }
+        }
         Log.d(TAG, "doTransmit: start transmit");
-        doTransmitThreadPool.execute(new DoTransmitRunnable(this));
+        try {
+            doTransmitThreadPool.execute(new DoTransmitRunnable(this));
+        } catch (RejectedExecutionException e) {
+            Log.e(TAG, "doTransmit rejected: " + e.getMessage());
+            if (reserveBeforeQueue) {
+                updateTransmittingState(false);
+            }
+            return;
+        }
         mutableFunctions.postValue(functionList);
     }
 
@@ -515,7 +538,9 @@ public class FT8TransmitSignal {
 
         int mySession = 0;
         int frameBytes = GeneralVariables.audioOutput32Bit ? 4 : 2;
-        int bufferSize = currentSampleRate * currentSlotMs / 1000 * frameBytes;
+        int slotBufferSize = currentSampleRate * currentSlotMs / 1000 * frameBytes;
+        int waveBufferSize = buffer.length * frameBytes;
+        int bufferSize = Math.max(slotBufferSize, waveBufferSize + frameBytes * 8);
 
         audioTrack = new AudioTrack(attributes, myFormat,
                 bufferSize,
@@ -1235,7 +1260,9 @@ public class FT8TransmitSignal {
                 transmitSignal.onDoTransmitted.onBeforeTransmit(msg, transmitOrder);
             }
 
-            transmitSignal.updateTransmittingState(true);
+            if (!transmitSignal.isExperimentalManualTxMode()) {
+                transmitSignal.updateTransmittingState(true);
+            }
             transmitSignal.postTransmittingMessage(msg);
             try {
                 Thread.sleep(GeneralVariables.pttDelay);

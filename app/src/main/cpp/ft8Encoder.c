@@ -1,5 +1,5 @@
 //
-// Created by jmsmf on 2022/6/1.
+// 由 jmsmf 创建于 2022/6/1。
 //
 
 #include "ft8Encoder.h"
@@ -8,13 +8,13 @@
 
 #define FT8_SYMBOL_BT 2.0f /// 符号平滑滤波器带宽因子（BT）
 #define FT4_SYMBOL_BT 1.0f /// 符号平滑滤波器带宽因子（BT）
-#define GFSK_CONST_K 5.336446f ///< == pi * sqrt(2 / log(2))
+#define GFSK_CONST_K 5.336446f ///< 等于 pi * sqrt(2 / log(2))
 
 
 /// 生成高斯平滑脉冲
 /// 脉冲理论上是无限长的，然而，这里它被截断为符号长度的3倍。
 /// 这意味着脉冲阵列必须有空间容纳3*n_spsym元素。
-/// @param[in] n_spsym 每个符号的样本数 Number of samples per symbol
+/// @param[in] n_spsym 每个符号的样本数
 /// @param[in] b 形状参数（为FT8/FT4定义的值）
 /// @param[out] pulse 脉冲采样输出阵列
 ///
@@ -34,10 +34,10 @@ void gfsk_pulse(int n_spsym, float symbol_bt, float *pulse) {
  *
  * 改进点：增强错误处理，内存分配失败时记录日志并安全返回
  *
- * @param[in] symbols 符号（音调）数组 (0-7 for FT8)
+ * @param[in] symbols 符号（音调）数组（FT8 取值范围 0-7）
  * @param[in] n_sym 符号数组中的符号数
- * @param[in] f0 符号0的音频频率（赫兹） (载波频率)
- * @param[in] symbol_bt 符号平滑滤波器带宽 (2 for FT8, 1 for FT4)
+ * @param[in] f0 符号0的音频频率（赫兹）（载波频率）
+ * @param[in] symbol_bt 符号平滑滤波器带宽（FT8 为 2，FT4 为 1）
  * @param[in] symbol_period 符号周期（持续时间），秒
  * @param[in] signal_rate 合成信号的采样率，赫兹
  * @param[out] signal 信号波形样本的输出阵列（应为n_sym*n_spsym样本留出空间）
@@ -50,7 +50,7 @@ void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, fl
 
 
     // 计算平滑的频率波形。
-    // Length = (nsym+2)*n_spsym samples, 首个和最后一个扩展符号
+    // 总长度 = (nsym+2)*n_spsym 个样本，包含首尾扩展符号
     float dphi_peak = 2 * M_PI * hmod / n_spsym;
 
     // 此处使用内存申请的方式，采样率提高后避免栈溢出

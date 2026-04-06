@@ -6,11 +6,11 @@
 
 #include <stdint.h>
 
-// Save signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
+// 将浮点格式信号（-1..+1）按 16 位有符号整数保存为 WAVE 文件。
 void save_wav(const float* signal, int num_samples, int sample_rate, const char* path)
 {
     char subChunk1ID[4] = { 'f', 'm', 't', ' ' };
-    uint32_t subChunk1Size = 16; // 16 for PCM
+    uint32_t subChunk1Size = 16; // PCM 格式固定为 16
     uint16_t audioFormat = 1; // PCM = 1
     uint16_t numChannels = 1;
     uint16_t bitsPerSample = 16;
@@ -38,7 +38,7 @@ void save_wav(const float* signal, int num_samples, int sample_rate, const char*
 
     FILE* f = fopen(path, "wb");
 
-    // NOTE: works only on little-endian architecture
+    // 注意：仅适用于小端架构
     fwrite(chunkID, sizeof(chunkID), 1, f);
     fwrite(&chunkSize, sizeof(chunkSize), 1, f);
     fwrite(format, sizeof(format), 1, f);
@@ -62,11 +62,11 @@ void save_wav(const float* signal, int num_samples, int sample_rate, const char*
     free(raw_data);
 }
 
-// Load signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
+// 从 16 位有符号整数 WAVE 文件读取信号为浮点格式（-1..+1）。
 int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path)
 {
     char subChunk1ID[4]; // = {'f', 'm', 't', ' '};
-    uint32_t subChunk1Size; // = 16;    // 16 for PCM
+    uint32_t subChunk1Size; // = 16;    // PCM 格式固定为 16
     uint16_t audioFormat; // = 1;     // PCM = 1
     uint16_t numChannels; // = 1;
     uint16_t bitsPerSample; // = 16;
@@ -86,7 +86,7 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
         return -1;
     }
 
-    // NOTE: works only on little-endian architecture
+    // 注意：仅适用于小端架构
     fread((void*)chunkID, sizeof(chunkID), 1, f);
     fread((void*)&chunkSize, sizeof(chunkSize), 1, f);
     fread((void*)format, sizeof(format), 1, f);

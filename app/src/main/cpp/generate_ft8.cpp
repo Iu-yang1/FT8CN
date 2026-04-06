@@ -1,5 +1,5 @@
 //
-// Created by jmsmf on 2022/6/1.
+// 由 jmsmf 创建于 2022/6/1。
 // 已增加：GenerateFTx.generateFtXNative(...) 的 JNI 导出
 // 说明：
 // 1. 保留原 GenerateFT8 相关 JNI，兼容旧代码
@@ -23,7 +23,7 @@ extern "C" {
 #include "ft8/constants.h"
 }
 
-#define GFSK_CONST_K 5.336446f ///< == pi * sqrt(2 / log(2))
+#define GFSK_CONST_K 5.336446f ///< 等于 pi * sqrt(2 / log(2))
 
 char *Jstring2CStr(JNIEnv *env, jstring jstr) {
     char *rtn = nullptr;
@@ -141,10 +141,10 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFT8_synth_1gfsk(JNIEnv *env, jclass cl
 
 /**
  * 新增：统一 FT8 / FT4 发射入口
- * Java:
+ * Java 调用：
  * GenerateFTx.generateFtXNative(Ft8Message msg, float frequency, int sampleRate, int mode)
  *
- * mode:
+ * mode 参数：
  * 0 = FT8
  * 1 = FT4
  */
@@ -169,7 +169,7 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
         return nullptr;
     }
 
-    // 打包 77 bit 消息
+    // 打包 77 位消息
     uint8_t packed[FTX_LDPC_K_BYTES];
     memset(packed, 0, sizeof(packed));
 
@@ -193,7 +193,7 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
         symbolBt = FT8_SYMBOL_BT;
     }
 
-    // 编码 tone
+    // 编码音调序列
     uint8_t *tones = (uint8_t *) malloc(nn);
     if (tones == nullptr) {
         return nullptr;

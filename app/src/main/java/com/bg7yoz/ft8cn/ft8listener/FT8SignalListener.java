@@ -596,12 +596,18 @@ public class FT8SignalListener {
         message.time_sec = (float) result.symbolOffset / Math.max(1, sampleRate);
         message.freq_hz = baseFreq;
         message.score = result.preambleScore;
-        message.messageHash = result.payloadText.hashCode();
+        String payloadText = result.payloadText == null ? "" : result.payloadText;
+        message.messageHash = payloadText.hashCode();
         message.i3 = 0;
         message.n3 = 0;
-        message.extraInfo = result.payloadText;
+        // Experimental frames are plain UTF-8 payloads, not FT8 structured
+        // callsign exchanges, so keep the classic fields empty and render from
+        // the raw-text path instead.
+        message.callsignFrom = "";
+        message.callsignTo = "";
+        message.extraInfo = payloadText;
         // Keep the full recovered text visible instead of forcing FT8 free-text truncation.
-        message.setTransmitRawText(result.payloadText);
+        message.setTransmitRawText(payloadText);
         return message;
     }
 
