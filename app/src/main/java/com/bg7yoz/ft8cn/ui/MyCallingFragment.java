@@ -390,6 +390,12 @@ public class MyCallingFragment extends Fragment {
         mainViewModel.ft8TransmitSignal.mutableToCallsign.observe(getViewLifecycleOwner(), new Observer<TransmitCallsign>() {
             @Override
             public void onChanged(TransmitCallsign transmitCallsign) {
+                if (transmitCallsign == null) {
+                    binding.toCallsignTextView.setText(String.format(
+                            GeneralVariables.getStringFromResource(R.string.target_callsign),
+                            "[" + getCurrentModeLabel() + "]"));
+                    return;
+                }
                 if (GeneralVariables.toModifier != null) {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
