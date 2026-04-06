@@ -113,12 +113,7 @@ public final class ExperimentalCodecEngine {
         }
 
         int samplesPerSymbol = ExperimentalCodecConfig.getSamplesPerSymbol(sampleRate);
-        int slotSamples = Math.max(1, Math.round(sampleRate * FT8Common.getSlotTimeSecond(slotMode)));
-        byte[] payload = clampPayloadToSlot(
-                buildPayloadBytes(message),
-                slotSamples,
-                samplesPerSymbol
-        );
+        byte[] payload = buildPayloadBytes(message);
         int[] packetSymbols = buildPacketSymbols(payload);
         float[] tones = ExperimentalCodecConfig.buildToneSet(baseFrequencyHz, sampleRate);
         float[] packetWave = modulateSymbols(
@@ -128,14 +123,9 @@ public final class ExperimentalCodecEngine {
                 tones,
                 codecMode == GeneralVariables.EXP_CODEC_MODE_CPFSK
         );
-
-        if (packetWave.length >= slotSamples) {
-            return Arrays.copyOf(packetWave, slotSamples);
-        }
-
-        float[] padded = new float[slotSamples];
-        System.arraycopy(packetWave, 0, padded, 0, packetWave.length);
-        return padded;
+        // Experimental one-shot TX now uses the true modem packet duration
+        // instead of forcing FT8/FT4 slot-sized padding/cropping.
+        return packetWave;
     }
 
     public static DecodeResult decodeWave(
@@ -328,27 +318,6 @@ public final class ExperimentalCodecEngine {
             return utf8;
         }
         return Arrays.copyOf(utf8, ExperimentalCodecConfig.MAX_PAYLOAD_BYTES);
-    }
-
-    private static byte[] clampPayloadToSlot(byte[] payload, int slotSamples, int samplesPerSymbol) {
-        int payloadLength = Math.min(payload.length, ExperimentalCodecConfig.MAX_PAYLOAD_BYTES);
-        while (payloadLength > 0 && computePacketSampleCount(payloadLength, samplesPerSymbol) > slotSamples) {
-            payloadLength--;
-        }
-        if (computePacketSampleCount(payloadLength, samplesPerSymbol) > slotSamples) {
-            return new byte[0];
-        }
-        return Arrays.copyOf(payload, payloadLength);
-    }
-
-    private static int computePacketSampleCount(int payloadLength, int samplesPerSymbol) {
-        int payloadInfoBits = payloadLength * 8 + 16;
-        int symbolCount = SYNC_LAYOUT.prefixSymbols.length
-                + GF4_CODEC.encodedSymbolCount(LENGTH_INFO_BITS)
-                + SYNC_LAYOUT.middleSymbols.length
-                + GF4_CODEC.encodedSymbolCount(payloadInfoBits)
-                + SYNC_LAYOUT.tailSymbols.length;
-        return symbolCount * samplesPerSymbol;
     }
 
     private static int[] buildPacketSymbols(byte[] payload) {
