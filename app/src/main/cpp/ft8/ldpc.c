@@ -1,19 +1,13 @@
 //
-// LDPC decoder for FT8.
+// FT8 的 LDPC 解码器。
 //
-// given a 174-bit codeword as an array of log-likelihood of zero,
-// return a 174-bit corrected codeword, or zero-length array.
-// last 87 bits are the (systematic) plain-text.
-// this is an implementation of the sum-product algorithm
-// from Sarah Johnson's Iterative Error Correction book.
+// 输入 174 位码字（作为 0 的对数似然数组），
+// 返回 174 位已修正的码字，或零长度数组。
+// 最后 87 位是（系统）纯文本。
+// 这是和积算法的一个实现，
+// 参考自 Sarah Johnson 的《迭代纠错》(Iterative Error Correction) 一书。
 // codeword[i] = log ( P(x=0) / P(x=1) )
 //
-////将174位码字作为对数似然为零的数组，
-////返回一个174位已更正的码字或零长度数组。
-////最后87位是（系统）纯文本。
-////这是和积算法的一个实现
-////来自Sarah Johnson的迭代纠错手册。
-////码字[i]=对数（P（x=0）/P（x=1））
 
 #include "ldpc.h"
 #include "constants.h"
@@ -27,10 +21,10 @@ static int ldpc_check(uint8_t codeword[]);
 static float fast_tanh(float x);
 static float fast_atanh(float x);
 
-// codeword is 174 log-likelihoods.
-// plain is a return value, 174 ints, to be 0 or 1.
-// max_iters is how hard to try.
-// ok == 87 means success.
+// codeword 是 174 个对数似然。
+// plain 是返回值，174 个整数，值为 0 或 1。
+// max_iters 是尝试的最大迭代次数。
+// ok == 87 表示成功。
 void ldpc_decode(float codeword[], int max_iters, uint8_t plain[], int* ok)
 {
     float m[FTX_LDPC_M][FTX_LDPC_N]; // ~60 kB
@@ -81,12 +75,12 @@ void ldpc_decode(float codeword[], int max_iters, uint8_t plain[], int* ok)
 
         if (errors < min_errors)
         {
-            // Update the current best result
+            // 更新当前最佳结果
             min_errors = errors;
 
             if (errors == 0)
             {
-                break; // Found a perfect answer
+                break; // 找到完美答案
             }
         }
 

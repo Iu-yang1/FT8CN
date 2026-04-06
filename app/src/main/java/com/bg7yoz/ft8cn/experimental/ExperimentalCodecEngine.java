@@ -10,11 +10,10 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Experimental 4FSK / CPFSK modem path migrated from the Python prototype.
+ * 从 Python 原型迁移的实验性 4FSK / CPFSK 调制解调器路径。
  *
- * The Android port keeps the same high-level structure as the Python chain:
- * distributed sync blocks, GF(4)-coded sections, CRC-protected payload, and
- * coarse/fine CFO search before payload decoding.
+ * Android 移植版本保持了与 Python 链路相同的高层结构：
+ * 分布式同步块、GF(4) 编码段、CRC 保护的载荷，以及在载荷解码前的粗略/精细 CFO 搜索。
  */
 public final class ExperimentalCodecEngine {
     private static final ExperimentalGF4Codec GF4_CODEC = new ExperimentalGF4Codec();
@@ -123,8 +122,8 @@ public final class ExperimentalCodecEngine {
                 tones,
                 codecMode == GeneralVariables.EXP_CODEC_MODE_CPFSK
         );
-        // Experimental one-shot TX now uses the true modem packet duration
-        // instead of forcing FT8/FT4 slot-sized padding/cropping.
+        // 实验性的单次发射现在使用真实的调制解调器数据包时长，
+        // 而不是强制进行 FT8/FT4 时槽大小的填充或裁剪。
         return packetWave;
     }
 
@@ -291,7 +290,7 @@ public final class ExperimentalCodecEngine {
     private static DecodedSection decodeSection(double[][] symbolLogs, int cursor, int infoBitCount) {
         int consumedSymbols = GF4_CODEC.encodedSymbolCount(infoBitCount);
         if (cursor < 0 || cursor + consumedSymbols > symbolLogs.length) {
-            throw new IllegalArgumentException("coded section exceeds symbol log stream");
+            throw new IllegalArgumentException("编码段超出符号对数流");
         }
         double[][] sectionLogs = copyRows(symbolLogs, cursor, consumedSymbols);
         int[] decodedBits = GF4_CODEC.decodeSymbolLogLikelihoods(sectionLogs, infoBitCount);
@@ -692,8 +691,8 @@ public final class ExperimentalCodecEngine {
         }
 
         if (cpfskMode) {
-            // CPFSK pair metrics are useful but still benefit from the simpler
-            // symbol detector as a stabilizer under CFO mismatch.
+            // CPFSK 配对指标很有用，但在 CFO 不匹配的情况下，
+            // 仍能从更简单的符号检测器中受益，将其作为稳定器。
             for (int symbolIndex = 0; symbolIndex < symbolCount; symbolIndex++) {
                 for (int tone = 0; tone < 4; tone++) {
                     accumulated[symbolIndex][tone] =
@@ -845,7 +844,7 @@ public final class ExperimentalCodecEngine {
     private static ParsedPayload parsePayloadSection(int payloadLength, byte[] payloadCrcBytes) {
         int expectedLength = payloadLength + 2;
         if (payloadCrcBytes.length < expectedLength) {
-            throw new IllegalArgumentException("incomplete payload or crc");
+            throw new IllegalArgumentException("载荷或 CRC 不完整");
         }
 
         byte[] payload = Arrays.copyOf(payloadCrcBytes, payloadLength);

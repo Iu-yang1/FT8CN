@@ -43,7 +43,7 @@ int exp_analyze_first_symbol(
         return 0;
     }
 
-    // Non-coherent tone-energy estimate over one symbol window.
+    // 在一个符号窗口内进行非相干音调能量估计。
     for (int k = 0; k < 4; ++k) {
         double acc_i = 0.0;
         double acc_q = 0.0;
@@ -66,7 +66,7 @@ int exp_analyze_first_symbol(
         }
     }
 
-    // Use the lower three bins as a simple noise-floor proxy.
+    // 使用能量较低的三个频段作为简单的底噪代理。
     float sorted[4];
     memcpy(sorted, out_result->energies, sizeof(sorted));
     sort4(sorted);

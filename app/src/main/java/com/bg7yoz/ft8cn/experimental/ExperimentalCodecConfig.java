@@ -4,10 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Shared modem parameters for the experimental 4FSK / CPFSK chain.
+ * 实验性 4FSK / CPFSK 链路的共享调制解调器参数。
  *
- * The values mirror the Python prototype so Android and offline sweeps stay
- * aligned while the modem is still in bring-up.
+ * 这些数值与 Python设计原型保持一致，以便在调制解调器尚处于开发阶段时，
+ * 使 Android 端与离线扫描保持同步。
  */
 public final class ExperimentalCodecConfig {
     public static final float SYMBOL_RATE = 31.25f;
@@ -79,7 +79,7 @@ public final class ExperimentalCodecConfig {
 
     public static byte[] bitsToBytes(int[] bits) {
         if ((bits.length & 7) != 0) {
-            throw new IllegalArgumentException("bit stream length must be a multiple of 8");
+            throw new IllegalArgumentException("比特流长度必须是 8 的倍数");
         }
 
         byte[] output = new byte[bits.length / 8];
@@ -107,7 +107,7 @@ public final class ExperimentalCodecConfig {
 
     public static int[] bitsToSymbols(int[] bits) {
         if ((bits.length & 1) != 0) {
-            throw new IllegalArgumentException("4FSK requires an even number of bits");
+            throw new IllegalArgumentException("4FSK 需要偶数个比特");
         }
 
         int[] symbols = new int[bits.length / 2];

@@ -4,7 +4,7 @@
 
 const char* trim_front(const char* str)
 {
-    // Skip leading whitespace
+    // 跳过前导空格
     while (*str == ' ')
     {
         str++;
@@ -14,7 +14,7 @@ const char* trim_front(const char* str)
 
 void trim_back(char* str)
 {
-    // Skip trailing whitespace by replacing it with '\0' characters
+    // 通过将尾部空格替换为 '\0' 字符来跳过它们
     int idx = strlen(str) - 1;
     while (idx >= 0 && str[idx] == ' ')
     {
@@ -22,13 +22,13 @@ void trim_back(char* str)
     }
 }
 
-// 1) trims a string from the back by changing whitespaces to '\0'
-// 2) trims a string from the front by skipping whitespaces
+// 1) 通过将空格更改为 '\0' 从尾部修剪字符串
+// 2) 通过跳过空格从头部修剪字符串
 char* trim(char* str)
 {
     str = (char*)trim_front(str);
     trim_back(str);
-    // return a pointer to the first non-whitespace character
+    // 返回指向第一个非空格字符的指针
     return str;
 }
 
@@ -76,12 +76,12 @@ int char_index(const char* string, char c)
             return i;
         }
     }
-    return -1; // Not found
+    return -1; // 未找到
 }
 
-// Text message formatting:
-//   - replaces lowercase letters with uppercase
-//   - merges consecutive spaces into single space
+// 文本消息格式化：
+//   - 将小写字母替换为大写字母
+//   - 将连续空格合并为单个空格
 void fmtmsg(char* msg_out, const char* msg_in)
 {
     char c;
@@ -96,10 +96,10 @@ void fmtmsg(char* msg_out, const char* msg_in)
         }
         ++msg_in;
     }
-    *msg_out = 0; // Add zero termination
+    *msg_out = 0; // 添加零终止符
 }
 
-// Parse a 2 digit integer from string
+// 从字符串解析 2 位整数
 int dd_to_int(const char* str, int length)
 {
     int result = 0;
@@ -108,12 +108,12 @@ int dd_to_int(const char* str, int length)
     if (str[0] == '-')
     {
         negative = true;
-        i = 1; // Consume the - sign
+        i = 1; // 消耗 - 符号
     }
     else
     {
         negative = false;
-        i = (str[0] == '+') ? 1 : 0; // Consume a + sign if found
+        i = (str[0] == '+') ? 1 : 0; // 如果发现 + 符号则消耗它
     }
 
     while (i < length)
@@ -130,7 +130,7 @@ int dd_to_int(const char* str, int length)
     return negative ? -result : result;
 }
 
-// Convert a 2 digit integer to string
+// 将 2 位整数转换为字符串
 void int_to_dd(char* str, int value, int width, bool full_sign)
 {
     if (value < 0)
@@ -161,16 +161,16 @@ void int_to_dd(char* str, int value, int width, bool full_sign)
         value -= digit * divisor;
         divisor /= 10;
     }
-    *str = 0; // Add zero terminator
+    *str = 0; // 添加零终止符
 }
 
-// convert integer index to ASCII character according to one of 6 tables:
-// table 0: " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?"
-// table 1: " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-// table 2: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-// table 3: "0123456789"
-// table 4: " ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-// table 5: " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/"
+// 根据 6 个表之一将整数索引转换为 ASCII 字符：
+// 表 0: " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?"
+// 表 1: " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+// 表 2: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+// 表 3: "0123456789"
+// 表 4: " ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+// 表 5: " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/"
 char charn(int c, int table_idx)
 {
     if (table_idx != 2 && table_idx != 3)
@@ -203,10 +203,10 @@ char charn(int c, int table_idx)
             return '/';
     }
 
-    return '_'; // unknown character, should never get here
+    return '_'; // 未知字符，永远不应到达这里
 }
 
-// Convert character to its index (charn in reverse) according to a table
+// 将字符转换为其索引（charn 的反向操作）
 int nchar(char c, int table_idx)
 {
     int n = 0;

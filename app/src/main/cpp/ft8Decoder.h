@@ -1,5 +1,5 @@
 //
-// Created by jmsmf on 2022/4/24.
+// 由 jmsmf 创建于 2022/4/24。
 //
 //
 #include "ft8/decode.h"
@@ -7,7 +7,7 @@
 #include "ft8/constants.h"
 #include <time.h>
 
-//const int kMin_score = 10; // 候选人的最低同步分数阈值。Minimum sync score threshold for candidates
+//const int kMin_score = 10; // 候选人的最低同步分数阈值
 const int kMax_candidates = 220;//最大候选人数量
 
 const int kMax_decoded_messages = 100;
@@ -25,7 +25,7 @@ typedef struct {
     // 哈希表指针列表（指针数组）
     message_t *decoded_hashtable[kMax_decoded_messages];
 
-    // Find top candidates by Costas sync score and localize them in time and frequency
+    // 按 Costas 同步分数筛选最佳候选，并在时间和频率上定位
     // 从科斯塔斯阵列（Costas）寻找最佳候选，并在时间和频率上对其进行本地化。候选数组最大120个
     // candidate_t定义在decode.h
     candidate_t candidate_list[kMax_candidates];//kMax_candidates=120
@@ -35,7 +35,7 @@ typedef struct {
     uint8_t a91[FTX_LDPC_K_BYTES];//用于生成减法代码的数据
     int kLDPC_iterations;//ldpc 迭代次数，数值越大，精度越高，速度越慢：20或100
     ap_hints_t ap_hints;
-    // AP-lite hints live on the decoder so one decode cycle can reuse them across candidates.
+    // AP-lite 提示信息保存在解码器中，单次解码周期可在多个候选间复用。
 } decoder_t;
 
 typedef struct {
@@ -49,8 +49,8 @@ typedef struct {
     decode_status_t status;
 } ft8_message;
 
-static const int kFreq_osr = 2; // 频率过采样率。Frequency oversampling rate (bin subdivision)
-static const int kTime_osr = 2; // 时间过采样率。Time oversampling rate (symbol subdivision)
+static const int kFreq_osr = 2; // 频率过采样率（频点细分）
+static const int kTime_osr = 2; // 时间过采样率（符号细分）
 
 //把信号FFT,在解码decoder中减去信号
 void signalToFFT(decoder_t *decoder,float signal[], int sample_rate);

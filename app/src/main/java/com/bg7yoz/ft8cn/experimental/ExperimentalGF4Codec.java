@@ -4,10 +4,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 
 /**
- * Direct Java port of the Python GF(4) QC-LDPC prototype.
+ * Python GF(4) QC-LDPC 原型的直接 Java 移植版本。
  *
- * This stays intentionally small and readable because the goal right now is
- * modem validation inside FT8CN rather than ultimate decoder speed.
+ * 保持代码简洁易读，因为目前的目标是在 FT8CN 内部进行调制解调器验证，
+ * 而不是追求极致的解码速度。
  */
 public final class ExperimentalGF4Codec {
     private static final int[][] GF4_ADD_TABLE = new int[][]{
@@ -82,7 +82,7 @@ public final class ExperimentalGF4Codec {
         int blockCount = Math.max(1, (infoSymbolCount + getInfoSymbolsPerBlock() - 1) / getInfoSymbolsPerBlock());
         int expectedSymbols = blockCount * getCodewordSymbolsPerBlock();
         if (symbolLogLikelihoods.length < expectedSymbols) {
-            throw new IllegalArgumentException("not enough coded symbols for gf4 decode");
+            throw new IllegalArgumentException("GF4 解码所需的编码符号不足");
         }
 
         ArrayList<Integer> decodedInfoSymbols = new ArrayList<>();
@@ -354,7 +354,7 @@ public final class ExperimentalGF4Codec {
 
     public static int[] bitsToGf4Symbols(int[] bits) {
         if ((bits.length & 1) != 0) {
-            throw new IllegalArgumentException("GF(4) mapping requires an even number of bits");
+            throw new IllegalArgumentException("GF(4) 映射需要偶数个比特");
         }
         int[] symbols = new int[bits.length / 2];
         for (int i = 0; i < symbols.length; i++) {
@@ -467,7 +467,7 @@ public final class ExperimentalGF4Codec {
 
         public double[] get(int row, int column) {
             if (!valid[row][column]) {
-                throw new IllegalStateException("message lookup before initialization");
+                throw new IllegalStateException("消息在初始化前被查找");
             }
             return values[row][column];
         }

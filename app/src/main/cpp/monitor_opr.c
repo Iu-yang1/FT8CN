@@ -1,5 +1,5 @@
 //
-// Created by jmsmf on 2022/4/22.
+// 由 jmsmf 创建于 2022/4/22。
 //
 
 #include "monitor_opr.h"
@@ -27,13 +27,13 @@ static float hamming_i(int i, int N) {
 }
 
 static float blackman_i(int i, int N) {
-    const float alpha = 0.16f; // or 2860/18608
+    const float alpha = 0.16f; // 也可写作 2860/18608
     const float a0 = (1 - alpha) / 2;
     const float a1 = 1.0f / 2;
     const float a2 = alpha / 2;
 
     float x1 = cosf(2 * (float) M_PI * i / N);
-    float x2 = 2 * x1 * x1 - 1; // Use double angle formula
+    float x2 = 2 * x1 * x1 - 1; // 使用二倍角公式
 
     return a0 - a1 * x1 + a2 * x2;
 }
@@ -67,19 +67,19 @@ void monitor_init(monitor_t *me, const monitor_config_t *cfg) {
     float symbol_period = (cfg->protocol == PROTO_FT4) ? FT4_SYMBOL_PERIOD : FT8_SYMBOL_PERIOD;
 
     //**************************************************
-    // Compute DSP parameters that depend on the sample rate
+    // 计算与采样率相关的 DSP 参数
     // 根据采样率计算DSP参数
     // block_size：每一个FSK符号占用的样本数，FT8:12000*0.16=1920个
     // subblock_size：分析移动的大小（样本数）,每符号样本数/时间过采样率。FT8:1920/2=960
-    // nfft：fft size。fft大小=每个FSK符号占用的样本数*频率过采样率=1920*2
-    // fft_norm：FFT归一化因子。2/fft size。
+    // nfft：FFT 点数。FFT大小=每个FSK符号占用的样本数*频率过采样率=1920*2
+    // fft_norm：FFT归一化因子。2/nfft。
     me->block_size = (int) (cfg->sample_rate *
                             symbol_period); //12000*0.16 对应于一个FSK符号的样本=1920
     me->subblock_size = me->block_size / cfg->time_osr;//移动的样本数。一个FSK符号的样本数/过采样率
     //nfft是傅里叶变换前，时域的实数序列的数量。目前是一个FSK符号的样本数*频率过采样率
     me->nfft = me->block_size * cfg->freq_osr;//nfft=一个FSK符号的样本数*频率过采样率
-    me->fft_norm = 2.0f / me->nfft;//< FFT归一化因子。FFT normalization factor
-    // const int len_window = 1.8f * me->block_size; // hand-picked and optimized
+    me->fft_norm = 2.0f / me->nfft;//< FFT归一化因子
+    // const int len_window = 1.8f * me->block_size; // 手工挑选并优化得到
     //**************************************************
 
     // 申请窗空间，大小是fft块大小*me->windows[0]的大小
@@ -159,10 +159,10 @@ void monitor_free(monitor_t *me) {
 }
 
 
-// Compute FFT magnitudes (log wf) for a frame in the signal and update waterfall data
+// 计算信号单帧的 FFT 幅度（log wf）并更新瀑布图数据
 // 计算信号中一帧的FFT幅度（log wf），并更新瀑布数据
 void monitor_process(monitor_t *me, const float *frame) {
-    // Check if we can still store more waterfall data
+    // 检查是否还能继续存储瀑布图数据
     //防止溢出
     //mag阵列中存储的块（符号）编号
     if (me->wf.num_blocks >= me->wf.max_blocks)
@@ -175,13 +175,13 @@ void monitor_process(monitor_t *me, const float *frame) {
     int offset = me->wf.num_blocks * me->wf.block_stride;
     int frame_pos = 0;
 
-    // Loop over block subdivisions
+    // 按子块进行循环
     //循环块细分，wf.time_osr=2 时间过采样率
     for (int time_sub = 0; time_sub < me->wf.time_osr; ++time_sub) {
         kiss_fft_scalar timedata[me->nfft];
         kiss_fft_cpx freqdata[me->nfft / 2 + 1];
 
-        // Shift the new data into analysis frame
+        // 将新数据移入分析帧
         //将新数据转移到分析框架中。
         // subblock_size：分析移动的大小（样本数）blocksize/2 每秒块数/时间过采样率=FT8:12000*0.16/2=1920/2=960个
         //last_frame的空间已经申请好了。空间大小=时域数据量*数据类型占用的空间=一个FSK符号占用的采样数据量*频率过采样率=12000*0.16*2*SizeOf(float)=3840
@@ -199,7 +199,7 @@ void monitor_process(monitor_t *me, const float *frame) {
         }
 
 
-        // Compute windowed analysis frame
+        // 计算加窗后的分析帧
         //用窗函数做一次转换，汉宁窗。
         for (int pos = 0; pos < me->nfft; ++pos) {
             //把last_frame中的数据赋值到timedata中来，timedata是时域数据，要做一次归一化、窗函数处理
@@ -211,7 +211,7 @@ void monitor_process(monitor_t *me, const float *frame) {
         //nfft=一个FSK符号的样本数*频率过采样率=12000*0.16*2=3840
         kiss_fftr(me->fft_cfg, timedata, freqdata);
 
-        // Loop over two possible frequency bin offsets (for averaging)
+        // 在两个可能的频率 bin 偏移上循环（用于平均）
         //在两个可能的频率单元偏移上循环（用于平均）
         //两个循环的意义是：在一个符号采样数据的范围内（12000*0.16）对freqdata的能量做计算
         for (int freq_sub = 0; freq_sub < me->wf.freq_osr; ++freq_sub) {
@@ -236,9 +236,9 @@ void monitor_process(monitor_t *me, const float *frame) {
 
                 //每循环一次，偏移量移一位。共移动time_osr*freq_osr*num_bins=2*2*960=3840
 
-                // Scale decibels to unsigned 8-bit range and clamp the value
+                // 将分贝值映射到无符号 8 位范围，并进行钳位
                 //将分贝缩放到无符号8位范围，并钳制该值
-                // Range 0-240 covers -120..0 dB in 0.5 dB steps
+                // 0-240 对应 -120..0 dB，步进为 0.5 dB
                 int scaled = (int) (2 * db + 240);
 
                 //0~255之间

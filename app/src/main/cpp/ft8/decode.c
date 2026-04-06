@@ -14,19 +14,19 @@
 #include "../common/debug.h"
 #include "hash22.h"
 
-/// Compute log likelihood log(p(1) / p(0)) of 174 message bits for later use in soft-decision LDPC decoding
-/// @param[in] wf Waterfall data collected during message slot
-/// @param[in] cand Candidate to extract the message from
-/// @param[in] code_map Symbol encoding map
-/// @param[out] log174 Output of decoded log likelihoods for each of the 174 message bits
+/// 为后续的软判决 LDPC 解码计算 174 个消息位的对数似然对数 log(p(1) / p(0))
+/// @param[in] wf 在消息时槽期间收集的瀑布数据
+/// @param[in] cand 从中提取消息的候选者
+/// @param[in] code_map 符号编码映射
+/// @param[out] log174 174 个消息位中每一个的解码对数似然输出
 static void ft4_extract_likelihood(const waterfall_t *wf, const candidate_t *cand, float *log174);
 static void ft8_extract_likelihood(const waterfall_t *wf, candidate_t *cand, float *log174);
 
-/// Packs a string of bits each represented as a zero/non-zero byte in bit_array[],
-/// as a string of packed bits starting from the MSB of the first byte of packed[]
-/// @param[in] plain Array of bits (0 and nonzero values) with num_bits entires
-/// @param[in] num_bits Number of bits (entries) passed in bit_array
-/// @param[out] packed Byte-packed bits representing the data in bit_array
+/// 将位字符串打包，每个位在 bit_array[] 中表示为一个 0/非 0 字节，
+/// 作为一个打包位字符串，从 packed[] 的第一个字节的最高有效位 (MSB) 开始
+/// @param[in] plain 包含 num_bits 个条目的位数组（0 和非零值）
+/// @param[in] num_bits bit_array 中传入的位数（条目数）
+/// @param[out] packed 表示 bit_array 中数据的字节打包位
 static void pack_bits(const uint8_t bit_array[], int num_bits, uint8_t packed[]);
 
 static float max2(float a, float b);
@@ -62,7 +62,7 @@ static const int kApReportValues[] = {1, 3, 5, 7, 10, 12, 15, 18, 20, 24};
 static const float kApPriorStrength = 0.75f;
 static const float kApMinEvidence = 1.15f;
 static const float kApMinMargin = 0.18f;
-// AP-lite uses a very small fixed hypothesis set so the fallback path remains bounded and reviewable.
+// AP-lite 使用一个非常小的固定假设集，因此回退路径保持有界且可审查。
 
 /**
  * SNR 限幅，避免异常值
