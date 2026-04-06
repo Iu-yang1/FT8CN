@@ -209,22 +209,27 @@ public class FT8TransmitSignal {
             setActivated(false);
             return;
         }
+        boolean reserveBeforeQueue = isExperimentalManualTxMode();
         synchronized (transmitStateLock) {
             if (isTransmitting) {
                 Log.w(TAG, "doTransmit ignored: transmit already in progress");
                 return;
             }
-            // Reserve TX state before posting the runnable, so duplicated click
-            // events cannot enqueue two jobs in a narrow timing window.
-            isTransmitting = true;
-            mutableIsTransmitting.postValue(true);
+            if (reserveBeforeQueue) {
+                // For manual experimental TX we reserve the state before queueing
+                // to prevent duplicate click events from dispatching two jobs.
+                isTransmitting = true;
+                mutableIsTransmitting.postValue(true);
+            }
         }
         Log.d(TAG, "doTransmit: start transmit");
         try {
             doTransmitThreadPool.execute(new DoTransmitRunnable(this));
         } catch (RejectedExecutionException e) {
             Log.e(TAG, "doTransmit rejected: " + e.getMessage());
-            updateTransmittingState(false);
+            if (reserveBeforeQueue) {
+                updateTransmittingState(false);
+            }
             return;
         }
         mutableFunctions.postValue(functionList);
@@ -1255,6 +1260,9 @@ public class FT8TransmitSignal {
                 transmitSignal.onDoTransmitted.onBeforeTransmit(msg, transmitOrder);
             }
 
+            if (!transmitSignal.isExperimentalManualTxMode()) {
+                transmitSignal.updateTransmittingState(true);
+            }
             transmitSignal.postTransmittingMessage(msg);
             try {
                 Thread.sleep(GeneralVariables.pttDelay);
