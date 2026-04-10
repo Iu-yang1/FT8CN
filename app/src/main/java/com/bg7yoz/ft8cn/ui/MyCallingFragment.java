@@ -15,6 +15,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.text.Editable;
+import android.text.InputFilter;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -23,8 +24,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.AnimationUtils;
 import android.widget.AdapterView;
+import android.widget.EditText;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Observer;
@@ -41,6 +44,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
+import com.bg7yoz.ft8cn.ft8transmit.DxpeditionMacroSupport;
 import com.bg7yoz.ft8cn.ft8transmit.FunctionOfTransmit;
 import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
 import com.bg7yoz.ft8cn.ft8transmit.TransmitCallsign;
@@ -77,6 +81,105 @@ public class MyCallingFragment extends Fragment {
             binding.dxpeditionManualCheckBox.setChecked(false);
         }
         binding.dxpeditionManualCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
+        updateDxpeditionMacroUi();
+    }
+
+    private boolean canUseDxpeditionMacroUi() {
+        return binding != null
+                && !isExperimentalManualTxMode()
+                && !mainViewModel.getTransitIsFreeText()
+                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && mainViewModel.ft8TransmitSignal.canUseManualDxpeditionMacro();
+    }
+
+    private void updateDxpeditionMacroUi() {
+        if (binding == null) {
+            return;
+        }
+        boolean enabled = canUseDxpeditionMacroUi();
+        binding.dxpeditionMacroButton.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        binding.dxpeditionMacroButton.setEnabled(enabled);
+        binding.dxpeditionMacroButton.setAlpha(enabled ? 1.0f : 0.45f);
+    }
+
+    private String getDxpeditionMacroPreview(int slot) {
+        String template = DxpeditionMacroSupport.getTemplateForSlot(slot);
+        String preview = mainViewModel.ft8TransmitSignal.previewManualDxpeditionMacro(template);
+        if (preview.length() == 0) {
+            preview = DxpeditionMacroSupport.normalizeTemplate(template);
+        }
+        return DxpeditionMacroSupport.getSlotLabel(slot) + ": " + preview;
+    }
+
+    private void showDxpeditionMacroPicker() {
+        if (!canUseDxpeditionMacroUi()) {
+            return;
+        }
+        String[] items = new String[DxpeditionMacroSupport.SLOT_COUNT];
+        for (int i = 0; i < items.length; i++) {
+            items[i] = getDxpeditionMacroPreview(i);
+        }
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_macro_pick_title)
+                .setItems(items, (dialogInterface, which) -> {
+                    String template = DxpeditionMacroSupport.getTemplateForSlot(which);
+                    mainViewModel.ft8TransmitSignal.sendManualDxpeditionMacro(template);
+                    updateAutoSessionStatus();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void showDxpeditionMacroEditPicker() {
+        if (!canUseDxpeditionMacroUi()) {
+            return;
+        }
+        String[] items = new String[]{
+                getDxpeditionMacroPreview(DxpeditionMacroSupport.SLOT_CUSTOM_1),
+                getDxpeditionMacroPreview(DxpeditionMacroSupport.SLOT_CUSTOM_2)
+        };
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_macro_edit_title)
+                .setItems(items, (dialogInterface, which) ->
+                        showDxpeditionMacroEditor(which == 0 ? 0 : 1))
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void showDxpeditionMacroEditor(int customIndex) {
+        EditText input = new EditText(requireContext());
+        input.setSingleLine(false);
+        input.setMinLines(2);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(40)});
+        input.setHint(R.string.dxpedition_macro_edit_hint);
+        input.setText(DxpeditionMacroSupport.getCustomTemplate(customIndex));
+        input.setSelection(input.getText().length());
+
+        String label = DxpeditionMacroSupport.getSlotLabel(
+                customIndex == 0 ? DxpeditionMacroSupport.SLOT_CUSTOM_1 : DxpeditionMacroSupport.SLOT_CUSTOM_2
+        );
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(getString(R.string.dxpedition_macro_edit_slot_title, label))
+                .setView(input)
+                .setPositiveButton(R.string.ok_confirmed, (dialogInterface, i) -> {
+                    String template = DxpeditionMacroSupport.normalizeTemplate(input.getText().toString());
+                    if (template.length() == 0) {
+                        ToastMessage.show(getString(R.string.dxpedition_macro_empty));
+                        return;
+                    }
+                    DxpeditionMacroSupport.setCustomTemplate(customIndex, template);
+                    mainViewModel.databaseOpr.writeConfig(
+                            customIndex == 0
+                                    ? "manualDxpeditionMacroCustom1"
+                                    : "manualDxpeditionMacroCustom2",
+                            DxpeditionMacroSupport.getCustomTemplate(customIndex),
+                            null
+                    );
+                    ToastMessage.show(getString(R.string.dxpedition_macro_saved));
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
     }
 
     private void updateAutoSessionStatus() {
@@ -309,8 +412,15 @@ public class MyCallingFragment extends Fragment {
             GeneralVariables.manualDxpeditionHoundMode = isChecked;
             mainViewModel.ft8TransmitSignal.refreshSessionModeByCurrentTarget();
             updateAutoSessionStatus();
+            updateDxpeditionMacroUi();
         });
         updateDxpeditionManualUi();
+
+        binding.dxpeditionMacroButton.setOnClickListener(view -> showDxpeditionMacroPicker());
+        binding.dxpeditionMacroButton.setOnLongClickListener(view -> {
+            showDxpeditionMacroEditPicker();
+            return true;
+        });
 
         // 显示UTC时间
         mainViewModel.timerSec.observe(getViewLifecycleOwner(), new Observer<Long>() {
@@ -373,6 +483,7 @@ public class MyCallingFragment extends Fragment {
                     binding.pauseTransmittingImageButton.setVisibility(View.GONE);
                     binding.pauseTransmittingImageButton.setImageResource(R.drawable.ic_baseline_pause_disable_circle_outline_24);
                 }
+                updateAutoSessionStatus();
             }
         };
         mainViewModel.ft8TransmitSignal.mutableIsTransmitting.observe(getViewLifecycleOwner(), transmittingObserver);
@@ -573,6 +684,7 @@ public class MyCallingFragment extends Fragment {
         showFreeTextEdit();
         updateSignalModeUI();
         updateDxpeditionManualUi();
+        updateAutoSessionStatus();
         return binding.getRoot();
     }
 

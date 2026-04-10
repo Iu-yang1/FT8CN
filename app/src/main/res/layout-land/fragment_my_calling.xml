@@ -205,13 +205,28 @@
                     android:spinnerMode="dropdown"
                     android:visibility="gone"
                     app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintEnd_toStartOf="@+id/resetToCQImageView"
+                    app:layout_constraintEnd_toStartOf="@+id/dxpeditionMacroButton"
                     app:layout_constraintHorizontal_bias="0.0"
                     app:layout_constraintStart_toEndOf="@+id/pauseTransmittingImageButton"
                     app:layout_constraintTop_toTopOf="parent"
                     app:layout_constraintVertical_bias="0.555"
                     tools:ignore="TouchTargetSizeCheck,SpeakableTextPresentCheck"
                     tools:listitem="@layout/function_order_spinner_item" />
+
+            <Button
+                    android:id="@+id/dxpeditionMacroButton"
+                    android:layout_width="42dp"
+                    android:layout_height="30dp"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/imagebutton_style"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:padding="0dp"
+                    android:text="@string/dxpedition_macro_button"
+                    android:textSize="10sp"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toStartOf="@+id/resetToCQImageView"
+                    app:layout_constraintTop_toTopOf="parent" />
 
             <ImageButton
                     android:id="@+id/resetToCQImageView"
@@ -238,7 +253,7 @@
                     android:ems="10"
                     android:hint="@string/transmit_freeText"
                     android:inputType="text"
-                    app:layout_constraintEnd_toStartOf="@+id/resetToCQImageView"
+                    app:layout_constraintEnd_toStartOf="@+id/dxpeditionMacroButton"
                     app:layout_constraintStart_toEndOf="@+id/pauseTransmittingImageButton"
                     app:layout_constraintTop_toTopOf="parent"
                     tools:ignore="TextContrastCheck" />
@@ -255,7 +270,7 @@
                     android:textSize="10sp"
                     android:visibility="gone"
                     app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintEnd_toStartOf="@+id/resetToCQImageView"
+                    app:layout_constraintEnd_toStartOf="@+id/dxpeditionMacroButton"
                     app:layout_constraintStart_toEndOf="@+id/pauseTransmittingImageButton"
                     app:layout_constraintTop_toBottomOf="@+id/transFreeTextEdit"
                     tools:ignore="TextContrastCheck" />

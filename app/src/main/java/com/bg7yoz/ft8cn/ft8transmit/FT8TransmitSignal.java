@@ -39,6 +39,8 @@ public class FT8TransmitSignal {
 
     private boolean transmitFreeText = false;
     private String freeText = "FREE TEXT";
+    private String pendingDxpeditionMacroTemplate = null;
+    private boolean deactivateAfterManualDxpeditionMacro = false;
 
     private final DatabaseOpr databaseOpr;
     private TransmitCallsign toCallsign;
@@ -119,6 +121,49 @@ public class FT8TransmitSignal {
                 && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
                 && !transmitFreeText
                 && !isExperimentalManualTxMode();
+    }
+
+    public boolean canUseManualDxpeditionMacro() {
+        return isManualDxpeditionHoundEnabled();
+    }
+
+    public String previewManualDxpeditionMacro(String template) {
+        return DxpeditionMacroSupport.renderTemplate(
+                template,
+                getCurrentTargetCallsign(),
+                GeneralVariables.myCallsign,
+                getCurrentMacroReport()
+        );
+    }
+
+    public boolean sendManualDxpeditionMacro(String template) {
+        if (!isManualDxpeditionHoundEnabled()) {
+            return false;
+        }
+        if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
+            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.dxpedition_macro_requires_target));
+            return false;
+        }
+
+        String normalizedTemplate = DxpeditionMacroSupport.normalizeTemplate(template);
+        if (normalizedTemplate.length() == 0) {
+            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.dxpedition_macro_empty));
+            return false;
+        }
+
+        String rendered = previewManualDxpeditionMacro(normalizedTemplate);
+        if (rendered.length() == 0 || GenerateFT8.getPackedTypeInfo(rendered).length() == 0) {
+            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.dxpedition_macro_invalid));
+            return false;
+        }
+
+        pendingDxpeditionMacroTemplate = normalizedTemplate;
+        deactivateAfterManualDxpeditionMacro = !activated;
+        if (!activated) {
+            setActivated(true);
+        }
+        transmitNow();
+        return true;
     }
 
     private AutoSessionType resolveBoundSessionType(TransmitCallsign transmitCallsign) {
@@ -433,7 +478,9 @@ public class FT8TransmitSignal {
 
     private Ft8Message buildTransmitMessage(int order) {
         Ft8Message msg;
-        if (transmitFreeText) {
+        if (hasPendingDxpeditionMacro()) {
+            msg = buildPendingDxpeditionMacroMessage();
+        } else if (transmitFreeText) {
             msg = new Ft8Message(GeneralVariables.getSignalMode(), "CQ",
                     GeneralVariables.myCallsign, freeText);
             msg.setTransmitRawText(freeText);
@@ -445,6 +492,50 @@ public class FT8TransmitSignal {
         msg.modifier = GeneralVariables.toModifier;
         msg.signalFormat = GeneralVariables.getSignalMode();
         return msg;
+    }
+
+    private boolean hasPendingDxpeditionMacro() {
+        return pendingDxpeditionMacroTemplate != null
+                && pendingDxpeditionMacroTemplate.trim().length() > 0;
+    }
+
+    private String getCurrentTargetCallsign() {
+        if (toCallsign == null || toCallsign.callsign == null) {
+            return "";
+        }
+        return toCallsign.callsign;
+    }
+
+    private int getCurrentMacroReport() {
+        if (toCallsign != null) {
+            return toCallsign.snr;
+        }
+        if (sentTargetReport != -100) {
+            return sentTargetReport;
+        }
+        if (sendReport != 0) {
+            return sendReport;
+        }
+        return -1;
+    }
+
+    private Ft8Message buildPendingDxpeditionMacroMessage() {
+        String rendered = DxpeditionMacroSupport.renderTemplate(
+                pendingDxpeditionMacroTemplate,
+                getCurrentTargetCallsign(),
+                GeneralVariables.myCallsign,
+                getCurrentMacroReport()
+        );
+        Ft8Message msg = new Ft8Message(GeneralVariables.getSignalMode(), "CQ",
+                GeneralVariables.myCallsign, rendered);
+        msg.setTransmitRawText(rendered);
+        msg.i3 = 0;
+        msg.n3 = 0;
+        return msg;
+    }
+
+    private void clearPendingDxpeditionMacro() {
+        pendingDxpeditionMacroTemplate = null;
     }
 
     private void postTransmittingMessage(Ft8Message msg) {
@@ -650,6 +741,7 @@ public class FT8TransmitSignal {
                 ? lastTransmittedFunctionOrder
                 : functionOrder;
         notifyAfterTransmit(transmittedOrder);
+        clearPendingDxpeditionMacro();
 
         // 【优化】先释放音频资源再更新状态，确保资源及时回收
         if (audioTrack != null) {
@@ -668,6 +760,12 @@ public class FT8TransmitSignal {
         if (isExperimentalManualTxMode() && activated) {
             // Experimental chain uses one-shot manual TX: stop right after each frame.
             setActivated(false);
+        }
+
+        if (deactivateAfterManualDxpeditionMacro) {
+            deactivateAfterManualDxpeditionMacro = false;
+            setActivated(false);
+            return;
         }
 
         if (transmittedOrder == 5 && activated) {
@@ -755,13 +853,17 @@ public class FT8TransmitSignal {
             return "";
         }
         if (autoSession.isDxpeditionHound()) {
-            return GeneralVariables.getStringFromResource(
+            String status = GeneralVariables.getStringFromResource(
                     isManualDxpeditionHoundEnabled()
                             ? R.string.dxpedition_manual_arm_status
                             : isDxpeditionHoundAutoEnabled()
                             ? R.string.dxpedition_auto_status
                             : R.string.dxpedition_manual_status
             );
+            if (hasPendingDxpeditionMacro()) {
+                return status + " / " + GeneralVariables.getStringFromResource(R.string.dxpedition_macro_armed);
+            }
+            return status;
         }
         return "";
     }
@@ -1222,6 +1324,8 @@ public class FT8TransmitSignal {
     public void setActivated(boolean activated) {
         this.activated = activated;
         if (!this.activated) {
+            clearPendingDxpeditionMacro();
+            deactivateAfterManualDxpeditionMacro = false;
             setTransmitting(false);
         }
         mutableIsActivated.postValue(activated);
@@ -1268,6 +1372,8 @@ public class FT8TransmitSignal {
     public void resetToCQ() {
         resetTargetReport();
         lastTransmittedFunctionOrder = -1;
+        clearPendingDxpeditionMacro();
+        deactivateAfterManualDxpeditionMacro = false;
         autoSession.resetToCq(GeneralVariables.getSignalMode(), GeneralVariables.band);
         syncNoReplyCount();
         if (toCallsign == null) {
@@ -1301,6 +1407,9 @@ public class FT8TransmitSignal {
 
     public void setTransmitFreeText(boolean transmitFreeText) {
         this.transmitFreeText = transmitFreeText;
+        if (transmitFreeText) {
+            clearPendingDxpeditionMacro();
+        }
         if (transmitFreeText) {
             ToastMessage.show(GeneralVariables.getStringFromResource(R.string.trans_free_text_mode));
         } else {

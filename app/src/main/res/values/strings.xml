@@ -153,6 +153,22 @@
     <string name="dxpedition_manual_status">DXpedition Hound manual</string>
     <string name="dxpedition_manual_arm_status">DXpedition Hound armed</string>
     <string name="dxpedition_manual_toggle">DXP</string>
+    <string name="dxpedition_macro_armed">macro armed</string>
+    <string name="dxpedition_macro_button">DXP+</string>
+    <string name="dxpedition_macro_pick_title">DXpedition replies</string>
+    <string name="dxpedition_macro_edit_title">Edit DXP macros</string>
+    <string name="dxpedition_macro_edit_slot_title">Edit %1$s</string>
+    <string name="dxpedition_macro_edit_hint">Use {DXCALL} {MYCALL} {RPT} {RRPT}</string>
+    <string name="dxpedition_macro_call_dx">Call DX</string>
+    <string name="dxpedition_macro_send_report">Send report</string>
+    <string name="dxpedition_macro_send_r_report">Send R+report</string>
+    <string name="dxpedition_macro_send_rr73">Send RR73</string>
+    <string name="dxpedition_macro_custom_1">Custom 1</string>
+    <string name="dxpedition_macro_custom_2">Custom 2</string>
+    <string name="dxpedition_macro_requires_target">DXP macro needs a target callsign</string>
+    <string name="dxpedition_macro_invalid">DXP macro cannot be encoded</string>
+    <string name="dxpedition_macro_empty">DXP macro template is empty</string>
+    <string name="dxpedition_macro_saved">DXP macro saved</string>
 
     <!--   解码栏-->
     <string name="message_count_count">Messages(%d/%d)</string>
