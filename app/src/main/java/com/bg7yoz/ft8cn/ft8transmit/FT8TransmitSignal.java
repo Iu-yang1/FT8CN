@@ -311,15 +311,6 @@ public class FT8TransmitSignal {
         return order + 1;
     }
 
-    private int getIncomingFunctionOrder(Ft8Message message) {
-        if (message == null) {
-            return -1;
-        }
-        return message.checkIsCQ()
-                ? 6
-                : GeneralVariables.checkFunOrderByExtraInfo(message.getAutoReplyExtraInfo());
-    }
-
     @SuppressLint("DefaultLocale")
     public void setBaseFrequency(float freq) {
         GeneralVariables.setBaseFrequency(freq);
@@ -697,43 +688,6 @@ public class FT8TransmitSignal {
         return AutoFlowMessageAnalyzer.callsignMatches(fromCall, toCall);
     }
 
-    private String normalizeCallsignForMatch(String callsign) {
-        return callsign.trim()
-                .toUpperCase()
-                .replace("<", "")
-                .replace(">", "");
-    }
-
-    private String getMainCallsign(String callsign) {
-        int len = callsign.length();
-        if (len == 0) {
-            return "";
-        }
-
-        int bestStart = 0;
-        int bestLen = 0;
-        int start = 0;
-
-        while (start <= len) {
-            int slash = callsign.indexOf('/', start);
-            int end = (slash >= 0) ? slash : len;
-            int tokenLen = end - start;
-            if (tokenLen > bestLen) {
-                bestLen = tokenLen;
-                bestStart = start;
-            }
-            if (slash < 0) {
-                break;
-            }
-            start = slash + 1;
-        }
-
-        if (bestLen == 0) {
-            return callsign;
-        }
-        return callsign.substring(bestStart, bestStart + bestLen);
-    }
-
     private int checkTargetCallMe(ArrayList<Ft8Message> messages) {
         if (toCallsign == null) {
             return 1;
@@ -1066,7 +1020,7 @@ public class FT8TransmitSignal {
             return;
         }
 
-        if (hasUsableMessage(messages)) {
+        if (hasCurrentSessionActivity(messages)) {
             autoSession.increaseNoReplyCount();
             syncNoReplyCount();
         }
@@ -1112,7 +1066,7 @@ public class FT8TransmitSignal {
         );
     }
 
-    private boolean hasUsableMessage(ArrayList<Ft8Message> messages) {
+    private boolean hasCurrentSessionActivity(ArrayList<Ft8Message> messages) {
         for (Ft8Message msg : messages) {
             if (AutoFlowMessageAnalyzer.isCurrentSessionActivity(
                     msg,
