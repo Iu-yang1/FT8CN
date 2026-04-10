@@ -39,27 +39,47 @@
 
             <TextView
                     android:id="@+id/toCallsignTextView"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:gravity="center_horizontal"
+                    android:maxLines="1"
                     android:textColor="@color/bar_text_view_color"
                     android:textSize="12sp"
-                    app:layout_constraintBottom_toTopOf="@+id/timerTextView"
+                    app:layout_constraintBottom_toTopOf="@+id/autoSessionTextView"
                     app:layout_constraintEnd_toStartOf="@+id/guideline6"
-                    app:layout_constraintHorizontal_bias="0.5"
                     app:layout_constraintStart_toEndOf="@+id/clearMycallListImageButton"
                     app:layout_constraintTop_toTopOf="parent"
                     tools:text="BG7YOY" />
 
             <TextView
-                    android:id="@+id/transmittingSequentialTextView"
-                    android:layout_width="wrap_content"
+                    android:id="@+id/autoSessionTextView"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:gravity="center_horizontal"
+                    android:maxLines="1"
+                    android:textColor="@color/bar_text_view_color"
+                    android:textSize="10sp"
+                    app:layout_constraintBottom_toTopOf="@+id/transmittingSequentialTextView"
+                    app:layout_constraintEnd_toStartOf="@+id/guideline6"
+                    app:layout_constraintStart_toEndOf="@+id/clearMycallListImageButton"
+                    app:layout_constraintTop_toBottomOf="@+id/toCallsignTextView"
+                    tools:text="DXpedition Hound auto" />
+
+            <TextView
+                    android:id="@+id/transmittingSequentialTextView"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:gravity="center_horizontal"
+                    android:maxLines="1"
                     android:textColor="@color/bar_text_view_color"
                     android:textSize="12sp"
                     app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintEnd_toStartOf="@+id/guideline6"
                     app:layout_constraintStart_toEndOf="@+id/clearMycallListImageButton"
-                    app:layout_constraintTop_toBottomOf="@+id/baseFrequencyTextView"
+                    app:layout_constraintTop_toBottomOf="@+id/autoSessionTextView"
                     tools:text="发射时序:0"
                     tools:visibility="visible" />
 
@@ -72,13 +92,15 @@
 
             <TextView
                     android:id="@+id/baseFrequencyTextView"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:gravity="center_horizontal"
+                    android:maxLines="1"
                     android:textColor="@color/bar_text_view_color"
                     android:textSize="12sp"
-                    app:layout_constraintBottom_toTopOf="@+id/rgSignalMode"
+                    app:layout_constraintBottom_toTopOf="@+id/timerTextView"
                     app:layout_constraintEnd_toStartOf="@+id/setTransmitImageButton"
-                    app:layout_constraintHorizontal_bias="0.5"
                     app:layout_constraintStart_toStartOf="@+id/guideline6"
                     app:layout_constraintTop_toTopOf="parent"
                     tools:text="发射频率:2000Hz" />
@@ -88,8 +110,9 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
+                    app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintStart_toStartOf="@+id/guideline6"
-                    app:layout_constraintTop_toBottomOf="@+id/baseFrequencyTextView">
+                    app:layout_constraintTop_toBottomOf="@+id/timerTextView">
 
                 <RadioButton
                         android:id="@+id/rbFt8"
@@ -114,15 +137,35 @@
 
             <TextView
                     android:id="@+id/timerTextView"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:gravity="center_horizontal"
+                    android:maxLines="1"
                     android:textColor="@color/bar_text_view_color"
                     android:textSize="12sp"
-                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintBottom_toTopOf="@+id/rgSignalMode"
                     app:layout_constraintEnd_toStartOf="@+id/setTransmitImageButton"
                     app:layout_constraintStart_toStartOf="@+id/guideline6"
-                    app:layout_constraintTop_toBottomOf="@+id/rgSignalMode"
+                    app:layout_constraintTop_toBottomOf="@+id/baseFrequencyTextView"
                     tools:text="123456" />
+
+            <CheckBox
+                    android:id="@+id/dxpeditionManualCheckBox"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="4dp"
+                    android:buttonTint="@color/bar_text_view_color"
+                    android:minHeight="24dp"
+                    android:text="@string/dxpedition_manual_toggle"
+                    android:textColor="@color/bar_text_view_color"
+                    android:textSize="11sp"
+                    app:layout_constrainedWidth="true"
+                    app:layout_constraintBottom_toBottomOf="@+id/rgSignalMode"
+                    app:layout_constraintEnd_toStartOf="@+id/setTransmitImageButton"
+                    app:layout_constraintStart_toEndOf="@+id/rgSignalMode"
+                    app:layout_constraintTop_toTopOf="@+id/rgSignalMode" />
 
             <ImageButton
                     android:id="@+id/setTransmitImageButton"
