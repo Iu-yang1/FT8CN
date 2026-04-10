@@ -382,6 +382,8 @@ public class MainViewModel extends ViewModel {
                 }
                 if (ft8TransmitSignal.isActivated()) {
                     GeneralVariables.transmitMessages.add(message);
+                    GeneralVariables.transmitHistoryMessages.add(message);
+                    GeneralVariables.deleteArrayListMore(GeneralVariables.transmitHistoryMessages);
                     mutableTransmitMessagesCount.postValue(1);
                 }
             }
@@ -625,6 +627,7 @@ public class MainViewModel extends ViewModel {
      */
     public void clearTransmittingMessage() {
         GeneralVariables.transmitMessages.clear();
+        GeneralVariables.transmitHistoryMessages.clear();
         mutableTransmitMessagesCount.postValue(0);
     }
 

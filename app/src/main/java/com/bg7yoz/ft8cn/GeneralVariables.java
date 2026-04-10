@@ -308,6 +308,7 @@ public class GeneralVariables {
     public static final ArrayList<String> followCallsign = new ArrayList<>();
 
     public static ArrayList<Ft8Message> transmitMessages = new ArrayList<>();
+    public static ArrayList<Ft8Message> transmitHistoryMessages = new ArrayList<>();
 
     public static void setMyMaidenheadGrid(String grid) {
         myMaidenheadGrid = grid;

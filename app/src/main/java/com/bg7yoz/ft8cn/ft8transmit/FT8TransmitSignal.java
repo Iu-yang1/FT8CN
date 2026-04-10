@@ -471,6 +471,12 @@ public class FT8TransmitSignal {
     }
 
     private void replaceLatestQueuedTransmitMessage(Ft8Message msg) {
+        synchronized (GeneralVariables.transmitHistoryMessages) {
+            int lastHistoryIndex = GeneralVariables.transmitHistoryMessages.size() - 1;
+            if (lastHistoryIndex >= 0) {
+                GeneralVariables.transmitHistoryMessages.set(lastHistoryIndex, msg);
+            }
+        }
         synchronized (GeneralVariables.transmitMessages) {
             int lastIndex = GeneralVariables.transmitMessages.size() - 1;
             if (lastIndex >= 0) {
