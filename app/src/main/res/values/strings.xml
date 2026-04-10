@@ -151,6 +151,8 @@
     <string name="dxpedition_auto_hound_off">DXpedition Hound manual</string>
     <string name="dxpedition_auto_status">DXpedition Hound auto</string>
     <string name="dxpedition_manual_status">DXpedition Hound manual</string>
+    <string name="dxpedition_manual_arm_status">DXpedition Hound armed</string>
+    <string name="dxpedition_manual_toggle">DXP</string>
 
     <!--   解码栏-->
     <string name="message_count_count">Messages(%d/%d)</string>

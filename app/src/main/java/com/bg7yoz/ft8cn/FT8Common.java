@@ -97,6 +97,19 @@ public final class FT8Common {
         return mode == FT4_MODE ? 1200 : 2500;
     }
 
+    public static int getFrameDurationMs(int mode) {
+        return Math.round(getToneCount(mode) * getSymbolPeriod(mode) * 1000f);
+    }
+
+    public static int getLateDecodeOverrideWindowMs(int mode) {
+        int slotMs = getSlotTimeMillisecond(mode);
+        int frameMs = getFrameDurationMs(mode);
+        int guardMs = 200;
+        int maxWindowMs = Math.max(0, slotMs - frameMs - guardMs);
+        int preferredWindowMs = mode == FT4_MODE ? 1000 : 1500;
+        return Math.min(preferredWindowMs, maxWindowMs);
+    }
+
     /**
      * 模式转字符串
      */

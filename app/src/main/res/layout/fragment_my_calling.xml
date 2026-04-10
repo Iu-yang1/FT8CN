@@ -142,6 +142,19 @@
                         android:textSize="12sp" />
             </RadioGroup>
 
+            <CheckBox
+                    android:id="@+id/dxpeditionManualCheckBox"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="@color/bar_text_view_color"
+                    android:minHeight="24dp"
+                    android:text="@string/dxpedition_manual_toggle"
+                    android:textColor="@color/bar_text_view_color"
+                    android:textSize="11sp"
+                    app:layout_constraintBottom_toBottomOf="@+id/rgSignalMode"
+                    app:layout_constraintStart_toEndOf="@+id/rgSignalMode"
+                    app:layout_constraintTop_toTopOf="@+id/rgSignalMode" />
+
             <ImageButton
                     android:id="@+id/setTransmitImageButton"
                     android:layout_width="wrap_content"

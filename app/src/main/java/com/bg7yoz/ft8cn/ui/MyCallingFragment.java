@@ -65,6 +65,20 @@ public class MyCallingFragment extends Fragment {
         return GeneralVariables.getActiveModeLabel();
     }
 
+    private void updateDxpeditionManualUi() {
+        if (binding == null) {
+            return;
+        }
+        boolean enabled = !isExperimentalManualTxMode()
+                && !mainViewModel.getTransitIsFreeText()
+                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE;
+        binding.dxpeditionManualCheckBox.setEnabled(enabled);
+        if (!enabled && binding.dxpeditionManualCheckBox.isChecked()) {
+            binding.dxpeditionManualCheckBox.setChecked(false);
+        }
+        binding.dxpeditionManualCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
+    }
+
     private void updateAutoSessionStatus() {
         if (binding == null) {
             return;
@@ -289,6 +303,15 @@ public class MyCallingFragment extends Fragment {
             switchSignalMode(mode);
         });
 
+        binding.dxpeditionManualCheckBox.setOnCheckedChangeListener(null);
+        binding.dxpeditionManualCheckBox.setChecked(GeneralVariables.manualDxpeditionHoundMode);
+        binding.dxpeditionManualCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            GeneralVariables.manualDxpeditionHoundMode = isChecked;
+            mainViewModel.ft8TransmitSignal.refreshSessionModeByCurrentTarget();
+            updateAutoSessionStatus();
+        });
+        updateDxpeditionManualUi();
+
         // 显示UTC时间
         mainViewModel.timerSec.observe(getViewLifecycleOwner(), new Observer<Long>() {
             @Override
@@ -319,6 +342,7 @@ public class MyCallingFragment extends Fragment {
             @Override
             public void onChanged(Integer integer) {
                 updateSignalModeUI();
+                updateDxpeditionManualUi();
                 updateAutoSessionStatus();
             }
         });
@@ -548,6 +572,7 @@ public class MyCallingFragment extends Fragment {
 
         showFreeTextEdit();
         updateSignalModeUI();
+        updateDxpeditionManualUi();
         return binding.getRoot();
     }
 
@@ -563,6 +588,11 @@ public class MyCallingFragment extends Fragment {
             binding.transFreeTextTypeTextView.setVisibility(View.GONE);
             binding.functionOrderSpinner.setVisibility(View.VISIBLE);
         }
+        updateDxpeditionManualUi();
+        if (mainViewModel.ft8TransmitSignal != null) {
+            mainViewModel.ft8TransmitSignal.refreshSessionModeByCurrentTarget();
+        }
+        updateAutoSessionStatus();
     }
 
     /**

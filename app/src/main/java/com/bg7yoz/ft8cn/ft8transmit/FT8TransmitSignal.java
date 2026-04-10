@@ -114,9 +114,20 @@ public class FT8TransmitSignal {
                 && !isExperimentalManualTxMode();
     }
 
+    private boolean isManualDxpeditionHoundEnabled() {
+        return GeneralVariables.manualDxpeditionHoundMode
+                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && !transmitFreeText
+                && !isExperimentalManualTxMode();
+    }
+
     private AutoSessionType resolveBoundSessionType(TransmitCallsign transmitCallsign) {
         if (transmitCallsign == null) {
             return AutoSessionType.STANDARD;
+        }
+        if (isManualDxpeditionHoundEnabled()
+                && transmitCallsign.haveTargetCallsign()) {
+            return AutoSessionType.FT8_DXPEDITION_HOUND;
         }
         if (isDxpeditionHoundAutoEnabled()
                 && transmitCallsign.signalFormat == FT8Common.FT8_MODE
@@ -743,16 +754,39 @@ public class FT8TransmitSignal {
         if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
             return "";
         }
-        if (toCallsign.signalFormat == FT8Common.FT8_MODE
-                && toCallsign.i3 == 0
-                && toCallsign.n3 == 1) {
+        if (autoSession.isDxpeditionHound()) {
             return GeneralVariables.getStringFromResource(
-                    isDxpeditionHoundAutoEnabled()
+                    isManualDxpeditionHoundEnabled()
+                            ? R.string.dxpedition_manual_arm_status
+                            : isDxpeditionHoundAutoEnabled()
                             ? R.string.dxpedition_auto_status
                             : R.string.dxpedition_manual_status
             );
         }
         return "";
+    }
+
+    public boolean isManualDxpeditionHoundMode() {
+        return isManualDxpeditionHoundEnabled();
+    }
+
+    public void refreshSessionModeByCurrentTarget() {
+        if (toCallsign == null) {
+            autoSession.resetToCq(GeneralVariables.getSignalMode(), GeneralVariables.band);
+            syncNoReplyCount();
+            generateFun();
+            mutableFunctionOrder.postValue(functionOrder);
+            return;
+        }
+
+        autoSession.bindTarget(
+                toCallsign.callsign,
+                GeneralVariables.getSignalMode(),
+                GeneralVariables.band,
+                resolveBoundSessionType(toCallsign)
+        );
+        generateFun();
+        mutableFunctionOrder.postValue(functionOrder);
     }
 
     private int checkTargetCallMe(ArrayList<Ft8Message> messages) {
@@ -1302,21 +1336,23 @@ public class FT8TransmitSignal {
             }
             transmitSignal.postTransmittingMessage(msg);
             try {
-                Thread.sleep(GeneralVariables.pttDelay);
+                int holdWindowMs = Math.max(
+                        GeneralVariables.pttDelay,
+                        FT8Common.getLateDecodeOverrideWindowMs(GeneralVariables.getSignalMode())
+                );
+                Thread.sleep(holdWindowMs);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
 
             if (!transmitSignal.transmitFreeText) {
                 int latestOrder = transmitSignal.functionOrder;
-                if (latestOrder != transmitOrder) {
-                    transmitOrder = latestOrder;
-                    transmitSignal.updateMessageStartTimeForOrder(transmitOrder);
-                    msg = transmitSignal.buildTransmitMessage(transmitOrder);
-                    transmitSignal.rememberTransmitMessage(msg, transmitOrder);
-                    transmitSignal.replaceLatestQueuedTransmitMessage(msg);
-                    transmitSignal.postTransmittingMessage(msg);
-                }
+                transmitOrder = latestOrder;
+                transmitSignal.updateMessageStartTimeForOrder(transmitOrder);
+                msg = transmitSignal.buildTransmitMessage(transmitOrder);
+                transmitSignal.rememberTransmitMessage(msg, transmitOrder);
+                transmitSignal.replaceLatestQueuedTransmitMessage(msg);
+                transmitSignal.postTransmittingMessage(msg);
             }
 
 
