@@ -13,6 +13,9 @@ import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
+import com.bg7yoz.ft8cn.auto.AutoFlowMessageAnalyzer;
+import com.bg7yoz.ft8cn.auto.AutoSessionState;
+import com.bg7yoz.ft8cn.auto.AutoSessionType;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
@@ -63,6 +66,7 @@ public class FT8TransmitSignal {
     private int sentTargetReport = -100;
     private int receivedReport = 0;
     private int receiveTargetReport = -100;
+    private final AutoSessionState autoSession = new AutoSessionState();
     private final OnTransmitSuccess onTransmitSuccess;
     private AudioAttributes attributes = null;
     private AudioFormat myFormat = null;
@@ -95,6 +99,11 @@ public class FT8TransmitSignal {
 
         buildUtcTimer();
         utcTimer.start();
+        syncNoReplyCount();
+    }
+
+    private void syncNoReplyCount() {
+        GeneralVariables.noReplyCount = autoSession.getNoReplyCount();
     }
 
     private void buildUtcTimer() {
@@ -269,6 +278,17 @@ public class FT8TransmitSignal {
         }
 
         sequential = (toCallsign.sequential + 1) % 2;
+        autoSession.bindTarget(
+                toCallsign.callsign,
+                GeneralVariables.getSignalMode(),
+                GeneralVariables.band,
+                toCallsign.signalFormat == FT8Common.FT8_MODE
+                        && toCallsign.i3 == 0
+                        && toCallsign.n3 == 1
+                        ? AutoSessionType.FT8_DXPEDITION_HOUND
+                        : AutoSessionType.STANDARD
+        );
+        syncNoReplyCount();
         mutableSequential.postValue(sequential);
         generateFun();
         mutableFunctionOrder.postValue(this.functionOrder);
@@ -347,7 +367,8 @@ public class FT8TransmitSignal {
     }
 
     public void generateFun() {
-        GeneralVariables.noReplyCount = 0;
+        autoSession.resetNoReplyCount();
+        syncNoReplyCount();
         functionList.clear();
         for (int i = 1; i <= 6; i++) {
             if (functionOrder == 6) {
@@ -636,28 +657,6 @@ public class FT8TransmitSignal {
         }
 
 
-        for (int i = GeneralVariables.transmitMessages.size() - 1; i >= 0; i--) {
-            Ft8Message message = GeneralVariables.transmitMessages.get(i);
-            if ((GeneralVariables.checkFun3(message.extraInfo)
-                    || GeneralVariables.checkFun2(message.extraInfo))
-                    && (message.callsignFrom.equals(toCallsign.callsign)
-                    && GeneralVariables.checkIsMyCallsign(message.callsignTo))) {
-                receiveTargetReport = getReportFromExtraInfo(message.extraInfo);
-                break;
-            }
-        }
-
-        for (int i = GeneralVariables.transmitMessages.size() - 1; i >= 0; i--) {
-            Ft8Message message = GeneralVariables.transmitMessages.get(i);
-            if ((GeneralVariables.checkFun3(message.extraInfo)
-                    || GeneralVariables.checkFun2(message.extraInfo))
-                    && (message.callsignTo.equals(toCallsign.callsign)
-                    && GeneralVariables.checkIsMyCallsign(message.callsignFrom))) {
-                sentTargetReport = getReportFromExtraInfo(message.extraInfo);
-                break;
-            }
-        }
-
         messageEndTime = UtcTimer.getSystemTime();
         if (onDoTransmitted != null) {
             onTransmitSuccess.doAfterTransmit(new QSLRecord(
@@ -695,23 +694,7 @@ public class FT8TransmitSignal {
     }
 
     private boolean checkCallsignIsCallTo(String fromCall, String toCall) {
-        if (fromCall == null || toCall == null) {
-            return false;
-        }
-
-        String from = normalizeCallsignForMatch(fromCall);
-        String to = normalizeCallsignForMatch(toCall);
-
-        if (from.isEmpty() || to.isEmpty()) {
-            return false;
-        }
-
-        if (from.equals(to)) {
-            return true;
-        }
-
-        // Match by the main callsign part to support compact replies like K1ABC <-> K1ABC/P.
-        return getMainCallsign(from).equals(getMainCallsign(to));
+        return AutoFlowMessageAnalyzer.callsignMatches(fromCall, toCall);
     }
 
     private String normalizeCallsignForMatch(String callsign) {
@@ -765,11 +748,18 @@ public class FT8TransmitSignal {
             if (!ft8Message.isAutoFlowRelevant()) {
                 continue;
             }
-            if (GeneralVariables.checkIsMyCallsign(ft8Message.getAutoReplyCallsignTo())
-                    && checkCallsignIsCallTo(ft8Message.getAutoReplyCallsignFrom(), toCallsign.callsign)) {
+            if (AutoFlowMessageAnalyzer.isDirectedReplyToCurrentTarget(
+                    ft8Message,
+                    GeneralVariables.myCallsign,
+                    toCallsign.callsign)) {
                 return 0;
             }
-            if (checkCallsignIsCallTo(ft8Message.getAutoReplyCallsignFrom(), toCallsign.callsign)) {
+            if (AutoFlowMessageAnalyzer.callsignMatches(
+                    ft8Message.getAutoReplyCallsignFrom(),
+                    toCallsign.callsign)
+                    || AutoFlowMessageAnalyzer.callsignMatches(
+                    ft8Message.getDxpeditionFoxCallsign(),
+                    toCallsign.callsign)) {
                 fromCount++;
             }
         }
@@ -795,22 +785,19 @@ public class FT8TransmitSignal {
                 continue;
             }
 
-            String autoReplyTo = ft8Message.getAutoReplyCallsignTo();
-            String autoReplyFrom = ft8Message.getAutoReplyCallsignFrom();
-            String autoReplyExtra = ft8Message.getAutoReplyExtraInfo();
-            boolean isDirectReply = GeneralVariables.checkIsMyCallsign(autoReplyTo)
-                    && checkCallsignIsCallTo(autoReplyFrom, toCallsign.callsign);
+            int order = AutoFlowMessageAnalyzer.resolveIncomingOrder(
+                    ft8Message,
+                    GeneralVariables.myCallsign,
+                    toCallsign.callsign
+            );
+
+            boolean isDirectReply = order != -1;
 
             if (!isDirectReply && ft8Message.getSequence() == sequential) {
                 continue;
             }
 
             if (!isDirectReply) {
-                continue;
-            }
-
-            int order = getIncomingFunctionOrder(ft8Message);
-            if (order == -1) {
                 continue;
             }
 
@@ -829,6 +816,13 @@ public class FT8TransmitSignal {
         if (bestMessage == null) {
             return -1;
         }
+
+        autoSession.setSessionType(AutoFlowMessageAnalyzer.resolveSessionType(
+                bestMessage,
+                GeneralVariables.myCallsign,
+                toCallsign.callsign,
+                autoSession.getSessionType()
+        ));
 
         String bestExtraInfo = bestMessage.getAutoReplyExtraInfo();
         if (GeneralVariables.checkFun3(bestExtraInfo)
@@ -1020,13 +1014,15 @@ public class FT8TransmitSignal {
 
         int newOrder = checkFunctionOrdFromMessages(messages);
         if (newOrder != -1) {
-            GeneralVariables.noReplyCount = 0;
+            autoSession.resetNoReplyCount();
+            syncNoReplyCount();
         }
 
 
         updateQSlRecordList(newOrder, toCallsign);
 
         boolean resetOnTargetCallOthers = (functionOrder == 4)
+                && !autoSession.isDxpeditionHound()
                 && (GeneralVariables.getSignalMode() == FT8Common.FT8_MODE)
                 && (checkTargetCallMe(messages) > 1);
 
@@ -1036,10 +1032,10 @@ public class FT8TransmitSignal {
                 || (functionOrder == 5 && newOrder == -1)
                 || (rr73AlreadySent && newOrder <= 3)
                 || (functionOrder == 4 &&
-                (GeneralVariables.noReplyCount > GeneralVariables.noReplyLimit * 2)
+                (autoSession.getNoReplyCount() > GeneralVariables.noReplyLimit * 2)
                 && (GeneralVariables.noReplyLimit > 0))
                 || resetOnTargetCallOthers
-                || (functionOrder == 4 && (GeneralVariables.noReplyCount > 20)
+                || (functionOrder == 4 && (autoSession.getNoReplyCount() > 20)
                 && (GeneralVariables.noReplyLimit == 0))) {
 
             resetToCQ();
@@ -1071,10 +1067,11 @@ public class FT8TransmitSignal {
         }
 
         if (hasUsableMessage(messages)) {
-            GeneralVariables.noReplyCount++;
+            autoSession.increaseNoReplyCount();
+            syncNoReplyCount();
         }
 
-        if ((GeneralVariables.noReplyCount > GeneralVariables.noReplyLimit) && (GeneralVariables.noReplyLimit > 0)) {
+        if ((autoSession.getNoReplyCount() > GeneralVariables.noReplyLimit) && (GeneralVariables.noReplyLimit > 0)) {
             if (!getNewTargetCallsign(messages)) {
                 functionOrder = 6;
                 if (toCallsign != null) {
@@ -1108,15 +1105,20 @@ public class FT8TransmitSignal {
         if (msg == null || toCallsign == null) {
             return false;
         }
-        return GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo())
-                && checkCallsignIsCallTo(msg.getAutoReplyCallsignFrom(), toCallsign.callsign);
+        return AutoFlowMessageAnalyzer.isDirectedReplyToCurrentTarget(
+                msg,
+                GeneralVariables.myCallsign,
+                toCallsign.callsign
+        );
     }
 
     private boolean hasUsableMessage(ArrayList<Ft8Message> messages) {
         for (Ft8Message msg : messages) {
-            if (msg == null) continue;
-            if (!msg.isAutoFlowRelevant()) continue;
-            if (!msg.isWeakSignal) {
+            if (AutoFlowMessageAnalyzer.isCurrentSessionActivity(
+                    msg,
+                    autoSession.getTargetCallsign(),
+                    autoSession.getSignalFormat(),
+                    autoSession.getBand())) {
                 return true;
             }
         }
@@ -1136,6 +1138,13 @@ public class FT8TransmitSignal {
                     && (!GeneralVariables.checkQSLCallsign(ft8Message.getCallsignFrom())))) {
                 functionOrder = 1;
                 toCallsign.callsign = ft8Message.getCallsignFrom();
+                autoSession.bindTarget(
+                        toCallsign.callsign,
+                        GeneralVariables.getSignalMode(),
+                        GeneralVariables.band,
+                        AutoSessionType.STANDARD
+                );
+                syncNoReplyCount();
                 return true;
             }
         }
@@ -1199,6 +1208,8 @@ public class FT8TransmitSignal {
     public void resetToCQ() {
         resetTargetReport();
         lastTransmittedFunctionOrder = -1;
+        autoSession.resetToCq(GeneralVariables.getSignalMode(), GeneralVariables.band);
+        syncNoReplyCount();
         if (toCallsign == null) {
             int i3 = GenerateFT8.checkI3ByCallsign(GeneralVariables.myCallsign);
             setTransmit(new TransmitCallsign(i3, 0, "CQ",
