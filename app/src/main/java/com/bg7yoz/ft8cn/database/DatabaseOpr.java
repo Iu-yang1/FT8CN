@@ -2144,6 +2144,9 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("autoCallFollow")) {
                     GeneralVariables.autoCallFollow = (result.equals("") || result.equals("1"));
                 }
+                if (name.equalsIgnoreCase("autoDxpeditionHound")) {
+                    GeneralVariables.autoDxpeditionHound = (result.equals("") || result.equals("1"));
+                }
                 if (name.equalsIgnoreCase("pttDelay")) {
                     GeneralVariables.pttDelay = result.equals("") ? 100 : Integer.parseInt(result);
                 }

@@ -51,12 +51,25 @@
                     android:layout_height="wrap_content"
                     android:textColor="@color/bar_text_view_color"
                     android:textSize="12sp"
-                    app:layout_constraintBottom_toTopOf="@+id/timerTextView"
+                    app:layout_constraintBottom_toTopOf="@+id/autoSessionTextView"
                     app:layout_constraintEnd_toStartOf="@+id/guideline6"
                     app:layout_constraintHorizontal_bias="0.5"
                     app:layout_constraintStart_toEndOf="@+id/clearMycallListImageButton"
                     app:layout_constraintTop_toTopOf="parent"
                     tools:text="BG7YOY" />
+
+            <TextView
+                    android:id="@+id/autoSessionTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/bar_text_view_color"
+                    android:textSize="10sp"
+                    app:layout_constraintBottom_toTopOf="@+id/transmittingSequentialTextView"
+                    app:layout_constraintEnd_toStartOf="@+id/guideline6"
+                    app:layout_constraintHorizontal_bias="0.5"
+                    app:layout_constraintStart_toEndOf="@+id/clearMycallListImageButton"
+                    app:layout_constraintTop_toBottomOf="@+id/toCallsignTextView"
+                    tools:text="DXpedition Hound auto" />
 
             <TextView
                     android:id="@+id/transmittingSequentialTextView"
@@ -67,7 +80,7 @@
                     app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintEnd_toStartOf="@+id/guideline6"
                     app:layout_constraintStart_toEndOf="@+id/clearMycallListImageButton"
-                    app:layout_constraintTop_toBottomOf="@+id/toCallsignTextView"
+                    app:layout_constraintTop_toBottomOf="@+id/autoSessionTextView"
                     tools:text="发射时序:0"
                     tools:visibility="visible" />
 

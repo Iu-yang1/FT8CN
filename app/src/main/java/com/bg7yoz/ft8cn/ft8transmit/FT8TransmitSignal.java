@@ -16,6 +16,7 @@ import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.auto.AutoFlowMessageAnalyzer;
 import com.bg7yoz.ft8cn.auto.AutoSessionState;
 import com.bg7yoz.ft8cn.auto.AutoSessionType;
+import com.bg7yoz.ft8cn.auto.AutoSessionUiPolicy;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
@@ -104,6 +105,26 @@ public class FT8TransmitSignal {
 
     private void syncNoReplyCount() {
         GeneralVariables.noReplyCount = autoSession.getNoReplyCount();
+    }
+
+    private boolean isDxpeditionHoundAutoEnabled() {
+        return GeneralVariables.autoDxpeditionHound
+                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && !transmitFreeText
+                && !isExperimentalManualTxMode();
+    }
+
+    private AutoSessionType resolveBoundSessionType(TransmitCallsign transmitCallsign) {
+        if (transmitCallsign == null) {
+            return AutoSessionType.STANDARD;
+        }
+        if (isDxpeditionHoundAutoEnabled()
+                && transmitCallsign.signalFormat == FT8Common.FT8_MODE
+                && transmitCallsign.i3 == 0
+                && transmitCallsign.n3 == 1) {
+            return AutoSessionType.FT8_DXPEDITION_HOUND;
+        }
+        return AutoSessionType.STANDARD;
     }
 
     private void buildUtcTimer() {
@@ -282,11 +303,7 @@ public class FT8TransmitSignal {
                 toCallsign.callsign,
                 GeneralVariables.getSignalMode(),
                 GeneralVariables.band,
-                toCallsign.signalFormat == FT8Common.FT8_MODE
-                        && toCallsign.i3 == 0
-                        && toCallsign.n3 == 1
-                        ? AutoSessionType.FT8_DXPEDITION_HOUND
-                        : AutoSessionType.STANDARD
+                resolveBoundSessionType(toCallsign)
         );
         syncNoReplyCount();
         mutableSequential.postValue(sequential);
@@ -361,13 +378,20 @@ public class FT8TransmitSignal {
         autoSession.resetNoReplyCount();
         syncNoReplyCount();
         functionList.clear();
-        for (int i = 1; i <= 6; i++) {
-            if (functionOrder == 6) {
-                functionList.add(new FunctionOfTransmit(6, getFunctionCommand(6), false));
-                break;
-            } else {
-                functionList.add(new FunctionOfTransmit(i, getFunctionCommand(i), false));
-            }
+        int sanitizedOrder = AutoSessionUiPolicy.sanitizeFunctionOrder(
+                autoSession.getSessionType(),
+                functionOrder,
+                functionOrder
+        );
+        if (sanitizedOrder != functionOrder) {
+            functionOrder = sanitizedOrder;
+        }
+        int[] availableOrders = AutoSessionUiPolicy.getAvailableFunctionOrders(
+                autoSession.getSessionType(),
+                functionOrder
+        );
+        for (int order : availableOrders) {
+            functionList.add(new FunctionOfTransmit(order, getFunctionCommand(order), false));
         }
         mutableFunctions.postValue(functionList);
         setCurrentFunctionOrder(functionOrder);
@@ -671,6 +695,11 @@ public class FT8TransmitSignal {
     }
 
     public void setCurrentFunctionOrder(int order) {
+        order = AutoSessionUiPolicy.sanitizeFunctionOrder(
+                autoSession.getSessionType(),
+                functionOrder,
+                order
+        );
         functionOrder = order;
         for (int i = 0; i < functionList.size(); i++) {
             functionList.get(i).setCurrentOrder(order);
@@ -686,6 +715,38 @@ public class FT8TransmitSignal {
 
     private boolean checkCallsignIsCallTo(String fromCall, String toCall) {
         return AutoFlowMessageAnalyzer.callsignMatches(fromCall, toCall);
+    }
+
+    public int getFunctionSelectionIndex(int order) {
+        for (int i = 0; i < functionList.size(); i++) {
+            if (functionList.get(i).getFunctionOrder() == order) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    public int getFunctionOrderAt(int index) {
+        if (index < 0 || index >= functionList.size()) {
+            return functionOrder;
+        }
+        return functionList.get(index).getFunctionOrder();
+    }
+
+    public String getAutoSessionStatusText() {
+        if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
+            return "";
+        }
+        if (toCallsign.signalFormat == FT8Common.FT8_MODE
+                && toCallsign.i3 == 0
+                && toCallsign.n3 == 1) {
+            return GeneralVariables.getStringFromResource(
+                    isDxpeditionHoundAutoEnabled()
+                            ? R.string.dxpedition_auto_status
+                            : R.string.dxpedition_manual_status
+            );
+        }
+        return "";
     }
 
     private int checkTargetCallMe(ArrayList<Ft8Message> messages) {
@@ -705,7 +766,8 @@ public class FT8TransmitSignal {
             if (AutoFlowMessageAnalyzer.isDirectedReplyToCurrentTarget(
                     ft8Message,
                     GeneralVariables.myCallsign,
-                    toCallsign.callsign)) {
+                    toCallsign.callsign,
+                    isDxpeditionHoundAutoEnabled())) {
                 return 0;
             }
             if (AutoFlowMessageAnalyzer.callsignMatches(
@@ -742,7 +804,8 @@ public class FT8TransmitSignal {
             int order = AutoFlowMessageAnalyzer.resolveIncomingOrder(
                     ft8Message,
                     GeneralVariables.myCallsign,
-                    toCallsign.callsign
+                    toCallsign.callsign,
+                    isDxpeditionHoundAutoEnabled()
             );
 
             boolean isDirectReply = order != -1;
@@ -775,7 +838,8 @@ public class FT8TransmitSignal {
                 bestMessage,
                 GeneralVariables.myCallsign,
                 toCallsign.callsign,
-                autoSession.getSessionType()
+                autoSession.getSessionType(),
+                isDxpeditionHoundAutoEnabled()
         ));
 
         String bestExtraInfo = bestMessage.getAutoReplyExtraInfo();
@@ -1062,7 +1126,8 @@ public class FT8TransmitSignal {
         return AutoFlowMessageAnalyzer.isDirectedReplyToCurrentTarget(
                 msg,
                 GeneralVariables.myCallsign,
-                toCallsign.callsign
+                toCallsign.callsign,
+                isDxpeditionHoundAutoEnabled()
         );
     }
 
@@ -1072,7 +1137,8 @@ public class FT8TransmitSignal {
                     msg,
                     autoSession.getTargetCallsign(),
                     autoSession.getSignalFormat(),
-                    autoSession.getBand())) {
+                    autoSession.getBand(),
+                    isDxpeditionHoundAutoEnabled())) {
                 return true;
             }
         }

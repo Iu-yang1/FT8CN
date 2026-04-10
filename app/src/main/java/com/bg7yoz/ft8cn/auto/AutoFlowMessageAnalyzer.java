@@ -35,11 +35,21 @@ public final class AutoFlowMessageAnalyzer {
     }
 
     public static int resolveIncomingOrder(Ft8Message message, String myCallsign, String targetCallsign) {
+        return resolveIncomingOrder(message, myCallsign, targetCallsign, true);
+    }
+
+    public static int resolveIncomingOrder(Ft8Message message,
+                                           String myCallsign,
+                                           String targetCallsign,
+                                           boolean allowDxpeditionHound) {
         if (message == null || !message.isAutoFlowRelevant()) {
             return -1;
         }
 
         if (message.isDxpeditionCompoundMessage()) {
+            if (!allowDxpeditionHound) {
+                return -1;
+            }
             if (message.signalFormat != FT8Common.FT8_MODE) {
                 return -1;
             }
@@ -76,7 +86,16 @@ public final class AutoFlowMessageAnalyzer {
                                                      String myCallsign,
                                                      String targetCallsign,
                                                      AutoSessionType fallback) {
+        return resolveSessionType(message, myCallsign, targetCallsign, fallback, true);
+    }
+
+    public static AutoSessionType resolveSessionType(Ft8Message message,
+                                                     String myCallsign,
+                                                     String targetCallsign,
+                                                     AutoSessionType fallback,
+                                                     boolean allowDxpeditionHound) {
         if (message != null
+                && allowDxpeditionHound
                 && message.isDxpeditionCompoundMessage()
                 && message.signalFormat == FT8Common.FT8_MODE
                 && callsignMatches(message.getDxpeditionFoxCallsign(), targetCallsign)
@@ -90,13 +109,28 @@ public final class AutoFlowMessageAnalyzer {
     public static boolean isDirectedReplyToCurrentTarget(Ft8Message message,
                                                          String myCallsign,
                                                          String targetCallsign) {
-        return resolveIncomingOrder(message, myCallsign, targetCallsign) != -1;
+        return isDirectedReplyToCurrentTarget(message, myCallsign, targetCallsign, true);
+    }
+
+    public static boolean isDirectedReplyToCurrentTarget(Ft8Message message,
+                                                         String myCallsign,
+                                                         String targetCallsign,
+                                                         boolean allowDxpeditionHound) {
+        return resolveIncomingOrder(message, myCallsign, targetCallsign, allowDxpeditionHound) != -1;
     }
 
     public static boolean isCurrentSessionActivity(Ft8Message message,
                                                    String targetCallsign,
                                                    int signalFormat,
                                                    long band) {
+        return isCurrentSessionActivity(message, targetCallsign, signalFormat, band, true);
+    }
+
+    public static boolean isCurrentSessionActivity(Ft8Message message,
+                                                   String targetCallsign,
+                                                   int signalFormat,
+                                                   long band,
+                                                   boolean allowDxpeditionHound) {
         if (message == null || !message.isAutoFlowRelevant() || message.isWeakSignal) {
             return false;
         }
@@ -114,6 +148,9 @@ public final class AutoFlowMessageAnalyzer {
         }
 
         if (message.isDxpeditionCompoundMessage()) {
+            if (!allowDxpeditionHound) {
+                return false;
+            }
             return callsignMatches(message.getDxpeditionFoxCallsign(), targetCallsign);
         }
 

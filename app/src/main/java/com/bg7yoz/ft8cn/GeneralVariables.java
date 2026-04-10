@@ -301,6 +301,7 @@ public class GeneralVariables {
 
     public static boolean autoFollowCQ = true;
     public static boolean autoCallFollow = true;
+    public static boolean autoDxpeditionHound = true;
     public static ArrayList<String> QSL_Callsign_list = new ArrayList<>();
     public static ArrayList<String> QSL_Callsign_list_other_band = new ArrayList<>();
 

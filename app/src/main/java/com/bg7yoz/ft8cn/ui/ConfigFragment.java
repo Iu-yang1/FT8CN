@@ -585,6 +585,22 @@ public class ConfigFragment extends Fragment {
             }
         });
 
+        binding.dxpeditionAutoSwitch.setOnCheckedChangeListener(null);
+        binding.dxpeditionAutoSwitch.setChecked(GeneralVariables.autoDxpeditionHound);
+        setDxpeditionAutoSwitchText();
+        binding.dxpeditionAutoSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
+                GeneralVariables.autoDxpeditionHound = binding.dxpeditionAutoSwitch.isChecked();
+                mainViewModel.databaseOpr.writeConfig(
+                        "autoDxpeditionHound",
+                        GeneralVariables.autoDxpeditionHound ? "1" : "0",
+                        null
+                );
+                setDxpeditionAutoSwitchText();
+            }
+        });
+
         //设置保存SWL选项
         binding.saveSWLSwitch.setOnCheckedChangeListener(null);
         binding.saveSWLSwitch.setChecked(GeneralVariables.saveSWLMessage);
@@ -931,6 +947,15 @@ public class ConfigFragment extends Fragment {
             binding.autoCallfollowSwitch.setText(getString(R.string.do_not_call_the_following_callsign));
         }
     }
+
+    private void setDxpeditionAutoSwitchText() {
+        if (binding.dxpeditionAutoSwitch.isChecked()) {
+            binding.dxpeditionAutoSwitch.setText(getString(R.string.dxpedition_auto_hound_on));
+        } else {
+            binding.dxpeditionAutoSwitch.setText(getString(R.string.dxpedition_auto_hound_off));
+        }
+    }
+
     private void setSaveSwl() {
         if (binding.saveSWLSwitch.isChecked()) {
             binding.saveSWLSwitch.setText(getString(R.string.config_save_swl));
@@ -1588,6 +1613,14 @@ public class ConfigFragment extends Fragment {
                     new HelpDialog(requireContext(), requireActivity()
                             , GeneralVariables.getStringFromResource(R.string.auto_follow_help)
                             , true).show();
+            }
+        });
+        binding.dxpeditionAutoHelpButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity()
+                        , GeneralVariables.getStringFromResource(R.string.dxpedition_auto_help)
+                        , true).show();
             }
         });
         //连接模式

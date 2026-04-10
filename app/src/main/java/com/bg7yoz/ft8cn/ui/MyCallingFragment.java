@@ -65,6 +65,17 @@ public class MyCallingFragment extends Fragment {
         return GeneralVariables.getActiveModeLabel();
     }
 
+    private void updateAutoSessionStatus() {
+        if (binding == null) {
+            return;
+        }
+        if (isExperimentalManualTxMode()) {
+            binding.autoSessionTextView.setText("");
+            return;
+        }
+        binding.autoSessionTextView.setText(mainViewModel.ft8TransmitSignal.getAutoSessionStatusText());
+    }
+
     static {
         System.loadLibrary("ft8cn");
     }
@@ -308,6 +319,7 @@ public class MyCallingFragment extends Fragment {
             @Override
             public void onChanged(Integer integer) {
                 updateSignalModeUI();
+                updateAutoSessionStatus();
             }
         });
 
@@ -357,6 +369,7 @@ public class MyCallingFragment extends Fragment {
                     @Override
                     public void onChanged(ArrayList<FunctionOfTransmit> functionOfTransmits) {
                         functionOrderSpinnerAdapter.notifyDataSetChanged();
+                        updateAutoSessionStatus();
                     }
                 });
 
@@ -364,11 +377,10 @@ public class MyCallingFragment extends Fragment {
         mainViewModel.ft8TransmitSignal.mutableFunctionOrder.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @Override
             public void onChanged(Integer integer) {
-                if (mainViewModel.ft8TransmitSignal.functionList.size() < 6) {
-                    binding.functionOrderSpinner.setSelection(0);
-                } else {
-                    binding.functionOrderSpinner.setSelection(integer - 1);
-                }
+                binding.functionOrderSpinner.setSelection(
+                        mainViewModel.ft8TransmitSignal.getFunctionSelectionIndex(integer)
+                );
+                updateAutoSessionStatus();
             }
         });
 
@@ -377,7 +389,9 @@ public class MyCallingFragment extends Fragment {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
                 if (mainViewModel.ft8TransmitSignal.functionList.size() > 1) {
-                    mainViewModel.ft8TransmitSignal.setCurrentFunctionOrder(i + 1);
+                    mainViewModel.ft8TransmitSignal.setCurrentFunctionOrder(
+                            mainViewModel.ft8TransmitSignal.getFunctionOrderAt(i)
+                    );
                 }
             }
 
@@ -394,6 +408,7 @@ public class MyCallingFragment extends Fragment {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
                             "[" + getCurrentModeLabel() + "]"));
+                    updateAutoSessionStatus();
                     return;
                 }
                 if (GeneralVariables.toModifier != null) {
@@ -407,6 +422,7 @@ public class MyCallingFragment extends Fragment {
                             "[" + getCurrentModeLabel() + "] "
                                     + transmitCallsign.callsign));
                 }
+                updateAutoSessionStatus();
             }
         });
 

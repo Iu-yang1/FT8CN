@@ -1,0 +1,13 @@
+DXpedition Hound auto mode
+
+When enabled:
+- FT8 DXpedition compound messages can drive the automatic QSO program.
+- After Fox sends your signal report, the app advances to the Hound R+rpt message.
+- After Fox sends RR73, the app closes the QSO and returns to normal auto flow.
+
+When disabled:
+- DXpedition messages are still decoded and shown in the UI.
+- Free text mode and experimental modem modes are unchanged.
+- You can still transmit manually, but the automatic program will not sequence DXpedition replies.
+
+This switch only affects FT8 DXpedition Hound behavior. Standard FT8 and FT4 automatic QSOs are unchanged.

@@ -9,6 +9,8 @@ import com.bg7yoz.ft8cn.Ft8Message;
 
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class AutoFlowMessageAnalyzerTest {
     @Test
     public void resolveIncomingOrderForStandardReport() {
@@ -123,6 +125,59 @@ public class AutoFlowMessageAnalyzerTest {
                 "KH1DX",
                 FT8Common.FT8_MODE,
                 20
+        ));
+    }
+
+    @Test
+    public void dxpeditionAutoCanBeDisabled() {
+        Ft8Message message = new Ft8Message();
+        message.isValid = true;
+        message.signalFormat = FT8Common.FT8_MODE;
+        message.i3 = 0;
+        message.n3 = 1;
+        message.callsignTo = "BG7YOZ";
+        message.dx_call_to2 = "W9XYZ";
+        message.callsignFrom = "KH1DX";
+        message.report = -17;
+        message.band = 20;
+
+        assertEquals(-1, AutoFlowMessageAnalyzer.resolveIncomingOrder(
+                message,
+                "BG7YOZ",
+                "KH1DX",
+                false
+        ));
+        assertFalse(AutoFlowMessageAnalyzer.isCurrentSessionActivity(
+                message,
+                "KH1DX",
+                FT8Common.FT8_MODE,
+                20,
+                false
+        ));
+        assertEquals(AutoSessionType.STANDARD, AutoFlowMessageAnalyzer.resolveSessionType(
+                message,
+                "BG7YOZ",
+                "KH1DX",
+                AutoSessionType.STANDARD,
+                false
+        ));
+    }
+
+    @Test
+    public void dxpeditionUiPolicyRestrictsOrders() {
+        assertTrue(Arrays.equals(
+                new int[]{1, 3},
+                AutoSessionUiPolicy.getAvailableFunctionOrders(AutoSessionType.FT8_DXPEDITION_HOUND, 3)
+        ));
+        assertEquals(1, AutoSessionUiPolicy.sanitizeFunctionOrder(
+                AutoSessionType.FT8_DXPEDITION_HOUND,
+                3,
+                2
+        ));
+        assertEquals(6, AutoSessionUiPolicy.sanitizeFunctionOrder(
+                AutoSessionType.STANDARD,
+                6,
+                3
         ));
     }
 }

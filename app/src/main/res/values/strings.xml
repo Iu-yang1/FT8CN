@@ -147,6 +147,10 @@
     <string name="not_concerned_about_CQ">No track CQ</string>
     <string name="automatic_call_following">Auto call tracked</string>
     <string name="do_not_call_the_following_callsign">No call tracked</string>
+    <string name="dxpedition_auto_hound_on">DXpedition Hound auto</string>
+    <string name="dxpedition_auto_hound_off">DXpedition Hound manual</string>
+    <string name="dxpedition_auto_status">DXpedition Hound auto</string>
+    <string name="dxpedition_manual_status">DXpedition Hound manual</string>
 
     <!--   解码栏-->
     <string name="message_count_count">Messages(%d/%d)</string>
@@ -468,6 +472,7 @@
     <string name="launch_supervision_help">launch_supervision_en.txt</string>
     <string name="no_response_help">no_response_help_en.txt</string>
     <string name="auto_follow_help">auto_follow_help_en.txt</string>
+    <string name="dxpedition_auto_help">dxpedition_auto_help_en.txt</string>
     <string name="connectMode_help">connectMode_en.txt</string>
     <string name="excludeCallsign_help">excludeCallsign_en.txt</string>
     <string name="swlMode_help">swlMode_en.txt</string>
