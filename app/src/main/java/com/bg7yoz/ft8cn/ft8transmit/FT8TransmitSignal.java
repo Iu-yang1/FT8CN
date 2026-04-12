@@ -61,7 +61,9 @@ public class FT8TransmitSignal {
     //防止立即发射时序竞争：记录上次发射尝试的周期索引，避免同一周期重复触发
     private long lastTransmitAttemptSequence = -1;
     // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
+    // 避免重复点击导致实验模式单次发射被触发两次。
     private long lastManualTransmitRequestMs = 0L;
+    private volatile long lastDecodeMessageUpdateMs = 0L;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
     public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();
     private long messageStartTime = 0;
@@ -539,6 +541,7 @@ public class FT8TransmitSignal {
             if (reserveBeforeQueue) {
                 // For manual experimental TX we reserve the state before queueing
                 // to prevent duplicate click events from dispatching two jobs.
+                // 实验手动发射在入队前先占位，避免重复点击并发入队。
                 isTransmitting = true;
                 mutableIsTransmitting.postValue(true);
             }
@@ -1111,6 +1114,7 @@ public class FT8TransmitSignal {
 
         if (isExperimentalManualTxMode() && activated) {
             // Experimental chain uses one-shot manual TX: stop right after each frame.
+            // 实验链路是一帧一发，发完立即停止。
             setActivated(false);
         }
 
@@ -1663,6 +1667,7 @@ public class FT8TransmitSignal {
             return;
         }
         if (msgList != null && msgList.size() > 0) {
+            lastDecodeMessageUpdateMs = UtcTimer.getSystemTime();
             updateFoxCandidatesFromMessages(msgList);
         }
         if (msgList == null || msgList.size() == 0) {
@@ -1824,6 +1829,7 @@ public class FT8TransmitSignal {
             if (!ft8Message.isAutoFlowRelevant()) continue;
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;
             // Only enforce band match when decoded message carries a valid RF band.
+            // 仅在解码消息带有有效频段时才做频段一致性约束。
             if (ft8Message.band > 0 && ft8Message.band != GeneralVariables.band) continue;
             if (!ft8Message.checkIsCQ()) continue;
 
@@ -1956,13 +1962,33 @@ public class FT8TransmitSignal {
     private long calculateLateDecodeHoldMs() {
         int mode = GeneralVariables.getSignalMode();
         int slotMs = FT8Common.getSlotTimeMillisecond(mode);
-        int latestSafeStartOffsetMs = Math.max(
-                GeneralVariables.pttDelay,
-                FT8Common.getLateDecodeOverrideWindowMs(mode)
-        );
         long nowMs = UtcTimer.getSystemTime();
         long elapsedInSlotMs = nowMs % slotMs;
-        long holdMs = latestSafeStartOffsetMs - elapsedInSlotMs;
+        int baseStartOffsetMs = Math.max(
+                GeneralVariables.pttDelay,
+                FT8Common.getPreferredTxLeadInMs(mode)
+        );
+
+        int targetStartOffsetMs = Math.max(
+                0,
+                baseStartOffsetMs - FT8Common.getTxPipelineCompensationMs(mode)
+        );
+
+        // Late-decode override is only enabled for a short time after fresh decode updates.
+        // 只有在“刚收到新解码”的短窗口里，才允许晚到解码覆盖发射内容。
+        if (lastDecodeMessageUpdateMs > 0L) {
+            long sinceDecodeMs = nowMs - lastDecodeMessageUpdateMs;
+            if (sinceDecodeMs >= 0
+                    && sinceDecodeMs <= FT8Common.getLateDecodeRecentWindowMs(mode)) {
+                int overrideOffsetMs = Math.min(
+                        FT8Common.getLateDecodeOverrideWindowMs(mode),
+                        FT8Common.getLateDecodeHoldCapMs(mode)
+                );
+                targetStartOffsetMs = Math.max(targetStartOffsetMs, overrideOffsetMs);
+            }
+        }
+
+        long holdMs = targetStartOffsetMs - elapsedInSlotMs;
         return Math.max(0L, holdMs);
     }
 
