@@ -386,6 +386,14 @@ public class MyCallingFragment extends Fragment {
                 .show();
     }
 
+    private void showTransmitTypeGuideDialog() {
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.transmit_type_examples_title)
+                .setMessage(getString(R.string.transmit_type_examples_text))
+                .setPositiveButton(R.string.ok_confirmed, null)
+                .show();
+    }
+
     private void updateAutoSessionStatus() {
         if (binding == null) {
             return;
@@ -884,6 +892,11 @@ public class MyCallingFragment extends Fragment {
                 mainViewModel.ft8TransmitSignal.setFreeText(editable.toString().toUpperCase());
                 updateFreeTextTypeHint();
             }
+        });
+        binding.transFreeTextTypeTextView.setOnClickListener(view -> showTransmitTypeGuideDialog());
+        binding.transFreeTextTypeTextView.setOnLongClickListener(view -> {
+            showTransmitTypeGuideDialog();
+            return true;
         });
 
         binding.resetToCQImageView.setLongClickable(true);

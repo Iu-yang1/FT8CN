@@ -437,7 +437,17 @@
     <string name="tracker_new_zone_found">New zone found : %s</string>
     <string name="transmit_freeText">Please enter free text</string>
     <string name="transmit_type_hint">Will transmit as: %1$s</string>
-    <string name="transmit_type_hint_empty">Enter text to preview the packed type</string>
+    <string name="transmit_type_hint_empty">Enter text to preview packed type (0.0/0.1/0.3/0.4/0.5/1/2/3/4/5)</string>
+    <string name="transmit_type_examples_title">FT8 packed message examples</string>
+    <string name="transmit_type_examples_text">Supported parser outputs:
+0.0 Free text: HELLO WORLD
+0.1 DXpedition: BG7UZR RR73; BG7QXX &lt;BG5JSU&gt; -01
+0.3/0.4 Field Day: BG5JSU BG7YOZ 1A EMA / BG5JSU BG7YOZ R 17A EMA
+0.5 Telemetry (18 hex): 0123456789ABCDEF12
+1/2 Standard: CQ BG7YOZ PM01 / CQ 123 BG7YOZ PM01
+3 RTTY RU: TU; BG5JSU BG7YOZ 579 MA
+4 Nonstandard+hash: &lt;BG5JSU&gt; PJ4/K1ABC RR73
+5 EU VHF: BG5JSU BG7YOZ 590123 PM01AA</string>
     <string name="trans_free_text_mode">Free text mode</string>
     <string name="trans_standard_messge_mode">Standard Message Mode</string>
     <string name="launch_supervision_ignore">Ignore</string>
