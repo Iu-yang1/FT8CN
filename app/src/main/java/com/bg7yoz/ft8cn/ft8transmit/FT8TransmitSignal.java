@@ -37,16 +37,16 @@ import java.util.concurrent.RejectedExecutionException;
 public class FT8TransmitSignal {
     private static final String TAG = "FT8TransmitSignal";
 
-    private boolean transmitFreeText = false;
-    private String freeText = "FREE TEXT";
-    private String pendingDxpeditionMacroTemplate = null;
+    private volatile boolean transmitFreeText = false;
+    private volatile String freeText = "FREE TEXT";
+    private volatile String pendingDxpeditionMacroTemplate = null;
     private boolean deactivateAfterManualDxpeditionMacro = false;
 
     private final DatabaseOpr databaseOpr;
-    private TransmitCallsign toCallsign;
+    private volatile TransmitCallsign toCallsign;
     public MutableLiveData<TransmitCallsign> mutableToCallsign = new MutableLiveData<>();
 
-    private int functionOrder = 6;
+    private volatile int functionOrder = 6;
     public MutableLiveData<Integer> mutableFunctionOrder = new MutableLiveData<>();
     private boolean activated = false;
     public MutableLiveData<Boolean> mutableIsActivated = new MutableLiveData<>();
@@ -1727,6 +1727,19 @@ public class FT8TransmitSignal {
         return GeneralVariables.isExperimentalCodecEnabled();
     }
 
+    private long calculateLateDecodeHoldMs() {
+        int mode = GeneralVariables.getSignalMode();
+        int slotMs = FT8Common.getSlotTimeMillisecond(mode);
+        int latestSafeStartOffsetMs = Math.max(
+                GeneralVariables.pttDelay,
+                FT8Common.getLateDecodeOverrideWindowMs(mode)
+        );
+        long nowMs = UtcTimer.getSystemTime();
+        long elapsedInSlotMs = nowMs % slotMs;
+        long holdMs = latestSafeStartOffsetMs - elapsedInSlotMs;
+        return Math.max(0L, holdMs);
+    }
+
     private static class DoTransmitRunnable implements Runnable {
         FT8TransmitSignal transmitSignal;
 
@@ -1744,14 +1757,13 @@ public class FT8TransmitSignal {
             if (!transmitSignal.isExperimentalManualTxMode()) {
                 transmitSignal.updateTransmittingState(true);
             }
-            try {
-                int holdWindowMs = Math.max(
-                        GeneralVariables.pttDelay,
-                        FT8Common.getLateDecodeOverrideWindowMs(GeneralVariables.getSignalMode())
-                );
-                Thread.sleep(holdWindowMs);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+            long holdWindowMs = transmitSignal.calculateLateDecodeHoldMs();
+            if (holdWindowMs > 0L) {
+                try {
+                    Thread.sleep(holdWindowMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
 
             int transmitOrder = transmitSignal.functionOrder;
