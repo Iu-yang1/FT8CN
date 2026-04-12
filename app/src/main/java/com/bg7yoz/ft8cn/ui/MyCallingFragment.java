@@ -214,6 +214,14 @@ public class MyCallingFragment extends Fragment {
                 .show();
     }
 
+    private void showDxpeditionGuideDialog() {
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_guide_title)
+                .setMessage(getString(R.string.dxpedition_guide_text))
+                .setPositiveButton(R.string.ok_confirmed, null)
+                .show();
+    }
+
     private void updateAutoSessionStatus() {
         if (binding == null) {
             return;
@@ -456,6 +464,15 @@ public class MyCallingFragment extends Fragment {
                 return;
             }
             applyManualDxpeditionMode(false, isChecked, true);
+        });
+        binding.dxpeditionHelpButton.setOnClickListener(view -> showDxpeditionGuideDialog());
+        binding.dxpeditionManualCheckBox.setOnLongClickListener(view -> {
+            showDxpeditionGuideDialog();
+            return true;
+        });
+        binding.dxpeditionFoxCheckBox.setOnLongClickListener(view -> {
+            showDxpeditionGuideDialog();
+            return true;
         });
         updateDxpeditionManualUi();
 
