@@ -24,7 +24,11 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.AnimationUtils;
 import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.Spinner;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
@@ -129,6 +133,13 @@ public class MyCallingFragment extends Fragment {
             return;
         }
         boolean enabled = canUseDxpeditionMacroUi();
+        if (mainViewModel != null
+                && mainViewModel.ft8TransmitSignal != null
+                && mainViewModel.ft8TransmitSignal.isManualDxpeditionFoxMode()) {
+            binding.dxpeditionMacroButton.setText(R.string.dxpedition_compound_button);
+        } else {
+            binding.dxpeditionMacroButton.setText(R.string.dxpedition_macro_button);
+        }
         binding.dxpeditionMacroButton.setVisibility(enabled ? View.VISIBLE : View.GONE);
         binding.dxpeditionMacroButton.setEnabled(enabled);
         binding.dxpeditionMacroButton.setAlpha(enabled ? 1.0f : 0.45f);
@@ -147,6 +158,10 @@ public class MyCallingFragment extends Fragment {
         if (!canUseDxpeditionMacroUi()) {
             return;
         }
+        if (mainViewModel.ft8TransmitSignal.isManualDxpeditionFoxMode()) {
+            showDxpeditionFoxCompoundPicker();
+            return;
+        }
         String[] items = new String[DxpeditionMacroSupport.SLOT_COUNT];
         for (int i = 0; i < items.length; i++) {
             items[i] = getDxpeditionMacroPreview(i);
@@ -157,6 +172,155 @@ public class MyCallingFragment extends Fragment {
                     String template = DxpeditionMacroSupport.getTemplateForSlot(which);
                     mainViewModel.ft8TransmitSignal.sendManualDxpeditionMacro(template);
                     updateAutoSessionStatus();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private int parseCompoundReport(String input, int fallback) {
+        if (input == null) {
+            return fallback;
+        }
+        String text = input.trim();
+        if (text.length() == 0) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(text);
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private void showDxpeditionFoxCompoundPicker() {
+        int suggestedReport = mainViewModel.ft8TransmitSignal.getSuggestedDxpeditionCompoundReport();
+        String preview = mainViewModel.ft8TransmitSignal.previewManualDxpeditionCompoundMessage(
+                true, "", "", suggestedReport);
+        String autoItem = preview.length() > 0
+                ? getString(R.string.dxpedition_compound_auto_item_preview, preview)
+                : getString(R.string.dxpedition_compound_auto_item);
+
+        String[] items = new String[]{
+                autoItem,
+                getString(R.string.dxpedition_compound_manual_item)
+        };
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_compound_picker_title)
+                .setItems(items, (dialogInterface, which) -> {
+                    if (which == 0) {
+                        if (mainViewModel.ft8TransmitSignal.sendManualDxpeditionCompoundMessage(
+                                true, "", "", suggestedReport)) {
+                            updateAutoSessionStatus();
+                        }
+                        return;
+                    }
+                    showDxpeditionFoxCompoundManualDialog(suggestedReport);
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void showDxpeditionFoxCompoundManualDialog(int suggestedReport) {
+        ArrayList<String> candidates = mainViewModel.ft8TransmitSignal.getDxpeditionFoxCandidateCallsigns();
+        if (candidates.size() < 2) {
+            ToastMessage.show(getString(R.string.dxpedition_compound_need_candidates));
+            return;
+        }
+
+        LinearLayout root = new LinearLayout(requireContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        int padding = (int) (16 * requireContext().getResources().getDisplayMetrics().density);
+        root.setPadding(padding, padding, padding, 0);
+
+        TextView hint = new TextView(requireContext());
+        hint.setText(R.string.dxpedition_compound_manual_hint);
+        root.addView(hint);
+
+        Spinner call1Spinner = new Spinner(requireContext());
+        Spinner call2Spinner = new Spinner(requireContext());
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                requireContext(),
+                android.R.layout.simple_spinner_item,
+                candidates
+        );
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        call1Spinner.setAdapter(adapter);
+        call2Spinner.setAdapter(adapter);
+        call2Spinner.setSelection(Math.min(1, candidates.size() - 1));
+        root.addView(call1Spinner);
+        root.addView(call2Spinner);
+
+        EditText reportInput = new EditText(requireContext());
+        reportInput.setSingleLine(true);
+        reportInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4)});
+        reportInput.setHint(R.string.dxpedition_compound_report_hint);
+        reportInput.setText(String.format("%+03d", suggestedReport));
+        root.addView(reportInput);
+
+        TextView previewView = new TextView(requireContext());
+        root.addView(previewView);
+
+        Runnable refreshPreview = () -> {
+            String call1 = call1Spinner.getSelectedItem() == null ? "" : call1Spinner.getSelectedItem().toString();
+            String call2 = call2Spinner.getSelectedItem() == null ? "" : call2Spinner.getSelectedItem().toString();
+            int report = parseCompoundReport(reportInput.getText().toString(), suggestedReport);
+            String preview = mainViewModel.ft8TransmitSignal.previewManualDxpeditionCompoundMessage(
+                    false, call1, call2, report);
+            if (preview.length() == 0) {
+                previewView.setText(R.string.dxpedition_compound_preview_invalid);
+            } else {
+                previewView.setText(preview);
+            }
+        };
+
+        call1Spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        call2Spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        reportInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
+        refreshPreview.run();
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_compound_manual_title)
+                .setView(root)
+                .setPositiveButton(R.string.send, (dialogInterface, i) -> {
+                    String call1 = call1Spinner.getSelectedItem() == null ? "" : call1Spinner.getSelectedItem().toString();
+                    String call2 = call2Spinner.getSelectedItem() == null ? "" : call2Spinner.getSelectedItem().toString();
+                    int report = parseCompoundReport(reportInput.getText().toString(), suggestedReport);
+                    if (mainViewModel.ft8TransmitSignal.sendManualDxpeditionCompoundMessage(
+                            false, call1, call2, report)) {
+                        updateAutoSessionStatus();
+                    }
                 })
                 .setNegativeButton(R.string.cancel, null)
                 .show();
@@ -478,6 +642,12 @@ public class MyCallingFragment extends Fragment {
 
         binding.dxpeditionMacroButton.setOnClickListener(view -> showDxpeditionMacroPicker());
         binding.dxpeditionMacroButton.setOnLongClickListener(view -> {
+            if (mainViewModel.ft8TransmitSignal.isManualDxpeditionFoxMode()) {
+                showDxpeditionFoxCompoundManualDialog(
+                        mainViewModel.ft8TransmitSignal.getSuggestedDxpeditionCompoundReport()
+                );
+                return true;
+            }
             showDxpeditionMacroEditPicker();
             return true;
         });
