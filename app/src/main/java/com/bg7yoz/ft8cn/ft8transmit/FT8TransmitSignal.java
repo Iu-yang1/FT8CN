@@ -27,6 +27,8 @@ import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.bg7yoz.ft8cn.ui.ToastMessage;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -74,6 +76,9 @@ public class FT8TransmitSignal {
     private long foxSessionStartTimeMs = 0L;
     private int foxCallAttempts = 0;
     private int foxRr73Attempts = 0;
+    private final Object foxCandidateLock = new Object();
+    private final ArrayList<DxpeditionFoxCandidate> dxpeditionFoxCandidates = new ArrayList<>();
+    private String lastFoxCompletedCallsign = "";
     private final AutoSessionState autoSession = new AutoSessionState();
     private final OnTransmitSuccess onTransmitSuccess;
     private AudioAttributes attributes = null;
@@ -135,8 +140,15 @@ public class FT8TransmitSignal {
                 && !isExperimentalManualTxMode();
     }
 
+    private static final class DxpeditionFoxCandidate {
+        String callsign;
+        int snr;
+        int sequenceIndex;
+        long utcTime;
+    }
+
     public boolean canUseManualDxpeditionMacro() {
-        return isManualDxpeditionHoundEnabled();
+        return isManualDxpeditionHoundEnabled() || isManualDxpeditionFoxEnabled();
     }
 
     public String previewManualDxpeditionMacro(String template) {
@@ -148,18 +160,226 @@ public class FT8TransmitSignal {
         );
     }
 
-    public boolean sendManualDxpeditionMacro(String template) {
-        if (!isManualDxpeditionHoundEnabled()) {
+    private String normalizeCallsignToken(String callsign) {
+        if (callsign == null) {
+            return "";
+        }
+        return callsign.trim().toUpperCase()
+                .replace("<", "")
+                .replace(">", "");
+    }
+
+    private void addUniqueCallsign(ArrayList<String> list, String callsign) {
+        String normalized = normalizeCallsignToken(callsign);
+        if (normalized.length() == 0) {
+            return;
+        }
+        for (String existing : list) {
+            if (AutoFlowMessageAnalyzer.callsignMatches(existing, normalized)) {
+                return;
+            }
+        }
+        list.add(normalized);
+    }
+
+    private void addOrUpdateFoxCandidate(String callsign, int snr, int sequenceIndex, long utcTime) {
+        String normalized = normalizeCallsignToken(callsign);
+        if (normalized.length() == 0) {
+            return;
+        }
+        if (GeneralVariables.checkIsMyCallsign(normalized) || "CQ".equalsIgnoreCase(normalized)) {
+            return;
+        }
+        synchronized (foxCandidateLock) {
+            DxpeditionFoxCandidate target = null;
+            for (DxpeditionFoxCandidate candidate : dxpeditionFoxCandidates) {
+                if (AutoFlowMessageAnalyzer.callsignMatches(candidate.callsign, normalized)) {
+                    target = candidate;
+                    break;
+                }
+            }
+            if (target == null) {
+                target = new DxpeditionFoxCandidate();
+                target.callsign = normalized;
+                dxpeditionFoxCandidates.add(target);
+            } else if (target.callsign.length() < normalized.length()) {
+                target.callsign = normalized;
+            }
+            target.snr = snr;
+            target.sequenceIndex = sequenceIndex;
+            target.utcTime = utcTime;
+
+            Collections.sort(dxpeditionFoxCandidates, new Comparator<DxpeditionFoxCandidate>() {
+                @Override
+                public int compare(DxpeditionFoxCandidate left, DxpeditionFoxCandidate right) {
+                    if (left.sequenceIndex != right.sequenceIndex) {
+                        return right.sequenceIndex - left.sequenceIndex;
+                    }
+                    if (left.utcTime == right.utcTime) {
+                        return 0;
+                    }
+                    return left.utcTime < right.utcTime ? 1 : -1;
+                }
+            });
+
+            if (dxpeditionFoxCandidates.size() > 24) {
+                dxpeditionFoxCandidates.subList(24, dxpeditionFoxCandidates.size()).clear();
+            }
+        }
+    }
+
+    private void updateFoxCandidatesFromMessages(ArrayList<Ft8Message> messages) {
+        if (messages == null || messages.size() == 0 || GeneralVariables.getSignalMode() != FT8Common.FT8_MODE) {
+            return;
+        }
+        for (Ft8Message msg : messages) {
+            if (msg == null || msg.signalFormat != FT8Common.FT8_MODE || !msg.isAutoFlowRelevant()) {
+                continue;
+            }
+            if (msg.band > 0 && msg.band != GeneralVariables.band) {
+                continue;
+            }
+            String from = normalizeCallsignToken(msg.getAutoReplyCallsignFrom());
+            if (from.length() == 0 || GeneralVariables.checkIsMyCallsign(from)) {
+                continue;
+            }
+
+            boolean directedToMe = GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo());
+            boolean likelyFoxHoundCall = directedToMe && GeneralVariables.checkFun1(msg.getAutoReplyExtraInfo());
+            boolean currentTargetTraffic = toCallsign != null
+                    && toCallsign.haveTargetCallsign()
+                    && AutoFlowMessageAnalyzer.callsignMatches(from, toCallsign.callsign);
+            if (!directedToMe && !likelyFoxHoundCall && !currentTargetTraffic) {
+                continue;
+            }
+            addOrUpdateFoxCandidate(from, msg.snr, msg.getFullSequenceIndex(), msg.utcTime);
+        }
+    }
+
+    public ArrayList<String> getDxpeditionFoxCandidateCallsigns() {
+        ArrayList<String> result = new ArrayList<>();
+        if (toCallsign != null && toCallsign.haveTargetCallsign()) {
+            addUniqueCallsign(result, toCallsign.callsign);
+        }
+        addUniqueCallsign(result, lastFoxCompletedCallsign);
+        synchronized (foxCandidateLock) {
+            for (DxpeditionFoxCandidate candidate : dxpeditionFoxCandidates) {
+                addUniqueCallsign(result, candidate.callsign);
+            }
+        }
+        return result;
+    }
+
+    private String pickAutoCompoundCall2(ArrayList<String> candidates) {
+        if (toCallsign != null && toCallsign.haveTargetCallsign()) {
+            String normalized = normalizeCallsignToken(toCallsign.callsign);
+            if (normalized.length() > 0 && !"CQ".equalsIgnoreCase(normalized)) {
+                return normalized;
+            }
+        }
+        if (candidates.size() > 0) {
+            return normalizeCallsignToken(candidates.get(0));
+        }
+        return "";
+    }
+
+    private String pickAutoCompoundCall1(ArrayList<String> candidates, String call2) {
+        String completed = normalizeCallsignToken(lastFoxCompletedCallsign);
+        if (completed.length() > 0 && !AutoFlowMessageAnalyzer.callsignMatches(completed, call2)) {
+            return completed;
+        }
+        for (String candidate : candidates) {
+            if (!AutoFlowMessageAnalyzer.callsignMatches(candidate, call2)) {
+                return normalizeCallsignToken(candidate);
+            }
+        }
+        return "";
+    }
+
+    private int clampReportForCompound(int report) {
+        if (report < -30) {
+            return -30;
+        }
+        if (report > 32) {
+            return 32;
+        }
+        return report;
+    }
+
+    public int getSuggestedDxpeditionCompoundReport() {
+        return clampReportForCompound(getCurrentMacroReport());
+    }
+
+    public String previewManualDxpeditionCompoundMessage(boolean autoSelect,
+                                                         String manualCall1,
+                                                         String manualCall2,
+                                                         int report) {
+        if (!isManualDxpeditionFoxEnabled()) {
+            return "";
+        }
+        ArrayList<String> candidates = getDxpeditionFoxCandidateCallsigns();
+
+        String call2 = normalizeCallsignToken(manualCall2);
+        if (autoSelect || call2.length() == 0) {
+            call2 = pickAutoCompoundCall2(candidates);
+        }
+
+        String call1 = normalizeCallsignToken(manualCall1);
+        if (autoSelect || call1.length() == 0) {
+            call1 = pickAutoCompoundCall1(candidates, call2);
+        }
+
+        if (call1.length() == 0 || call2.length() == 0
+                || AutoFlowMessageAnalyzer.callsignMatches(call1, call2)) {
+            return "";
+        }
+
+        String myCallsign = normalizeCallsignToken(GeneralVariables.myCallsign);
+        if (myCallsign.length() == 0) {
+            return "";
+        }
+
+        int clampedReport = clampReportForCompound(report);
+        return String.format("%s RR73; %s <%s> %+03d",
+                call1,
+                call2,
+                myCallsign,
+                clampedReport);
+    }
+
+    public boolean sendManualDxpeditionCompoundMessage(boolean autoSelect,
+                                                       String manualCall1,
+                                                       String manualCall2,
+                                                       int report) {
+        if (!isManualDxpeditionFoxEnabled()) {
             return false;
         }
-        if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
-            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.dxpedition_macro_requires_target));
+        String message = previewManualDxpeditionCompoundMessage(autoSelect, manualCall1, manualCall2, report);
+        if (message.length() == 0) {
+            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.dxpedition_compound_pick_invalid));
             return false;
         }
 
+        String typeInfo = GenerateFT8.getPackedTypeInfo(message);
+        if (!typeInfo.startsWith("0.1:")) {
+            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.dxpedition_compound_encode_failed));
+            return false;
+        }
+        return sendManualDxpeditionMacro(message);
+    }
+
+    public boolean sendManualDxpeditionMacro(String template) {
+        if (!canUseManualDxpeditionMacro()) {
+            return false;
+        }
         String normalizedTemplate = DxpeditionMacroSupport.normalizeTemplate(template);
         if (normalizedTemplate.length() == 0) {
             ToastMessage.show(GeneralVariables.getStringFromResource(R.string.dxpedition_macro_empty));
+            return false;
+        }
+        if (DxpeditionMacroSupport.requiresTarget(normalizedTemplate)
+                && (toCallsign == null || !toCallsign.haveTargetCallsign())) {
+            ToastMessage.show(GeneralVariables.getStringFromResource(R.string.dxpedition_macro_requires_target));
             return false;
         }
 
@@ -911,6 +1131,9 @@ public class FT8TransmitSignal {
     private void doComplete() {
         messageEndTime = UtcTimer.getSystemTime();
 
+        if (autoSession.isDxpeditionFox() && toCallsign != null) {
+            lastFoxCompletedCallsign = normalizeCallsignToken(toCallsign.callsign);
+        }
 
         toMaidenheadGrid = GeneralVariables.getGridByCallsign(toCallsign.callsign, databaseOpr);
 
@@ -1438,6 +1661,9 @@ public class FT8TransmitSignal {
         }
         if (GeneralVariables.myCallsign.length() < 3) {
             return;
+        }
+        if (msgList != null && msgList.size() > 0) {
+            updateFoxCandidatesFromMessages(msgList);
         }
         if (msgList == null || msgList.size() == 0) {
             if (isManualDxpeditionFoxEnabled()

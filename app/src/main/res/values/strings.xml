@@ -172,9 +172,21 @@
     <string name="dxpedition_macro_empty">DXP macro template is empty</string>
     <string name="dxpedition_macro_saved">DXP macro saved</string>
     <string name="dxpedition_split_required_hint">DXpedition mode should use split (disable TX=RX lock).</string>
+    <string name="dxpedition_compound_button">F01</string>
+    <string name="dxpedition_compound_picker_title">Fox 0.1 Compound Reply</string>
+    <string name="dxpedition_compound_auto_item">Auto pick CALL1/CALL2 and send</string>
+    <string name="dxpedition_compound_auto_item_preview">Auto send: %1$s</string>
+    <string name="dxpedition_compound_manual_item">Manual pick CALL1/CALL2</string>
+    <string name="dxpedition_compound_manual_title">Manual 0.1 Compound Reply</string>
+    <string name="dxpedition_compound_manual_hint">Pick two different hounds: CALL1 for RR73, CALL2 for report.</string>
+    <string name="dxpedition_compound_report_hint">Report, e.g. -01</string>
+    <string name="dxpedition_compound_preview_invalid">Cannot build valid 0.1 message with current selection.</string>
+    <string name="dxpedition_compound_need_candidates">Need at least two hound calls to compose 0.1 reply.</string>
+    <string name="dxpedition_compound_pick_invalid">CALL1/CALL2 selection is invalid.</string>
+    <string name="dxpedition_compound_encode_failed">0.1 message encode failed, check CALL1/CALL2 format.</string>
     <string name="dxpedition_help_button">?</string>
     <string name="dxpedition_guide_title">DXpedition Quick Guide</string>
-    <string name="dxpedition_guide_text">1) FT8 only. Turn off TX=RX lock and use split.\n2) Hound mode: enable DXP, pick target, auto sequence uses Tx1/Tx3.\n3) Fox mode: enable FOX, CQ in 300-900 Hz, auto sequence uses Tx2/Tx4/CQ.\n4) DXP+ opens quick reply macros. Long press DXP+ to edit custom templates.\n5) Placeholders: {DXCALL}=target, {MYCALL}=your call, {RPT}=report, {RRPT}=R+report.\n6) WSJT-X Type 0.1 format: CALL1 RR73; CALL2 &lt;DXCALL&gt; -11\nExample: BG7UZR RR73; BG7QXX &lt;BG5JSU&gt; -01</string>
+    <string name="dxpedition_guide_text">1) FT8 only. Turn off TX=RX lock and use split.\n2) Hound mode: enable DXP, pick target, auto sequence uses Tx1/Tx3.\n3) Fox mode: enable FOX, CQ in 300-900 Hz, auto sequence uses Tx2/Tx4/CQ.\n4) Hound: DXP+ opens quick reply macros. Long press DXP+ to edit custom templates.\n5) Fox: DXP+ opens Type 0.1 picker, auto or manual CALL1/CALL2 selection.\n6) Placeholders: {DXCALL}=target, {MYCALL}=your call, {RPT}=report, {RRPT}=R+report.\n7) WSJT-X Type 0.1 format: CALL1 RR73; CALL2 &lt;DXCALL&gt; -11\nExample: BG7UZR RR73; BG7QXX &lt;BG5JSU&gt; -01</string>
 
     <!--   解码栏-->
     <string name="message_count_count">Messages(%d/%d)</string>
