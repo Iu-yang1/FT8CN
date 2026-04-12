@@ -153,6 +153,8 @@
     <string name="dxpedition_manual_status">DXpedition Hound manual</string>
     <string name="dxpedition_manual_arm_status">DXpedition Hound armed</string>
     <string name="dxpedition_manual_toggle">DXP</string>
+    <string name="dxpedition_fox_toggle">FOX</string>
+    <string name="dxpedition_fox_status">DXpedition Fox</string>
     <string name="dxpedition_macro_armed">macro armed</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">DXpedition replies</string>
@@ -169,6 +171,7 @@
     <string name="dxpedition_macro_invalid">DXP macro cannot be encoded</string>
     <string name="dxpedition_macro_empty">DXP macro template is empty</string>
     <string name="dxpedition_macro_saved">DXP macro saved</string>
+    <string name="dxpedition_split_required_hint">DXpedition mode should use split (disable TX=RX lock).</string>
 
     <!--   解码栏-->
     <string name="message_count_count">Messages(%d/%d)</string>

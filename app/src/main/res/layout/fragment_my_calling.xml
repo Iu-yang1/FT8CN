@@ -167,8 +167,25 @@
                     android:textSize="11sp"
                     app:layout_constrainedWidth="true"
                     app:layout_constraintBottom_toBottomOf="@+id/rgSignalMode"
-                    app:layout_constraintEnd_toStartOf="@+id/setTransmitImageButton"
+                    app:layout_constraintEnd_toStartOf="@+id/dxpeditionFoxCheckBox"
                     app:layout_constraintStart_toEndOf="@+id/rgSignalMode"
+                    app:layout_constraintTop_toTopOf="@+id/rgSignalMode" />
+
+            <CheckBox
+                    android:id="@+id/dxpeditionFoxCheckBox"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:buttonTint="@color/bar_text_view_color"
+                    android:minHeight="24dp"
+                    android:text="@string/dxpedition_fox_toggle"
+                    android:textColor="@color/bar_text_view_color"
+                    android:textSize="11sp"
+                    app:layout_constrainedWidth="true"
+                    app:layout_constraintBottom_toBottomOf="@+id/rgSignalMode"
+                    app:layout_constraintEnd_toStartOf="@+id/setTransmitImageButton"
+                    app:layout_constraintStart_toEndOf="@+id/dxpeditionManualCheckBox"
                     app:layout_constraintTop_toTopOf="@+id/rgSignalMode" />
 
             <ImageButton

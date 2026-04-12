@@ -60,6 +60,7 @@ public class MyCallingFragment extends Fragment {
     private RecyclerView transmitRecycleView;
     private CallingListAdapter transmitCallListAdapter;
     private FunctionOrderSpinnerAdapter functionOrderSpinnerAdapter;
+    private boolean updatingDxpeditionModeUi = false;
 
     private boolean isExperimentalManualTxMode() {
         return GeneralVariables.isExperimentalCodecEnabled();
@@ -77,10 +78,12 @@ public class MyCallingFragment extends Fragment {
                 && !mainViewModel.getTransitIsFreeText()
                 && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE;
         binding.dxpeditionManualCheckBox.setEnabled(enabled);
-        if (!enabled && binding.dxpeditionManualCheckBox.isChecked()) {
-            binding.dxpeditionManualCheckBox.setChecked(false);
+        binding.dxpeditionFoxCheckBox.setEnabled(enabled);
+        if (!enabled && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
+            applyManualDxpeditionMode(false, false, true);
         }
         binding.dxpeditionManualCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
+        binding.dxpeditionFoxCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
         updateDxpeditionMacroUi();
     }
 
@@ -90,6 +93,35 @@ public class MyCallingFragment extends Fragment {
                 && !mainViewModel.getTransitIsFreeText()
                 && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
                 && mainViewModel.ft8TransmitSignal.canUseManualDxpeditionMacro();
+    }
+
+    private void applyManualDxpeditionMode(boolean hound, boolean fox, boolean persist) {
+        if (binding == null) {
+            return;
+        }
+        if (hound && fox) {
+            fox = false;
+        }
+        updatingDxpeditionModeUi = true;
+        binding.dxpeditionManualCheckBox.setChecked(hound);
+        binding.dxpeditionFoxCheckBox.setChecked(fox);
+        updatingDxpeditionModeUi = false;
+
+        GeneralVariables.manualDxpeditionHoundMode = hound;
+        GeneralVariables.manualDxpeditionFoxMode = fox;
+
+        if ((hound || fox) && GeneralVariables.synFrequency) {
+            ToastMessage.show(getString(R.string.dxpedition_split_required_hint));
+        }
+
+        if (persist) {
+            mainViewModel.databaseOpr.writeConfig("manualDxpeditionHoundMode", hound ? "1" : "0", null);
+            mainViewModel.databaseOpr.writeConfig("manualDxpeditionFoxMode", fox ? "1" : "0", null);
+        }
+
+        mainViewModel.ft8TransmitSignal.refreshSessionModeByCurrentTarget();
+        updateAutoSessionStatus();
+        updateDxpeditionMacroUi();
     }
 
     private void updateDxpeditionMacroUi() {
@@ -407,12 +439,23 @@ public class MyCallingFragment extends Fragment {
         });
 
         binding.dxpeditionManualCheckBox.setOnCheckedChangeListener(null);
-        binding.dxpeditionManualCheckBox.setChecked(GeneralVariables.manualDxpeditionHoundMode);
+        binding.dxpeditionFoxCheckBox.setOnCheckedChangeListener(null);
+        applyManualDxpeditionMode(
+                GeneralVariables.manualDxpeditionHoundMode,
+                GeneralVariables.manualDxpeditionFoxMode,
+                false
+        );
         binding.dxpeditionManualCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            GeneralVariables.manualDxpeditionHoundMode = isChecked;
-            mainViewModel.ft8TransmitSignal.refreshSessionModeByCurrentTarget();
-            updateAutoSessionStatus();
-            updateDxpeditionMacroUi();
+            if (updatingDxpeditionModeUi) {
+                return;
+            }
+            applyManualDxpeditionMode(isChecked, false, true);
+        });
+        binding.dxpeditionFoxCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (updatingDxpeditionModeUi) {
+                return;
+            }
+            applyManualDxpeditionMode(false, isChecked, true);
         });
         updateDxpeditionManualUi();
 
