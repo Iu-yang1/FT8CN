@@ -179,5 +179,9 @@ public class AutoFlowMessageAnalyzerTest {
                 6,
                 3
         ));
+        assertTrue(Arrays.equals(
+                new int[]{2, 4, 6},
+                AutoSessionUiPolicy.getAvailableFunctionOrders(AutoSessionType.FT8_DXPEDITION_FOX, 2)
+        ));
     }
 }

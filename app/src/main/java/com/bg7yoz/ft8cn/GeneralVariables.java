@@ -303,6 +303,8 @@ public class GeneralVariables {
     public static boolean autoCallFollow = true;
     public static boolean autoDxpeditionHound = true;
     public static boolean manualDxpeditionHoundMode = false;
+    public static boolean manualDxpeditionFoxMode = false;
+    public static boolean dxpeditionFoxHoldFrequency = true;
     public static String manualDxpeditionMacroCustom1 = "{DXCALL} RR73";
     public static String manualDxpeditionMacroCustom2 = "{DXCALL} {MYCALL} {RPT}";
     public static ArrayList<String> QSL_Callsign_list = new ArrayList<>();

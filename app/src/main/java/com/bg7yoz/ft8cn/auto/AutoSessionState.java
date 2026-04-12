@@ -21,6 +21,10 @@ public class AutoSessionState {
         return sessionType == AutoSessionType.FT8_DXPEDITION_HOUND;
     }
 
+    public boolean isDxpeditionFox() {
+        return sessionType == AutoSessionType.FT8_DXPEDITION_FOX;
+    }
+
     public String getTargetCallsign() {
         return targetCallsign;
     }
