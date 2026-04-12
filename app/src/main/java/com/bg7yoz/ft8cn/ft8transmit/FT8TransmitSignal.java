@@ -1431,19 +1431,13 @@ public class FT8TransmitSignal {
         @SuppressLint("DefaultLocale")
         @Override
         public void run() {
-            int transmitOrder = transmitSignal.functionOrder;
-            transmitSignal.updateMessageStartTimeForOrder(transmitOrder);
-            Ft8Message msg = transmitSignal.buildTransmitMessage(transmitOrder);
-            transmitSignal.rememberTransmitMessage(msg, transmitOrder);
-
             if (transmitSignal.onDoTransmitted != null) {
-                transmitSignal.onDoTransmitted.onBeforeTransmit(msg, transmitOrder);
+                transmitSignal.onDoTransmitted.onPrepareTransmit();
             }
 
             if (!transmitSignal.isExperimentalManualTxMode()) {
                 transmitSignal.updateTransmittingState(true);
             }
-            transmitSignal.postTransmittingMessage(msg);
             try {
                 int holdWindowMs = Math.max(
                         GeneralVariables.pttDelay,
@@ -1454,17 +1448,21 @@ public class FT8TransmitSignal {
                 e.printStackTrace();
             }
 
-            if (!transmitSignal.transmitFreeText) {
-                int latestOrder = transmitSignal.functionOrder;
-                transmitOrder = latestOrder;
+            int transmitOrder = transmitSignal.functionOrder;
+            Ft8Message msg;
+            try {
                 transmitSignal.updateMessageStartTimeForOrder(transmitOrder);
                 msg = transmitSignal.buildTransmitMessage(transmitOrder);
                 transmitSignal.rememberTransmitMessage(msg, transmitOrder);
-                transmitSignal.replaceLatestQueuedTransmitMessage(msg);
+                if (transmitSignal.onDoTransmitted != null) {
+                    transmitSignal.onDoTransmitted.onBeforeTransmit(msg, transmitOrder);
+                }
                 transmitSignal.postTransmittingMessage(msg);
+            } catch (RuntimeException e) {
+                Log.e(TAG, "DoTransmitRunnable: failed to build final transmit message", e);
+                transmitSignal.afterPlayAudio();
+                return;
             }
-
-
             transmitSignal.playFT8Signal(msg);
         }
     }

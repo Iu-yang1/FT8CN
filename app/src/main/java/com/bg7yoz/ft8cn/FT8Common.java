@@ -104,10 +104,8 @@ public final class FT8Common {
     public static int getLateDecodeOverrideWindowMs(int mode) {
         int slotMs = getSlotTimeMillisecond(mode);
         int frameMs = getFrameDurationMs(mode);
-        int guardMs = 200;
-        int maxWindowMs = Math.max(0, slotMs - frameMs - guardMs);
-        int preferredWindowMs = mode == FT4_MODE ? 1000 : 1500;
-        return Math.min(preferredWindowMs, maxWindowMs);
+        int guardMs = mode == FT4_MODE ? 350 : 450;
+        return Math.max(0, slotMs - frameMs - guardMs);
     }
 
     /**

@@ -371,7 +371,7 @@ public class MainViewModel extends ViewModel {
             }
 
             @Override
-            public void onBeforeTransmit(Ft8Message message, int functionOder) {
+            public void onPrepareTransmit() {
                 if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
@@ -380,6 +380,10 @@ public class MainViewModel extends ViewModel {
                         baseRig.setPTT(true);
                     }
                 }
+            }
+
+            @Override
+            public void onBeforeTransmit(Ft8Message message, int functionOder) {
                 if (ft8TransmitSignal.isActivated()) {
                     GeneralVariables.transmitMessages.add(message);
                     GeneralVariables.transmitHistoryMessages.add(message);
