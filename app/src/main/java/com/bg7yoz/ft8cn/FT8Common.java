@@ -97,6 +97,49 @@ public final class FT8Common {
         return mode == FT4_MODE ? 1200 : 2500;
     }
 
+    public static int getFrameDurationMs(int mode) {
+        return Math.round(getToneCount(mode) * getSymbolPeriod(mode) * 1000f);
+    }
+
+    public static int getLateDecodeOverrideWindowMs(int mode) {
+        int slotMs = getSlotTimeMillisecond(mode);
+        int frameMs = getFrameDurationMs(mode);
+        int guardMs = mode == FT4_MODE ? 350 : 450;
+        return Math.max(0, slotMs - frameMs - guardMs);
+    }
+
+    /**
+     * Preferred earliest transmit build offset from slot start.
+     * 推荐的最早发射构建偏移（相对时隙起点）。
+     */
+    public static int getPreferredTxLeadInMs(int mode) {
+        return mode == FT4_MODE ? 180 : 260;
+    }
+
+    /**
+     * Hard cap for delayed auto-TX start caused by late-decode override.
+     * 晚到解码覆盖引起的自动发射延迟硬上限。
+     */
+    public static int getLateDecodeHoldCapMs(int mode) {
+        return mode == FT4_MODE ? 620 : 980;
+    }
+
+    /**
+     * Only when decode updates are very recent do we allow late-decode override.
+     * 仅当解码更新“足够新”时才允许晚到解码覆盖窗口生效。
+     */
+    public static int getLateDecodeRecentWindowMs(int mode) {
+        return mode == FT4_MODE ? 800 : 1300;
+    }
+
+    /**
+     * Compensation for local encode/queue/audio path latency.
+     * 本地编码/排队/音频链路补偿时间，避免对端看到滞后起发。
+     */
+    public static int getTxPipelineCompensationMs(int mode) {
+        return mode == FT4_MODE ? 80 : 140;
+    }
+
     /**
      * 模式转字符串
      */

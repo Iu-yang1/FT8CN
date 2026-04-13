@@ -51,6 +51,7 @@ static const char *const kArrlSections[] = {
 };
 
 bool chkcall(const char* call, char* bc);
+int32_t pack28(const char* callsign);
 
 static void write_bits_be(uint8_t *data, int start_bit, int bit_count, uint32_t value)
 {
@@ -115,6 +116,23 @@ static bool parse_unsigned_token(const char *token, int *value)
         parsed = (parsed * 10) + (token[i] - '0');
     }
     *value = parsed;
+    return true;
+}
+
+static bool parse_signed_token(const char *token, int *value)
+{
+    if (token == 0 || token[0] == '\0')
+        return false;
+
+    char *end_ptr = 0;
+    long parsed = strtol(token, &end_ptr, 10);
+    if (end_ptr == token || *end_ptr != '\0')
+        return false;
+
+    if (parsed < -99L || parsed > 99L)
+        return false;
+
+    *value = (int)parsed;
     return true;
 }
 
@@ -553,6 +571,51 @@ static void normalize_hash_callsign(const char *src, char *dst, size_t dst_size)
         return;
     }
     copy_token(dst, dst_size, src);
+}
+
+static int pack77_dxpedition(const char *msg, uint8_t *c77)
+{
+    char tokens[5][32];
+    int count = split_message_tokens(msg, tokens, 5);
+    if (count != 5)
+        return -1;
+
+    if (!token_equals(tokens[1], "RR73;"))
+        return -1;
+
+    char hashed_call[32];
+    if (!extract_bracketed_callsign(tokens[3], hashed_call, sizeof(hashed_call)))
+        return -1;
+
+    int report = 0;
+    if (!parse_signed_token(tokens[4], &report))
+        return -1;
+
+    char base_call_1[16];
+    char base_call_2[16];
+    if (!chkcall(tokens[0], base_call_1) || !chkcall(tokens[2], base_call_2))
+        return -1;
+    if (pack_standard_callsign(base_call_1) < 0 || pack_standard_callsign(base_call_2) < 0)
+        return -1;
+
+    uint32_t n28a = (uint32_t)pack28(base_call_1);
+    uint32_t n28b = (uint32_t)pack28(base_call_2);
+    if (((int32_t)n28a < 0) || ((int32_t)n28b < 0))
+        return -1;
+
+    int n5 = (report + 30) / 2;
+    if (n5 < 0)
+        n5 = 0;
+    if (n5 > 31)
+        n5 = 31;
+
+    uint8_t payload71[9] = {0};
+    write_bits_be(payload71, 1, 28, n28a);
+    write_bits_be(payload71, 29, 28, n28b);
+    write_bits_be(payload71, 57, 10, hashcall_10(hashed_call));
+    write_bits_be(payload71, 67, 5, (uint32_t)n5);
+    pack_type0_payload71(payload71, 1u, c77);
+    return 0;
 }
 
 static int pack77_field_day(const char *msg, uint8_t *c77)
@@ -1032,6 +1095,12 @@ int pack77(const char* msg, uint8_t* c77)
 
     // Check Type 1 (Standard 77-bit message) or Type 2, with optional "/P"
     if (0 == pack77_1(msgbuf, c77))
+    {
+        return 0;
+    }
+
+    // Check 0.1 (DXpedition mode)
+    if (0 == pack77_dxpedition(msgbuf, c77))
     {
         return 0;
     }

@@ -147,6 +147,46 @@
     <string name="not_concerned_about_CQ">No track CQ</string>
     <string name="automatic_call_following">Auto call tracked</string>
     <string name="do_not_call_the_following_callsign">No call tracked</string>
+    <string name="dxpedition_auto_hound_on">DXpedition Hound auto</string>
+    <string name="dxpedition_auto_hound_off">DXpedition Hound manual</string>
+    <string name="dxpedition_auto_status">DXpedition Hound auto</string>
+    <string name="dxpedition_manual_status">DXpedition Hound manual</string>
+    <string name="dxpedition_manual_arm_status">DXpedition Hound armed</string>
+    <string name="dxpedition_manual_toggle">DXP</string>
+    <string name="dxpedition_fox_toggle">FOX</string>
+    <string name="dxpedition_fox_status">DXpedition Fox</string>
+    <string name="dxpedition_macro_armed">macro armed</string>
+    <string name="dxpedition_macro_button">DXP+</string>
+    <string name="dxpedition_macro_pick_title">DXpedition replies</string>
+    <string name="dxpedition_macro_edit_title">Edit DXP macros</string>
+    <string name="dxpedition_macro_edit_slot_title">Edit %1$s</string>
+    <string name="dxpedition_macro_edit_hint">Use {DXCALL} {MYCALL} {RPT} {RRPT}</string>
+    <string name="dxpedition_macro_call_dx">Call DX</string>
+    <string name="dxpedition_macro_send_report">Send report</string>
+    <string name="dxpedition_macro_send_r_report">Send R+report</string>
+    <string name="dxpedition_macro_send_rr73">Send RR73</string>
+    <string name="dxpedition_macro_custom_1">Custom 1</string>
+    <string name="dxpedition_macro_custom_2">Custom 2</string>
+    <string name="dxpedition_macro_requires_target">DXP macro needs a target callsign</string>
+    <string name="dxpedition_macro_invalid">DXP macro cannot be encoded</string>
+    <string name="dxpedition_macro_empty">DXP macro template is empty</string>
+    <string name="dxpedition_macro_saved">DXP macro saved</string>
+    <string name="dxpedition_split_required_hint">DXpedition mode should use split (disable TX=RX lock).</string>
+    <string name="dxpedition_compound_button">F01</string>
+    <string name="dxpedition_compound_picker_title">Fox 0.1 Compound Reply</string>
+    <string name="dxpedition_compound_auto_item">Auto pick CALL1/CALL2 and send</string>
+    <string name="dxpedition_compound_auto_item_preview">Auto send: %1$s</string>
+    <string name="dxpedition_compound_manual_item">Manual pick CALL1/CALL2</string>
+    <string name="dxpedition_compound_manual_title">Manual 0.1 Compound Reply</string>
+    <string name="dxpedition_compound_manual_hint">Pick two different hounds: CALL1 for RR73, CALL2 for report.</string>
+    <string name="dxpedition_compound_report_hint">Report, e.g. -01</string>
+    <string name="dxpedition_compound_preview_invalid">Cannot build valid 0.1 message with current selection.</string>
+    <string name="dxpedition_compound_need_candidates">Need at least two hound calls to compose 0.1 reply.</string>
+    <string name="dxpedition_compound_pick_invalid">CALL1/CALL2 selection is invalid.</string>
+    <string name="dxpedition_compound_encode_failed">0.1 message encode failed, check CALL1/CALL2 format.</string>
+    <string name="dxpedition_help_button">?</string>
+    <string name="dxpedition_guide_title">DXpedition Quick Guide</string>
+    <string name="dxpedition_guide_text">1) FT8 only. Turn off TX=RX lock and use split.\n2) Hound mode: enable DXP, pick target, auto sequence uses Tx1/Tx3.\n3) Fox mode: enable FOX, CQ in 300-900 Hz, auto sequence uses Tx2/Tx4/CQ.\n4) Hound: DXP+ opens quick reply macros. Long press DXP+ to edit custom templates.\n5) Fox: DXP+ opens Type 0.1 picker, auto or manual CALL1/CALL2 selection.\n6) Placeholders: {DXCALL}=target, {MYCALL}=your call, {RPT}=report, {RRPT}=R+report.\n7) WSJT-X Type 0.1 format: CALL1 RR73; CALL2 &lt;DXCALL&gt; -11\nExample: BG7UZR RR73; BG7QXX &lt;BG5JSU&gt; -01</string>
 
     <!--   解码栏-->
     <string name="message_count_count">Messages(%d/%d)</string>
@@ -397,7 +437,17 @@
     <string name="tracker_new_zone_found">New zone found : %s</string>
     <string name="transmit_freeText">Please enter free text</string>
     <string name="transmit_type_hint">Will transmit as: %1$s</string>
-    <string name="transmit_type_hint_empty">Enter text to preview the packed type</string>
+    <string name="transmit_type_hint_empty">Enter text to preview packed type (0.0/0.1/0.3/0.4/0.5/1/2/3/4/5)</string>
+    <string name="transmit_type_examples_title">FT8 packed message examples</string>
+    <string name="transmit_type_examples_text">Supported parser outputs:
+0.0 Free text: HELLO WORLD
+0.1 DXpedition: BG7UZR RR73; BG7QXX &lt;BG5JSU&gt; -01
+0.3/0.4 Field Day: BG5JSU BG7YOZ 1A EMA / BG5JSU BG7YOZ R 17A EMA
+0.5 Telemetry (18 hex): 0123456789ABCDEF12
+1/2 Standard: CQ BG7YOZ PM01 / CQ 123 BG7YOZ PM01
+3 RTTY RU: TU; BG5JSU BG7YOZ 579 MA
+4 Nonstandard+hash: &lt;BG5JSU&gt; PJ4/K1ABC RR73
+5 EU VHF: BG5JSU BG7YOZ 590123 PM01AA</string>
     <string name="trans_free_text_mode">Free text mode</string>
     <string name="trans_standard_messge_mode">Standard Message Mode</string>
     <string name="launch_supervision_ignore">Ignore</string>
@@ -468,6 +518,7 @@
     <string name="launch_supervision_help">launch_supervision_en.txt</string>
     <string name="no_response_help">no_response_help_en.txt</string>
     <string name="auto_follow_help">auto_follow_help_en.txt</string>
+    <string name="dxpedition_auto_help">dxpedition_auto_help_en.txt</string>
     <string name="connectMode_help">connectMode_en.txt</string>
     <string name="excludeCallsign_help">excludeCallsign_en.txt</string>
     <string name="swlMode_help">swlMode_en.txt</string>

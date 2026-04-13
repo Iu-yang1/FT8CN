@@ -371,7 +371,7 @@ public class MainViewModel extends ViewModel {
             }
 
             @Override
-            public void onBeforeTransmit(Ft8Message message, int functionOder) {
+            public void onPrepareTransmit() {
                 if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
@@ -380,8 +380,14 @@ public class MainViewModel extends ViewModel {
                         baseRig.setPTT(true);
                     }
                 }
+            }
+
+            @Override
+            public void onBeforeTransmit(Ft8Message message, int functionOder) {
                 if (ft8TransmitSignal.isActivated()) {
                     GeneralVariables.transmitMessages.add(message);
+                    GeneralVariables.transmitHistoryMessages.add(message);
+                    GeneralVariables.deleteArrayListMore(GeneralVariables.transmitHistoryMessages);
                     mutableTransmitMessagesCount.postValue(1);
                 }
             }
@@ -625,6 +631,7 @@ public class MainViewModel extends ViewModel {
      */
     public void clearTransmittingMessage() {
         GeneralVariables.transmitMessages.clear();
+        GeneralVariables.transmitHistoryMessages.clear();
         mutableTransmitMessagesCount.postValue(0);
     }
 

@@ -15,6 +15,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.text.Editable;
+import android.text.InputFilter;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -23,8 +24,14 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.AnimationUtils;
 import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.Spinner;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Observer;
@@ -41,6 +48,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
+import com.bg7yoz.ft8cn.ft8transmit.DxpeditionMacroSupport;
 import com.bg7yoz.ft8cn.ft8transmit.FunctionOfTransmit;
 import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
 import com.bg7yoz.ft8cn.ft8transmit.TransmitCallsign;
@@ -56,6 +64,7 @@ public class MyCallingFragment extends Fragment {
     private RecyclerView transmitRecycleView;
     private CallingListAdapter transmitCallListAdapter;
     private FunctionOrderSpinnerAdapter functionOrderSpinnerAdapter;
+    private boolean updatingDxpeditionModeUi = false;
 
     private boolean isExperimentalManualTxMode() {
         return GeneralVariables.isExperimentalCodecEnabled();
@@ -63,6 +72,337 @@ public class MyCallingFragment extends Fragment {
 
     private String getCurrentModeLabel() {
         return GeneralVariables.getActiveModeLabel();
+    }
+
+    private void updateDxpeditionManualUi() {
+        if (binding == null) {
+            return;
+        }
+        boolean enabled = !isExperimentalManualTxMode()
+                && !mainViewModel.getTransitIsFreeText()
+                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE;
+        binding.dxpeditionManualCheckBox.setEnabled(enabled);
+        binding.dxpeditionFoxCheckBox.setEnabled(enabled);
+        if (!enabled && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
+            applyManualDxpeditionMode(false, false, true);
+        }
+        binding.dxpeditionManualCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
+        binding.dxpeditionFoxCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
+        updateDxpeditionMacroUi();
+    }
+
+    private boolean canUseDxpeditionMacroUi() {
+        return binding != null
+                && !isExperimentalManualTxMode()
+                && !mainViewModel.getTransitIsFreeText()
+                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && mainViewModel.ft8TransmitSignal.canUseManualDxpeditionMacro();
+    }
+
+    private void applyManualDxpeditionMode(boolean hound, boolean fox, boolean persist) {
+        if (binding == null) {
+            return;
+        }
+        if (hound && fox) {
+            fox = false;
+        }
+        updatingDxpeditionModeUi = true;
+        binding.dxpeditionManualCheckBox.setChecked(hound);
+        binding.dxpeditionFoxCheckBox.setChecked(fox);
+        updatingDxpeditionModeUi = false;
+
+        GeneralVariables.manualDxpeditionHoundMode = hound;
+        GeneralVariables.manualDxpeditionFoxMode = fox;
+
+        if ((hound || fox) && GeneralVariables.synFrequency) {
+            ToastMessage.show(getString(R.string.dxpedition_split_required_hint));
+        }
+
+        if (persist) {
+            mainViewModel.databaseOpr.writeConfig("manualDxpeditionHoundMode", hound ? "1" : "0", null);
+            mainViewModel.databaseOpr.writeConfig("manualDxpeditionFoxMode", fox ? "1" : "0", null);
+        }
+
+        mainViewModel.ft8TransmitSignal.refreshSessionModeByCurrentTarget();
+        updateAutoSessionStatus();
+        updateDxpeditionMacroUi();
+    }
+
+    private void updateDxpeditionMacroUi() {
+        if (binding == null) {
+            return;
+        }
+        boolean enabled = canUseDxpeditionMacroUi();
+        if (mainViewModel != null
+                && mainViewModel.ft8TransmitSignal != null
+                && mainViewModel.ft8TransmitSignal.isManualDxpeditionFoxMode()) {
+            binding.dxpeditionMacroButton.setText(R.string.dxpedition_compound_button);
+        } else {
+            binding.dxpeditionMacroButton.setText(R.string.dxpedition_macro_button);
+        }
+        binding.dxpeditionMacroButton.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        binding.dxpeditionMacroButton.setEnabled(enabled);
+        binding.dxpeditionMacroButton.setAlpha(enabled ? 1.0f : 0.45f);
+    }
+
+    private String getDxpeditionMacroPreview(int slot) {
+        String template = DxpeditionMacroSupport.getTemplateForSlot(slot);
+        String preview = mainViewModel.ft8TransmitSignal.previewManualDxpeditionMacro(template);
+        if (preview.length() == 0) {
+            preview = DxpeditionMacroSupport.normalizeTemplate(template);
+        }
+        return DxpeditionMacroSupport.getSlotLabel(slot) + ": " + preview;
+    }
+
+    private void showDxpeditionMacroPicker() {
+        if (!canUseDxpeditionMacroUi()) {
+            return;
+        }
+        if (mainViewModel.ft8TransmitSignal.isManualDxpeditionFoxMode()) {
+            showDxpeditionFoxCompoundPicker();
+            return;
+        }
+        String[] items = new String[DxpeditionMacroSupport.SLOT_COUNT];
+        for (int i = 0; i < items.length; i++) {
+            items[i] = getDxpeditionMacroPreview(i);
+        }
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_macro_pick_title)
+                .setItems(items, (dialogInterface, which) -> {
+                    String template = DxpeditionMacroSupport.getTemplateForSlot(which);
+                    mainViewModel.ft8TransmitSignal.sendManualDxpeditionMacro(template);
+                    updateAutoSessionStatus();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private int parseCompoundReport(String input, int fallback) {
+        if (input == null) {
+            return fallback;
+        }
+        String text = input.trim();
+        if (text.length() == 0) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(text);
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private void showDxpeditionFoxCompoundPicker() {
+        int suggestedReport = mainViewModel.ft8TransmitSignal.getSuggestedDxpeditionCompoundReport();
+        String preview = mainViewModel.ft8TransmitSignal.previewManualDxpeditionCompoundMessage(
+                true, "", "", suggestedReport);
+        String autoItem = preview.length() > 0
+                ? getString(R.string.dxpedition_compound_auto_item_preview, preview)
+                : getString(R.string.dxpedition_compound_auto_item);
+
+        String[] items = new String[]{
+                autoItem,
+                getString(R.string.dxpedition_compound_manual_item)
+        };
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_compound_picker_title)
+                .setItems(items, (dialogInterface, which) -> {
+                    if (which == 0) {
+                        if (mainViewModel.ft8TransmitSignal.sendManualDxpeditionCompoundMessage(
+                                true, "", "", suggestedReport)) {
+                            updateAutoSessionStatus();
+                        }
+                        return;
+                    }
+                    showDxpeditionFoxCompoundManualDialog(suggestedReport);
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void showDxpeditionFoxCompoundManualDialog(int suggestedReport) {
+        ArrayList<String> candidates = mainViewModel.ft8TransmitSignal.getDxpeditionFoxCandidateCallsigns();
+        if (candidates.size() < 2) {
+            ToastMessage.show(getString(R.string.dxpedition_compound_need_candidates));
+            return;
+        }
+
+        LinearLayout root = new LinearLayout(requireContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        int padding = (int) (16 * requireContext().getResources().getDisplayMetrics().density);
+        root.setPadding(padding, padding, padding, 0);
+
+        TextView hint = new TextView(requireContext());
+        hint.setText(R.string.dxpedition_compound_manual_hint);
+        root.addView(hint);
+
+        Spinner call1Spinner = new Spinner(requireContext());
+        Spinner call2Spinner = new Spinner(requireContext());
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                requireContext(),
+                android.R.layout.simple_spinner_item,
+                candidates
+        );
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        call1Spinner.setAdapter(adapter);
+        call2Spinner.setAdapter(adapter);
+        call2Spinner.setSelection(Math.min(1, candidates.size() - 1));
+        root.addView(call1Spinner);
+        root.addView(call2Spinner);
+
+        EditText reportInput = new EditText(requireContext());
+        reportInput.setSingleLine(true);
+        reportInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4)});
+        reportInput.setHint(R.string.dxpedition_compound_report_hint);
+        reportInput.setText(String.format("%+03d", suggestedReport));
+        root.addView(reportInput);
+
+        TextView previewView = new TextView(requireContext());
+        root.addView(previewView);
+
+        Runnable refreshPreview = () -> {
+            String call1 = call1Spinner.getSelectedItem() == null ? "" : call1Spinner.getSelectedItem().toString();
+            String call2 = call2Spinner.getSelectedItem() == null ? "" : call2Spinner.getSelectedItem().toString();
+            int report = parseCompoundReport(reportInput.getText().toString(), suggestedReport);
+            String preview = mainViewModel.ft8TransmitSignal.previewManualDxpeditionCompoundMessage(
+                    false, call1, call2, report);
+            if (preview.length() == 0) {
+                previewView.setText(R.string.dxpedition_compound_preview_invalid);
+            } else {
+                previewView.setText(preview);
+            }
+        };
+
+        call1Spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        call2Spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        reportInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
+        refreshPreview.run();
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_compound_manual_title)
+                .setView(root)
+                .setPositiveButton(R.string.send, (dialogInterface, i) -> {
+                    String call1 = call1Spinner.getSelectedItem() == null ? "" : call1Spinner.getSelectedItem().toString();
+                    String call2 = call2Spinner.getSelectedItem() == null ? "" : call2Spinner.getSelectedItem().toString();
+                    int report = parseCompoundReport(reportInput.getText().toString(), suggestedReport);
+                    if (mainViewModel.ft8TransmitSignal.sendManualDxpeditionCompoundMessage(
+                            false, call1, call2, report)) {
+                        updateAutoSessionStatus();
+                    }
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void showDxpeditionMacroEditPicker() {
+        if (!canUseDxpeditionMacroUi()) {
+            return;
+        }
+        String[] items = new String[]{
+                getDxpeditionMacroPreview(DxpeditionMacroSupport.SLOT_CUSTOM_1),
+                getDxpeditionMacroPreview(DxpeditionMacroSupport.SLOT_CUSTOM_2)
+        };
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_macro_edit_title)
+                .setItems(items, (dialogInterface, which) ->
+                        showDxpeditionMacroEditor(which == 0 ? 0 : 1))
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void showDxpeditionMacroEditor(int customIndex) {
+        EditText input = new EditText(requireContext());
+        input.setSingleLine(false);
+        input.setMinLines(2);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(40)});
+        input.setHint(R.string.dxpedition_macro_edit_hint);
+        input.setText(DxpeditionMacroSupport.getCustomTemplate(customIndex));
+        input.setSelection(input.getText().length());
+
+        String label = DxpeditionMacroSupport.getSlotLabel(
+                customIndex == 0 ? DxpeditionMacroSupport.SLOT_CUSTOM_1 : DxpeditionMacroSupport.SLOT_CUSTOM_2
+        );
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(getString(R.string.dxpedition_macro_edit_slot_title, label))
+                .setView(input)
+                .setPositiveButton(R.string.ok_confirmed, (dialogInterface, i) -> {
+                    String template = DxpeditionMacroSupport.normalizeTemplate(input.getText().toString());
+                    if (template.length() == 0) {
+                        ToastMessage.show(getString(R.string.dxpedition_macro_empty));
+                        return;
+                    }
+                    DxpeditionMacroSupport.setCustomTemplate(customIndex, template);
+                    mainViewModel.databaseOpr.writeConfig(
+                            customIndex == 0
+                                    ? "manualDxpeditionMacroCustom1"
+                                    : "manualDxpeditionMacroCustom2",
+                            DxpeditionMacroSupport.getCustomTemplate(customIndex),
+                            null
+                    );
+                    ToastMessage.show(getString(R.string.dxpedition_macro_saved));
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void showDxpeditionGuideDialog() {
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_guide_title)
+                .setMessage(getString(R.string.dxpedition_guide_text))
+                .setPositiveButton(R.string.ok_confirmed, null)
+                .show();
+    }
+
+    private void showTransmitTypeGuideDialog() {
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.transmit_type_examples_title)
+                .setMessage(getString(R.string.transmit_type_examples_text))
+                .setPositiveButton(R.string.ok_confirmed, null)
+                .show();
+    }
+
+    private void updateAutoSessionStatus() {
+        if (binding == null) {
+            return;
+        }
+        if (isExperimentalManualTxMode()) {
+            binding.autoSessionTextView.setText("");
+            return;
+        }
+        binding.autoSessionTextView.setText(mainViewModel.ft8TransmitSignal.getAutoSessionStatusText());
     }
 
     static {
@@ -278,6 +618,48 @@ public class MyCallingFragment extends Fragment {
             switchSignalMode(mode);
         });
 
+        binding.dxpeditionManualCheckBox.setOnCheckedChangeListener(null);
+        binding.dxpeditionFoxCheckBox.setOnCheckedChangeListener(null);
+        applyManualDxpeditionMode(
+                GeneralVariables.manualDxpeditionHoundMode,
+                GeneralVariables.manualDxpeditionFoxMode,
+                false
+        );
+        binding.dxpeditionManualCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (updatingDxpeditionModeUi) {
+                return;
+            }
+            applyManualDxpeditionMode(isChecked, false, true);
+        });
+        binding.dxpeditionFoxCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (updatingDxpeditionModeUi) {
+                return;
+            }
+            applyManualDxpeditionMode(false, isChecked, true);
+        });
+        binding.dxpeditionHelpButton.setOnClickListener(view -> showDxpeditionGuideDialog());
+        binding.dxpeditionManualCheckBox.setOnLongClickListener(view -> {
+            showDxpeditionGuideDialog();
+            return true;
+        });
+        binding.dxpeditionFoxCheckBox.setOnLongClickListener(view -> {
+            showDxpeditionGuideDialog();
+            return true;
+        });
+        updateDxpeditionManualUi();
+
+        binding.dxpeditionMacroButton.setOnClickListener(view -> showDxpeditionMacroPicker());
+        binding.dxpeditionMacroButton.setOnLongClickListener(view -> {
+            if (mainViewModel.ft8TransmitSignal.isManualDxpeditionFoxMode()) {
+                showDxpeditionFoxCompoundManualDialog(
+                        mainViewModel.ft8TransmitSignal.getSuggestedDxpeditionCompoundReport()
+                );
+                return true;
+            }
+            showDxpeditionMacroEditPicker();
+            return true;
+        });
+
         // 显示UTC时间
         mainViewModel.timerSec.observe(getViewLifecycleOwner(), new Observer<Long>() {
             @Override
@@ -308,6 +690,8 @@ public class MyCallingFragment extends Fragment {
             @Override
             public void onChanged(Integer integer) {
                 updateSignalModeUI();
+                updateDxpeditionManualUi();
+                updateAutoSessionStatus();
             }
         });
 
@@ -337,6 +721,7 @@ public class MyCallingFragment extends Fragment {
                     binding.pauseTransmittingImageButton.setVisibility(View.GONE);
                     binding.pauseTransmittingImageButton.setImageResource(R.drawable.ic_baseline_pause_disable_circle_outline_24);
                 }
+                updateAutoSessionStatus();
             }
         };
         mainViewModel.ft8TransmitSignal.mutableIsTransmitting.observe(getViewLifecycleOwner(), transmittingObserver);
@@ -357,6 +742,7 @@ public class MyCallingFragment extends Fragment {
                     @Override
                     public void onChanged(ArrayList<FunctionOfTransmit> functionOfTransmits) {
                         functionOrderSpinnerAdapter.notifyDataSetChanged();
+                        updateAutoSessionStatus();
                     }
                 });
 
@@ -364,11 +750,10 @@ public class MyCallingFragment extends Fragment {
         mainViewModel.ft8TransmitSignal.mutableFunctionOrder.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @Override
             public void onChanged(Integer integer) {
-                if (mainViewModel.ft8TransmitSignal.functionList.size() < 6) {
-                    binding.functionOrderSpinner.setSelection(0);
-                } else {
-                    binding.functionOrderSpinner.setSelection(integer - 1);
-                }
+                binding.functionOrderSpinner.setSelection(
+                        mainViewModel.ft8TransmitSignal.getFunctionSelectionIndex(integer)
+                );
+                updateAutoSessionStatus();
             }
         });
 
@@ -377,7 +762,9 @@ public class MyCallingFragment extends Fragment {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
                 if (mainViewModel.ft8TransmitSignal.functionList.size() > 1) {
-                    mainViewModel.ft8TransmitSignal.setCurrentFunctionOrder(i + 1);
+                    mainViewModel.ft8TransmitSignal.setCurrentFunctionOrder(
+                            mainViewModel.ft8TransmitSignal.getFunctionOrderAt(i)
+                    );
                 }
             }
 
@@ -394,6 +781,7 @@ public class MyCallingFragment extends Fragment {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
                             "[" + getCurrentModeLabel() + "]"));
+                    updateAutoSessionStatus();
                     return;
                 }
                 if (GeneralVariables.toModifier != null) {
@@ -407,6 +795,7 @@ public class MyCallingFragment extends Fragment {
                             "[" + getCurrentModeLabel() + "] "
                                     + transmitCallsign.callsign));
                 }
+                updateAutoSessionStatus();
             }
         });
 
@@ -504,6 +893,11 @@ public class MyCallingFragment extends Fragment {
                 updateFreeTextTypeHint();
             }
         });
+        binding.transFreeTextTypeTextView.setOnClickListener(view -> showTransmitTypeGuideDialog());
+        binding.transFreeTextTypeTextView.setOnLongClickListener(view -> {
+            showTransmitTypeGuideDialog();
+            return true;
+        });
 
         binding.resetToCQImageView.setLongClickable(true);
         binding.resetToCQImageView.setOnLongClickListener(new View.OnLongClickListener() {
@@ -532,6 +926,8 @@ public class MyCallingFragment extends Fragment {
 
         showFreeTextEdit();
         updateSignalModeUI();
+        updateDxpeditionManualUi();
+        updateAutoSessionStatus();
         return binding.getRoot();
     }
 
@@ -547,6 +943,11 @@ public class MyCallingFragment extends Fragment {
             binding.transFreeTextTypeTextView.setVisibility(View.GONE);
             binding.functionOrderSpinner.setVisibility(View.VISIBLE);
         }
+        updateDxpeditionManualUi();
+        if (mainViewModel.ft8TransmitSignal != null) {
+            mainViewModel.ft8TransmitSignal.refreshSessionModeByCurrentTarget();
+        }
+        updateAutoSessionStatus();
     }
 
     /**

@@ -2144,6 +2144,28 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("autoCallFollow")) {
                     GeneralVariables.autoCallFollow = (result.equals("") || result.equals("1"));
                 }
+                if (name.equalsIgnoreCase("autoDxpeditionHound")) {
+                    GeneralVariables.autoDxpeditionHound = (result.equals("") || result.equals("1"));
+                }
+                if (name.equalsIgnoreCase("manualDxpeditionHoundMode")) {
+                    GeneralVariables.manualDxpeditionHoundMode = result.equals("1");
+                }
+                if (name.equalsIgnoreCase("manualDxpeditionFoxMode")) {
+                    GeneralVariables.manualDxpeditionFoxMode = result.equals("1");
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxHoldFrequency")) {
+                    GeneralVariables.dxpeditionFoxHoldFrequency = (result.equals("") || result.equals("1"));
+                }
+                if (name.equalsIgnoreCase("manualDxpeditionMacroCustom1")) {
+                    GeneralVariables.manualDxpeditionMacroCustom1 = result.equals("")
+                            ? "{DXCALL} RR73"
+                            : result.toUpperCase();
+                }
+                if (name.equalsIgnoreCase("manualDxpeditionMacroCustom2")) {
+                    GeneralVariables.manualDxpeditionMacroCustom2 = result.equals("")
+                            ? "{DXCALL} {MYCALL} {RPT}"
+                            : result.toUpperCase();
+                }
                 if (name.equalsIgnoreCase("pttDelay")) {
                     GeneralVariables.pttDelay = result.equals("") ? 100 : Integer.parseInt(result);
                 }

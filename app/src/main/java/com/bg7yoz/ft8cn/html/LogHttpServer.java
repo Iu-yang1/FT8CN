@@ -658,6 +658,10 @@ public class LogHttpServer extends NanoHTTPD {
                 , String.valueOf(GeneralVariables.autoCallFollow));
 
         HtmlContext.tableKeyRow(result, true
+                , GeneralVariables.getStringFromResource(R.string.dxpedition_auto_hound_on)
+                , String.valueOf(GeneralVariables.autoDxpeditionHound));
+
+        HtmlContext.tableKeyRow(result, true
                 , GeneralVariables.getStringFromResource(R.string.html_target_callsign)
                 , (mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() != null)
                         ? mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue().callsign : "");
