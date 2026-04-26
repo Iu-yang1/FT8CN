@@ -1,6 +1,7 @@
 #include "wsjtx_port.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <new>
 #include <vector>
@@ -17,13 +18,23 @@ constexpr int kFt8PhaseTicksLate = 47;
 constexpr float kFt8EarlySubtractDtSec = 0.40f;
 
 constexpr float kFt4PeakMatchHz = 35.0f;
-constexpr int kFt4SmoothRadius = 7;
-constexpr int kFt4BaselineRadius = 24;
+constexpr int kFt4CoarseFftSize = 2304;
+constexpr int kFt4CoarseHopSize = 576;
+constexpr int kFt4DownsampleFactor = 18;
+constexpr int kFt4MaxWaveSamples = 21 * 3456;
+constexpr int kFt4BaselineSegments = 10;
+constexpr float kFt4PeakPercentile = 0.10f;
+constexpr float kFt4PeakOffsetHz = -1.5f * 12000.0f / 576.0f;
 
 struct subtract_job_t {
     uint8_t a91[FTX_LDPC_K_BYTES];
     float frequency;
     float time_sec;
+};
+
+struct ft4_peak_t {
+    float frequency;
+    float strength;
 };
 
 struct wsjtx_port_decoder_t {
@@ -343,108 +354,262 @@ static float abs_diff(float lhs, float rhs) {
     return (delta < 0.0f) ? -delta : delta;
 }
 
-static void build_ft4_average_spectrum(const wsjtx_port_decoder_t *state, std::vector<float> *avg) {
-    if (state == nullptr || avg == nullptr) {
+static void build_ft4_nuttall_window(std::vector<float> *window) {
+    if (window == nullptr) {
         return;
     }
 
-    const waterfall_t &wf = state->mon.wf;
-    avg->assign(wf.num_bins, 0.0f);
-    if (wf.num_blocks <= 0 || wf.mag2 == nullptr) {
-        return;
-    }
-
-    const int bins_per_time = wf.freq_osr * wf.num_bins;
-    const float scale = 1.0f / (float) (wf.num_blocks * wf.time_osr * wf.freq_osr);
-
-    for (int block = 0; block < wf.num_blocks; ++block) {
-        const int block_base = block * wf.block_stride;
-        for (int time_sub = 0; time_sub < wf.time_osr; ++time_sub) {
-            const int time_base = block_base + time_sub * bins_per_time;
-            for (int freq_sub = 0; freq_sub < wf.freq_osr; ++freq_sub) {
-                const int freq_base = time_base + freq_sub * wf.num_bins;
-                for (int bin = 0; bin < wf.num_bins; ++bin) {
-                    (*avg)[bin] += wf.mag2[freq_base + bin];
-                }
-            }
-        }
-    }
-
-    for (float &value : *avg) {
-        value *= scale;
+    window->assign(kFt4CoarseFftSize, 0.0f);
+    const float denom = (float) (kFt4CoarseFftSize - 1);
+    for (int idx = 0; idx < kFt4CoarseFftSize; ++idx) {
+        const float phase = (2.0f * (float) M_PI * idx) / denom;
+        (*window)[idx] = 0.355768f
+                         - 0.487396f * std::cos(phase)
+                         + 0.144232f * std::cos(2.0f * phase)
+                         - 0.012604f * std::cos(3.0f * phase);
     }
 }
 
-static void smooth_series(const std::vector<float> &src, int radius, std::vector<float> *dst) {
-    if (dst == nullptr) {
-        return;
+static float compute_percentile(std::vector<float> values, float fraction) {
+    if (values.empty()) {
+        return 0.0f;
     }
 
-    dst->assign(src.size(), 0.0f);
-    if (src.empty()) {
-        return;
+    int nth = (int) (fraction * (float) (values.size() - 1));
+    if (nth < 0) {
+        nth = 0;
+    }
+    if (nth >= (int) values.size()) {
+        nth = (int) values.size() - 1;
+    }
+    std::nth_element(values.begin(), values.begin() + nth, values.end());
+    return values[nth];
+}
+
+static bool build_ft4_raw_average_spectrum(const wsjtx_port_decoder_t *state,
+                                           std::vector<float> *avg_power,
+                                           float *df_hz) {
+    if (state == nullptr || avg_power == nullptr || df_hz == nullptr) {
+        return false;
     }
 
-    for (int idx = 0; idx < (int) src.size(); ++idx) {
-        const int lo = std::max(0, idx - radius);
-        const int hi = std::min((int) src.size() - 1, idx + radius);
-        float sum = 0.0f;
-        for (int pos = lo; pos <= hi; ++pos) {
-            sum += src[pos];
+    const int sample_count = std::min((int) state->raw_samples.size(), kFt4MaxWaveSamples);
+    if (sample_count < kFt4CoarseFftSize) {
+        return false;
+    }
+
+    std::vector<float> window;
+    build_ft4_nuttall_window(&window);
+
+    const int spectrum_bins = kFt4CoarseFftSize / 2;
+    avg_power->assign(spectrum_bins, 0.0f);
+    *df_hz = (float) state->mon_cfg.sample_rate / (float) kFt4CoarseFftSize;
+
+    kiss_fftr_cfg fft_cfg = kiss_fftr_alloc(kFt4CoarseFftSize, 0, nullptr, nullptr);
+    if (fft_cfg == nullptr) {
+        avg_power->clear();
+        return false;
+    }
+
+    std::vector<kiss_fft_scalar> timedata(kFt4CoarseFftSize, 0.0f);
+    std::vector<kiss_fft_cpx> freqdata((kFt4CoarseFftSize / 2) + 1);
+
+    int windows_used = 0;
+    for (int start = 0; start + kFt4CoarseFftSize <= sample_count; start += kFt4CoarseHopSize) {
+        for (int idx = 0; idx < kFt4CoarseFftSize; ++idx) {
+            timedata[idx] = (state->raw_samples[start + idx] / 300.0f) * window[idx];
         }
-        (*dst)[idx] = sum / (float) (hi - lo + 1);
+
+        kiss_fftr(fft_cfg, timedata.data(), freqdata.data());
+        for (int bin = 1; bin <= spectrum_bins; ++bin) {
+            const float re = freqdata[bin].r;
+            const float im = freqdata[bin].i;
+            (*avg_power)[bin - 1] += (re * re) + (im * im);
+        }
+        ++windows_used;
+    }
+
+    kiss_fftr_free(fft_cfg);
+    if (windows_used <= 0) {
+        avg_power->clear();
+        return false;
+    }
+
+    const float inv_windows = 1.0f / (float) windows_used;
+    for (float &value : *avg_power) {
+        value *= inv_windows;
+    }
+    return true;
+}
+
+static void build_ft4_baseline(const std::vector<float> &avg_power,
+                               int min_bin,
+                               int max_bin,
+                               std::vector<float> *baseline) {
+    if (baseline == nullptr) {
+        return;
+    }
+
+    baseline->assign(avg_power.size(), 1.0f);
+    if (avg_power.empty() || min_bin >= max_bin) {
+        return;
+    }
+
+    std::vector<float> db(avg_power.size(), 0.0f);
+    for (int idx = min_bin; idx <= max_bin && idx < (int) avg_power.size(); ++idx) {
+        db[idx] = 10.0f * std::log10(std::max(avg_power[idx], 1e-12f));
+    }
+
+    struct baseline_point_t {
+        int midpoint;
+        float value_db;
+    };
+
+    std::vector<baseline_point_t> points;
+    const int covered = max_bin - min_bin + 1;
+    const int segment_len = std::max(1, covered / kFt4BaselineSegments);
+
+    for (int seg = 0; seg < kFt4BaselineSegments; ++seg) {
+        const int seg_lo = min_bin + seg * segment_len;
+        if (seg_lo > max_bin) {
+            break;
+        }
+
+        int seg_hi = (seg == kFt4BaselineSegments - 1) ? max_bin : std::min(max_bin, seg_lo + segment_len - 1);
+        std::vector<float> slice;
+        slice.reserve(seg_hi - seg_lo + 1);
+        for (int idx = seg_lo; idx <= seg_hi; ++idx) {
+            slice.push_back(db[idx]);
+        }
+
+        const float base_db = compute_percentile(std::move(slice), kFt4PeakPercentile) + 0.65f;
+        points.push_back({(seg_lo + seg_hi) / 2, base_db});
+    }
+
+    if (points.empty()) {
+        return;
+    }
+
+    for (int idx = 0; idx < min_bin; ++idx) {
+        (*baseline)[idx] = std::pow(10.0f, points.front().value_db / 10.0f);
+    }
+
+    for (int point_idx = 0; point_idx < (int) points.size() - 1; ++point_idx) {
+        const baseline_point_t &lhs = points[point_idx];
+        const baseline_point_t &rhs = points[point_idx + 1];
+        const int span = std::max(1, rhs.midpoint - lhs.midpoint);
+        for (int idx = lhs.midpoint; idx <= rhs.midpoint && idx < (int) baseline->size(); ++idx) {
+            const float t = (float) (idx - lhs.midpoint) / (float) span;
+            const float interp_db = lhs.value_db + t * (rhs.value_db - lhs.value_db);
+            (*baseline)[idx] = std::pow(10.0f, interp_db / 10.0f);
+        }
+    }
+
+    for (int idx = points.back().midpoint; idx <= max_bin && idx < (int) baseline->size(); ++idx) {
+        (*baseline)[idx] = std::pow(10.0f, points.back().value_db / 10.0f);
     }
 }
 
-static std::vector<float> find_ft4_peak_frequencies(const wsjtx_port_decoder_t *state) {
-    std::vector<float> avg;
-    build_ft4_average_spectrum(state, &avg);
-    if (avg.size() < 3) {
-        return {};
+static void smooth_ft4_average_spectrum(const std::vector<float> &avg_power, std::vector<float> *smoothed) {
+    if (smoothed == nullptr) {
+        return;
     }
 
-    std::vector<float> smooth;
-    std::vector<float> baseline;
-    smooth_series(avg, kFt4SmoothRadius, &smooth);
-    smooth_series(avg, kFt4BaselineRadius, &baseline);
+    smoothed->assign(avg_power.size(), 0.0f);
+    if (avg_power.empty()) {
+        return;
+    }
 
-    std::vector<float> peaks;
-    const int min_bin = std::max(1, (int) (state->mon_cfg.f_min * state->mon.symbol_period));
-    const int max_bin = std::min((int) smooth.size() - 2,
-                                 (int) (state->mon_cfg.f_max * state->mon.symbol_period));
-
-    for (int bin = min_bin; bin <= max_bin; ++bin) {
-        const float base = std::max(baseline[bin], 1e-6f);
-        const float prev = smooth[bin - 1] / std::max(baseline[bin - 1], 1e-6f);
-        const float curr = smooth[bin] / base;
-        const float next = smooth[bin + 1] / std::max(baseline[bin + 1], 1e-6f);
-        if (curr < 1.15f || curr < prev || curr < next) {
+    for (int idx = 0; idx < (int) avg_power.size(); ++idx) {
+        if (idx < 7 || idx >= (int) avg_power.size() - 7) {
             continue;
         }
 
-        peaks.push_back((float) bin / state->mon.symbol_period);
+        float sum = 0.0f;
+        for (int pos = idx - 7; pos <= idx + 7; ++pos) {
+            sum += avg_power[pos];
+        }
+        (*smoothed)[idx] = sum / 15.0f;
+    }
+}
+
+static float ft4_sync_ratio_threshold(int min_score) {
+    if (min_score >= 10) {
+        return 1.20f;
+    }
+    if (min_score >= 9) {
+        return 1.15f;
+    }
+    return 1.10f;
+}
+
+static std::vector<ft4_peak_t> find_ft4_peak_frequencies(const wsjtx_port_decoder_t *state, int min_score) {
+    std::vector<float> avg_power;
+    float df_hz = 0.0f;
+    if (!build_ft4_raw_average_spectrum(state, &avg_power, &df_hz) || avg_power.size() < 3) {
+        return {};
+    }
+
+    std::vector<float> smoothed;
+    std::vector<float> baseline;
+    smooth_ft4_average_spectrum(avg_power, &smoothed);
+
+    int min_bin = (int) (std::max(state->mon_cfg.f_min, 200.0f) / df_hz);
+    int max_bin = (int) (std::min(state->mon_cfg.f_max, 4910.0f) / df_hz);
+    min_bin = std::max(1, min_bin);
+    max_bin = std::min((int) avg_power.size() - 2, max_bin);
+    build_ft4_baseline(avg_power, min_bin, max_bin, &baseline);
+
+    std::vector<ft4_peak_t> peaks;
+    const float sync_min = ft4_sync_ratio_threshold(min_score);
+
+    for (int bin = min_bin; bin <= max_bin; ++bin) {
+        const float base = std::max(baseline[bin], 1e-6f);
+        const float prev = smoothed[bin - 1] / std::max(baseline[bin - 1], 1e-6f);
+        const float curr = smoothed[bin] / base;
+        const float next = smoothed[bin + 1] / std::max(baseline[bin + 1], 1e-6f);
+        if (curr < sync_min || curr < prev || curr < next) {
+            continue;
+        }
+
+        const float den = prev - (2.0f * curr) + next;
+        float delta = 0.0f;
+        if (std::fabs(den) > 1e-6f) {
+            delta = 0.5f * (prev - next) / den;
+        }
+
+        const float frequency = ((float) bin + delta) * df_hz + kFt4PeakOffsetHz;
+        if (frequency < 200.0f || frequency > 4910.0f) {
+            continue;
+        }
+
+        const float strength = curr - 0.25f * (prev - next) * delta;
+        peaks.push_back({frequency, strength});
         if ((int) peaks.size() >= kMax_candidates) {
             break;
         }
     }
 
+    std::sort(peaks.begin(), peaks.end(), [](const ft4_peak_t &lhs, const ft4_peak_t &rhs) {
+        if (lhs.strength != rhs.strength) {
+            return lhs.strength > rhs.strength;
+        }
+        return lhs.frequency < rhs.frequency;
+    });
     return peaks;
 }
 
-static bool candidate_matches_ft4_peaks(const wsjtx_port_decoder_t *state,
-                                        const candidate_t &candidate,
-                                        const std::vector<float> &peak_freqs) {
-    if (peak_freqs.empty()) {
-        return true;
-    }
-
+static float candidate_ft4_peak_strength(const wsjtx_port_decoder_t *state,
+                                         const candidate_t &candidate,
+                                         const std::vector<ft4_peak_t> &peaks) {
     const float frequency = candidate_freq_hz(state, candidate);
-    for (float peak : peak_freqs) {
-        if (abs_diff(frequency, peak) <= kFt4PeakMatchHz) {
-            return true;
+    float best_strength = -1.0f;
+    for (const ft4_peak_t &peak : peaks) {
+        if (abs_diff(frequency, peak.frequency) <= kFt4PeakMatchHz) {
+            best_strength = std::max(best_strength, peak.strength);
         }
     }
-    return false;
+    return best_strength;
 }
 
 static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
@@ -460,21 +625,54 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
         return 0;
     }
 
-    const std::vector<float> peak_freqs = find_ft4_peak_frequencies(state);
-    int filtered_count = 0;
+    const std::vector<ft4_peak_t> peaks = find_ft4_peak_frequencies(state, min_score);
+    struct ranked_candidate_t {
+        candidate_t candidate;
+        float peak_strength;
+        bool matched_peak;
+    };
 
-    for (int idx = 0; idx < generic_count && filtered_count < kMax_candidates; ++idx) {
-        if (!candidate_matches_ft4_peaks(state, generic_candidates[idx], peak_freqs) &&
-            generic_candidates[idx].score < min_score + 3) {
+    std::vector<ranked_candidate_t> ranked;
+    ranked.reserve(generic_count);
+
+    for (int idx = 0; idx < generic_count; ++idx) {
+        const float peak_strength = candidate_ft4_peak_strength(state, generic_candidates[idx], peaks);
+        const bool matched_peak = peak_strength > 0.0f;
+        if (!matched_peak && generic_candidates[idx].score < min_score + 3) {
             continue;
         }
-        out[filtered_count++] = generic_candidates[idx];
+        ranked.push_back({generic_candidates[idx], peak_strength, matched_peak});
     }
 
-    if (filtered_count == 0) {
+    if (ranked.empty()) {
         const int fallback = std::min(generic_count, (int) kMax_candidates);
         std::copy(generic_candidates, generic_candidates + fallback, out);
         return fallback;
+    }
+
+    std::stable_sort(ranked.begin(), ranked.end(),
+                     [](const ranked_candidate_t &lhs, const ranked_candidate_t &rhs) {
+                         if (lhs.matched_peak != rhs.matched_peak) {
+                             return lhs.matched_peak > rhs.matched_peak;
+                         }
+                         if (lhs.peak_strength != rhs.peak_strength) {
+                             return lhs.peak_strength > rhs.peak_strength;
+                         }
+                         if (lhs.candidate.score != rhs.candidate.score) {
+                             return lhs.candidate.score > rhs.candidate.score;
+                         }
+                         if (lhs.candidate.time_offset != rhs.candidate.time_offset) {
+                             return lhs.candidate.time_offset < rhs.candidate.time_offset;
+                         }
+                         return lhs.candidate.freq_offset < rhs.candidate.freq_offset;
+                     });
+
+    int filtered_count = 0;
+    for (const ranked_candidate_t &entry : ranked) {
+        if (filtered_count >= kMax_candidates) {
+            break;
+        }
+        out[filtered_count++] = entry.candidate;
     }
 
     return filtered_count;
