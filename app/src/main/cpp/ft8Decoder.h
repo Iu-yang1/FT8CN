@@ -12,6 +12,15 @@ typedef enum {
     DECODER_BACKEND_WSJTX_PORT = 1
 } decoder_backend_t;
 
+typedef struct {
+    int decode_pass_count;
+    int multi_decode_round_count;
+    int qso_freq_sensitivity;
+    int decode_sensitivity;
+    bool enable_early_decode;
+    bool enable_wideband_dx_search;
+} wsjtx_decoder_options_t;
+
 enum {
     kMax_candidates = 220,
     kMax_decoded_messages = 100,
@@ -63,6 +72,7 @@ void decoder_ft8_reset(decoder_t *decoder, long utcTime, int num_samples);
 void decoder_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]);
 void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep);
 void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
+void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
 bool decoder_owns_session_flow(decoder_t *decoder);
 void decoder_subtract_signal(decoder_t *decoder,
                              const uint8_t *payload,

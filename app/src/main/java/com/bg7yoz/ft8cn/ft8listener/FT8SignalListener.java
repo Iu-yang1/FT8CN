@@ -290,6 +290,15 @@ public class FT8SignalListener {
                         apHints[0],
                         apHints[1]
                 );
+                DecoderSetWsjtOptions(
+                        ft8Decoder,
+                        GeneralVariables.wsjtxDecodePassCount,
+                        GeneralVariables.wsjtxMultiDecodeRoundCount,
+                        GeneralVariables.wsjtxQsoFreqSensitivity,
+                        GeneralVariables.wsjtxDecodeSensitivity,
+                        GeneralVariables.wsjtxEnableEarlyDecode,
+                        GeneralVariables.wsjtxWidebandDxSearch
+                );
                 // AP-lite only receives my-call plus a few follow-call/grid hints before decode starts.
                 DecoderMonitorPressFloat(voiceData, ft8Decoder);
                 boolean nativeOwnsSessionFlow = DecoderOwnsSessionFlow(ft8Decoder);
@@ -681,5 +690,12 @@ public class FT8SignalListener {
 
     public native boolean DecoderOwnsSessionFlow(long decoder);
     public native void DecoderSetApHints(long decoder, String myCall, String[] hintCallsigns, String[] hintGrids);
+    public native void DecoderSetWsjtOptions(long decoder,
+                                             int decodePassCount,
+                                             int multiDecodeRoundCount,
+                                             int qsoFreqSensitivity,
+                                             int decodeSensitivity,
+                                             boolean enableEarlyDecode,
+                                             boolean enableWidebandDxSearch);
     // Native only receives a tiny hint set here; the AP logic still lives in the deep fallback path.
 }

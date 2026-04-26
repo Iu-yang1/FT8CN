@@ -20,6 +20,7 @@ void wsjtx_port_reset(decoder_t *decoder, long utcTime, int num_samples);
 void wsjtx_port_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]);
 void wsjtx_port_set_ldpc_iterations(decoder_t *decoder, int iterations);
 void wsjtx_port_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
+void wsjtx_port_set_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
 bool wsjtx_port_owns_session_flow(decoder_t *decoder);
 void wsjtx_port_subtract_signal(decoder_t *decoder,
                                 const uint8_t *payload,

@@ -60,6 +60,15 @@ public class GeneralVariables {
      * 是否开启深度解码
      */
     public static boolean deepDecodeMode = true;
+    public static final int WSJTX_SENSITIVITY_LOW = 0;
+    public static final int WSJTX_SENSITIVITY_NORMAL = 1;
+    public static final int WSJTX_SENSITIVITY_HIGH = 2;
+    public static int wsjtxDecodePassCount = 3;
+    public static int wsjtxMultiDecodeRoundCount = 3;
+    public static int wsjtxQsoFreqSensitivity = WSJTX_SENSITIVITY_NORMAL;
+    public static int wsjtxDecodeSensitivity = WSJTX_SENSITIVITY_NORMAL;
+    public static boolean wsjtxEnableEarlyDecode = true;
+    public static boolean wsjtxWidebandDxSearch = true;
     // Experimental modem modes for 4FSK/CPFSK bring-up.
     public static final int EXP_CODEC_MODE_OFF = 0;
     public static final int EXP_CODEC_MODE_4FSK = 1;

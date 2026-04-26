@@ -255,6 +255,36 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderOwnsSessionFlow(JNIEn
 
 extern "C"
 JNIEXPORT void JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetWsjtOptions(JNIEnv *env,
+                                                                          jobject thiz,
+                                                                          jlong decoder,
+                                                                          jint decode_pass_count,
+                                                                          jint multi_decode_round_count,
+                                                                          jint qso_freq_sensitivity,
+                                                                          jint decode_sensitivity,
+                                                                          jboolean enable_early_decode,
+                                                                          jboolean enable_wideband_dx_search) {
+    (void) env;
+    (void) thiz;
+
+    decoder_t *dd;
+    dd = (decoder_t *) decoder;
+    if (dd == nullptr) {
+        return;
+    }
+
+    wsjtx_decoder_options_t options{};
+    options.decode_pass_count = decode_pass_count;
+    options.multi_decode_round_count = multi_decode_round_count;
+    options.qso_freq_sensitivity = qso_freq_sensitivity;
+    options.decode_sensitivity = decode_sensitivity;
+    options.enable_early_decode = enable_early_decode;
+    options.enable_wideband_dx_search = enable_wideband_dx_search;
+    decoder_set_wsjtx_options(dd, &options);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetApHints(JNIEnv *env, jobject thiz,
                                                                       jlong decoder,
                                                                       jstring my_call,

@@ -282,6 +282,16 @@ void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints) {
     memcpy(&decoder->ap_hints, ap_hints, sizeof(decoder->ap_hints));
 }
 
+void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t *options) {
+    if (decoder == NULL) {
+        return;
+    }
+
+    if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
+        wsjtx_port_set_options(decoder, options);
+    }
+}
+
 bool decoder_owns_session_flow(decoder_t *decoder) {
     if (decoder == NULL) {
         return false;

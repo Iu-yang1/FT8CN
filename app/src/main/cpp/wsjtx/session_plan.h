@@ -49,6 +49,15 @@ struct SessionPass {
     bool limit_early_dt;
 };
 
+struct DecoderOptions {
+    int decode_pass_count;
+    int multi_decode_round_count;
+    int qso_freq_sensitivity;
+    int decode_sensitivity;
+    bool enable_early_decode;
+    bool enable_wideband_dx_search;
+};
+
 struct SessionPlan {
     ModeDescriptor mode;
     std::vector<SessionPass> passes;
@@ -56,7 +65,11 @@ struct SessionPlan {
 
 ModeDescriptor ResolveModeDescriptor(ftx_protocol_t protocol);
 bool HasApHints(const char *my_call, int hint_call_count);
-SessionPlan BuildSessionPlan(const ModeDescriptor &mode, bool deep_mode, bool has_ap_hints);
+DecoderOptions DefaultDecoderOptions();
+SessionPlan BuildSessionPlan(const ModeDescriptor &mode,
+                             bool deep_mode,
+                             bool has_ap_hints,
+                             const DecoderOptions &options);
 
 }  // namespace wsjtx
 

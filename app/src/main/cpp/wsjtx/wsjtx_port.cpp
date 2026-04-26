@@ -14,14 +14,10 @@ extern "C" {
 namespace {
 
 constexpr int kFt8PhaseTicksFull = 50;
-constexpr int kFt8PhaseTicksEarly = 41;
-constexpr int kFt8PhaseTicksLate = 47;
 constexpr float kFt8EarlySubtractDtSec = 0.40f;
 
-constexpr float kFt4PeakMatchHz = 35.0f;
 constexpr int kFt4CoarseFftSize = 2304;
 constexpr int kFt4CoarseHopSize = 576;
-constexpr int kFt4DownsampleFactor = 18;
 constexpr int kFt4MaxWaveSamples = 21 * 3456;
 constexpr int kFt4BaselineSegments = 10;
 constexpr float kFt4PeakPercentile = 0.10f;
@@ -53,7 +49,23 @@ struct wsjtx_port_decoder_t {
     ap_hints_t ap_hints;
     std::vector<float> raw_samples;
     std::vector<ft8_message> session_results;
+    wsjtx::DecoderOptions options;
 };
+
+static wsjtx::DecoderOptions convert_decoder_options(const wsjtx_decoder_options_t *options) {
+    wsjtx::DecoderOptions converted = wsjtx::DefaultDecoderOptions();
+    if (options == nullptr) {
+        return converted;
+    }
+
+    converted.decode_pass_count = options->decode_pass_count;
+    converted.multi_decode_round_count = options->multi_decode_round_count;
+    converted.qso_freq_sensitivity = options->qso_freq_sensitivity;
+    converted.decode_sensitivity = options->decode_sensitivity;
+    converted.enable_early_decode = options->enable_early_decode;
+    converted.enable_wideband_dx_search = options->enable_wideband_dx_search;
+    return converted;
+}
 
 static wsjtx_port_decoder_t *get_state(decoder_t *decoder) {
     return (decoder == nullptr) ? nullptr : static_cast<wsjtx_port_decoder_t *>(decoder->backend_state);
@@ -355,6 +367,21 @@ static float abs_diff(float lhs, float rhs) {
     return (delta < 0.0f) ? -delta : delta;
 }
 
+static float ft4_peak_match_hz(const wsjtx_port_decoder_t *state) {
+    if (state == nullptr) {
+        return 35.0f;
+    }
+
+    switch (state->options.qso_freq_sensitivity) {
+        case 0:
+            return 24.0f;
+        case 2:
+            return 52.0f;
+        default:
+            return 35.0f;
+    }
+}
+
 static void build_ft4_nuttall_window(std::vector<float> *window) {
     if (window == nullptr) {
         return;
@@ -604,9 +631,10 @@ static float candidate_ft4_peak_strength(const wsjtx_port_decoder_t *state,
                                          const candidate_t &candidate,
                                          const std::vector<ft4_peak_t> &peaks) {
     const float frequency = candidate_freq_hz(state, candidate);
+    const float peak_match_hz = ft4_peak_match_hz(state);
     float best_strength = -1.0f;
     for (const ft4_peak_t &peak : peaks) {
-        if (abs_diff(frequency, peak.frequency) <= kFt4PeakMatchHz) {
+        if (abs_diff(frequency, peak.frequency) <= peak_match_hz) {
             best_strength = std::max(best_strength, peak.strength);
         }
     }
@@ -730,7 +758,10 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
     const wsjtx::ModeDescriptor mode = wsjtx::ResolveModeDescriptor(state->mon_cfg.protocol);
     const bool deep_mode = state->ldpc_iterations > fast_kLDPC_iterations;
     const bool has_ap_hints = wsjtx::HasApHints(state->ap_hints.my_call, state->ap_hints.hint_call_count);
-    const wsjtx::SessionPlan plan = wsjtx::BuildSessionPlan(mode, deep_mode, has_ap_hints);
+    const wsjtx::SessionPlan plan = wsjtx::BuildSessionPlan(mode,
+                                                            deep_mode,
+                                                            has_ap_hints,
+                                                            state->options);
 
     if (plan.passes.empty()) {
         state->num_candidates = 0;
@@ -801,6 +832,7 @@ bool wsjtx_port_init_decoder(decoder_t *decoder,
     state->mon_cfg.time_osr = kTime_osr;
     state->mon_cfg.freq_osr = kFreq_osr;
     state->mon_cfg.protocol = is_ft8 ? PROTO_FT8 : PROTO_FT4;
+    state->options = wsjtx::DefaultDecoderOptions();
     monitor_init(&state->mon, &state->mon_cfg);
     state->raw_samples.reserve(std::max(num_samples, 0));
     decoder->backend_state = state;
@@ -925,6 +957,14 @@ void wsjtx_port_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints) {
         return;
     }
     std::memcpy(&state->ap_hints, ap_hints, sizeof(state->ap_hints));
+}
+
+void wsjtx_port_set_options(decoder_t *decoder, const wsjtx_decoder_options_t *options) {
+    auto *state = get_state(decoder);
+    if (state == nullptr) {
+        return;
+    }
+    state->options = convert_decoder_options(options);
 }
 
 bool wsjtx_port_owns_session_flow(decoder_t *decoder) {
