@@ -1,4 +1,5 @@
 #include "wsjtx_port.h"
+#include "session_plan.h"
 
 #include <algorithm>
 #include <cmath>
@@ -67,7 +68,7 @@ static bool state_is_ft8(const wsjtx_port_decoder_t *state) {
 }
 
 static bool state_owns_session_flow(const wsjtx_port_decoder_t *state) {
-    return state_is_ft8(state) || state_is_ft4(state);
+    return wsjtx::ResolveModeDescriptor(state->mon_cfg.protocol).owns_session_flow;
 }
 
 static int base_min_sync_score(const wsjtx_port_decoder_t *state) {
@@ -678,136 +679,97 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
     return filtered_count;
 }
 
-static void run_ft8_session_passes(wsjtx_port_decoder_t *state) {
-    if (state == nullptr) {
-        return;
+static int collect_candidates_for_pass(wsjtx_port_decoder_t *state,
+                                       const wsjtx::SessionPass &pass,
+                                       candidate_t out[kMax_candidates]) {
+    switch (pass.candidate_source) {
+        case wsjtx::CandidateSource::kFt4RawFft:
+            return collect_ft4_candidates(state, pass.min_sync_score, out);
+        case wsjtx::CandidateSource::kWaterfall:
+        default:
+            return collect_sorted_candidates(state, pass.min_sync_score, out);
     }
-
-    state->session_results.clear();
-    reset_dedupe_state(state);
-
-    const bool deep_mode = state->ldpc_iterations > fast_kLDPC_iterations;
-    const int base_score = base_min_sync_score(state);
-    const int fast_threshold = std::max(base_score, 12);
-
-    if (!deep_mode) {
-        rebuild_fullslot_waterfall(state);
-        state->num_candidates = collect_sorted_candidates(state, base_score, state->candidate_list);
-        decode_candidates(state,
-                          state->candidate_list,
-                          state->num_candidates,
-                          fast_kLDPC_iterations,
-                          -1.0f,
-                          nullptr);
-        state->num_candidates = (int) state->session_results.size();
-        return;
-    }
-
-    std::vector<subtract_job_t> fullslot_jobs;
-
-    const int early_samples = sample_count_for_phase(state, kFt8PhaseTicksEarly);
-    if (early_samples > 0) {
-        rebuild_waterfall(state, early_samples);
-        const int early_count = collect_sorted_candidates(state, fast_threshold, state->candidate_list);
-        std::vector<subtract_job_t> early_jobs;
-        decode_candidates(state,
-                          state->candidate_list,
-                          early_count,
-                          fast_kLDPC_iterations,
-                          kFt8EarlySubtractDtSec,
-                          &early_jobs);
-        fullslot_jobs.insert(fullslot_jobs.end(), early_jobs.begin(), early_jobs.end());
-    }
-
-    const int late_samples = sample_count_for_phase(state, kFt8PhaseTicksLate);
-    if (late_samples > 0) {
-        rebuild_waterfall(state, late_samples);
-        apply_subtract_jobs(state, fullslot_jobs, 0);
-        const int late_count = collect_sorted_candidates(state, std::max(base_score, 11), state->candidate_list);
-        decode_candidates(state,
-                          state->candidate_list,
-                          late_count,
-                          fast_kLDPC_iterations,
-                          -1.0f,
-                          &fullslot_jobs);
-    }
-
-    rebuild_fullslot_waterfall(state);
-    apply_subtract_jobs(state, fullslot_jobs, 0);
-
-    const int pass_thresholds[3] = {
-            base_score,
-            std::max(8, base_score - 1),
-            std::max(7, base_score - 2)
-    };
-
-    for (int pass = 0; pass < 3; ++pass) {
-        const int candidate_count = collect_sorted_candidates(state,
-                                                              pass_thresholds[pass],
-                                                              state->candidate_list);
-        if (candidate_count <= 0) {
-            break;
-        }
-
-        std::vector<subtract_job_t> pass_jobs;
-        const int new_results = decode_candidates(state,
-                                                  state->candidate_list,
-                                                  candidate_count,
-                                                  state->ldpc_iterations,
-                                                  -1.0f,
-                                                  &pass_jobs);
-        if (new_results == 0) {
-            break;
-        }
-
-        if (pass + 1 < 3) {
-            apply_subtract_jobs(state, pass_jobs, 0);
-        }
-    }
-
-    state->num_candidates = (int) state->session_results.size();
 }
 
-static void run_ft4_session_passes(wsjtx_port_decoder_t *state) {
+static void append_subtract_history(std::vector<subtract_job_t> *history,
+                                    const std::vector<subtract_job_t> &pass_jobs) {
+    if (history == nullptr || pass_jobs.empty()) {
+        return;
+    }
+    history->insert(history->end(), pass_jobs.begin(), pass_jobs.end());
+}
+
+static void rebuild_for_pass(wsjtx_port_decoder_t *state, const wsjtx::SessionPass &pass) {
+    if (state == nullptr) {
+        return;
+    }
+
+    if (pass.phase_ticks <= 0) {
+        return;
+    }
+
+    if (pass.phase_ticks >= kFt8PhaseTicksFull) {
+        rebuild_fullslot_waterfall(state);
+        return;
+    }
+    rebuild_waterfall(state, sample_count_for_phase(state, pass.phase_ticks));
+}
+
+static bool should_continue_after_empty_pass(const wsjtx::SessionPass &pass) {
+    return pass.role == wsjtx::PassRole::kEarly || pass.role == wsjtx::PassRole::kLate;
+}
+
+static void run_session_passes(wsjtx_port_decoder_t *state) {
     if (state == nullptr) {
         return;
     }
 
     state->session_results.clear();
     reset_dedupe_state(state);
-    rebuild_fullslot_waterfall(state);
 
+    const wsjtx::ModeDescriptor mode = wsjtx::ResolveModeDescriptor(state->mon_cfg.protocol);
     const bool deep_mode = state->ldpc_iterations > fast_kLDPC_iterations;
-    const int pass_count = deep_mode ? 3 : 1;
-    const int base_score = base_min_sync_score(state);
-    const int pass_thresholds[3] = {
-            std::max(base_score, 10),
-            std::max(base_score, 9),
-            std::max(7, base_score)
-    };
+    const bool has_ap_hints = wsjtx::HasApHints(state->ap_hints.my_call, state->ap_hints.hint_call_count);
+    const wsjtx::SessionPlan plan = wsjtx::BuildSessionPlan(mode, deep_mode, has_ap_hints);
 
-    for (int pass = 0; pass < pass_count; ++pass) {
-        const int candidate_count = collect_ft4_candidates(state,
-                                                           pass_thresholds[pass],
-                                                           state->candidate_list);
+    if (plan.passes.empty()) {
+        state->num_candidates = 0;
+        return;
+    }
+
+    std::vector<subtract_job_t> subtract_history;
+
+    for (const wsjtx::SessionPass &pass : plan.passes) {
+        rebuild_for_pass(state, pass);
+        if (pass.apply_subtract_history && !subtract_history.empty()) {
+            apply_subtract_jobs(state, subtract_history, plan.mode.subtract_mode);
+        }
+
+        const int candidate_count = collect_candidates_for_pass(state, pass, state->candidate_list);
         if (candidate_count <= 0) {
+            if (should_continue_after_empty_pass(pass)) {
+                continue;
+            }
             break;
         }
 
-        const int iterations = (deep_mode && pass > 0) ? state->ldpc_iterations : fast_kLDPC_iterations;
         std::vector<subtract_job_t> pass_jobs;
         const int new_results = decode_candidates(state,
                                                   state->candidate_list,
                                                   candidate_count,
-                                                  iterations,
-                                                  -1.0f,
+                                                  pass.iterations,
+                                                  pass.limit_early_dt ? kFt8EarlySubtractDtSec : -1.0f,
                                                   &pass_jobs);
         if (new_results == 0) {
+            if (should_continue_after_empty_pass(pass)) {
+                continue;
+            }
             break;
         }
 
-        if (pass + 1 < pass_count) {
-            apply_subtract_jobs(state, pass_jobs, 1);
+        append_subtract_history(&subtract_history, pass_jobs);
+        if (pass.subtract_after_decode) {
+            apply_subtract_jobs(state, pass_jobs, plan.mode.subtract_mode);
         }
     }
 
@@ -875,13 +837,8 @@ int wsjtx_port_find_sync(decoder_t *decoder) {
         return 0;
     }
 
-    if (state_is_ft8(state)) {
-        run_ft8_session_passes(state);
-        return state->num_candidates;
-    }
-
-    if (state_is_ft4(state)) {
-        run_ft4_session_passes(state);
+    if (state_owns_session_flow(state)) {
+        run_session_passes(state);
         return state->num_candidates;
     }
 
