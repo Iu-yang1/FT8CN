@@ -227,7 +227,8 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetA91(JNIEnv *env, j
     jbyteArray array = env->NewByteArray(FTX_LDPC_K_BYTES);
 
     jbyte buf[FTX_LDPC_K_BYTES];
-    memcpy(buf, dd->a91, FTX_LDPC_K_BYTES);
+    memset(buf, 0, sizeof(buf));
+    decoder_get_a91(dd, (uint8_t *) buf);
 
     env->SetByteArrayRegion(array, 0, FTX_LDPC_K_BYTES, buf);
     return array;
@@ -239,11 +240,17 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_setDecodeMode(JNIEnv *env, j
                                                                   jlong decoder, jboolean is_deep) {
     decoder_t *dd;
     dd = (decoder_t *) decoder;
-    if (is_deep) {
-        dd->kLDPC_iterations = deep_kLDPC_iterations;
-    } else {
-        dd->kLDPC_iterations = fast_kLDPC_iterations;
-    }
+    decoder_set_ldpc_iterations(dd, is_deep);
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderOwnsSessionFlow(JNIEnv *env,
+                                                                            jobject thiz,
+                                                                            jlong decoder) {
+    decoder_t *dd;
+    dd = (decoder_t *) decoder;
+    return decoder_owns_session_flow(dd);
 }
 
 extern "C"
@@ -259,8 +266,9 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetApHints(JNIEnv *en
         return;
     }
 
-    memset(&dd->ap_hints, 0, sizeof(dd->ap_hints));
-    copyJStringToBuffer(env, my_call, dd->ap_hints.my_call, sizeof(dd->ap_hints.my_call));
+    ap_hints_t hints;
+    memset(&hints, 0, sizeof(hints));
+    copyJStringToBuffer(env, my_call, hints.my_call, sizeof(hints.my_call));
     // Each decode cycle replaces the full hint set so native state tracks the latest Java view.
 
     jsize callCount = (hint_calls == nullptr) ? 0 : env->GetArrayLength(hint_calls);
@@ -275,14 +283,14 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetApHints(JNIEnv *en
         jstring grid = (jstring) env->GetObjectArrayElement(hint_grids, i);
 
         copyJStringToBuffer(env, call,
-                            dd->ap_hints.hint_calls[i],
-                            sizeof(dd->ap_hints.hint_calls[i]));
+                            hints.hint_calls[i],
+                            sizeof(hints.hint_calls[i]));
         copyJStringToBuffer(env, grid,
-                            dd->ap_hints.hint_grids[i],
-                            sizeof(dd->ap_hints.hint_grids[i]));
+                            hints.hint_grids[i],
+                            sizeof(hints.hint_grids[i]));
 
-        if (dd->ap_hints.hint_calls[i][0] != '\0') {
-            dd->ap_hints.hint_call_count = (int) i + 1;
+        if (hints.hint_calls[i][0] != '\0') {
+            hints.hint_call_count = (int) i + 1;
         }
 
         if (call != nullptr) {
@@ -292,17 +300,13 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetApHints(JNIEnv *en
             env->DeleteLocalRef(grid);
         }
     }
+
+    decoder_set_ap_hints(dd, &hints);
 }
 
 /**
  * 把频率幅度置零
  */
-static inline void setMagToZero(decoder_t *dd, int index, int max_block_size) {
-    if (index > 0 && index < max_block_size) {
-        dd->mon.wf.mag[index] = 0;
-    }
-}
-
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_ReBuildSignal_doSubtractSignal(JNIEnv *env, jclass clazz,
@@ -319,65 +323,11 @@ Java_com_bg7yoz_ft8cn_ft8listener_ReBuildSignal_doSubtractSignal(JNIEnv *env, jc
     auto *c_array = (jbyte *) malloc(arr_len * sizeof(jbyte));
     env->GetByteArrayRegion(payload, 0, arr_len, c_array);
 
-    int nn;
-    float symbol_period;
-    float slot_time;
-
-    if (mode == SIGNAL_MODE_FT4) {
-        nn = FT4_NN;
-        symbol_period = FT4_SYMBOL_PERIOD;
-        slot_time = FT4_SLOT_TIME;
-    } else {
-        nn = FT8_NN;
-        symbol_period = FT8_SYMBOL_PERIOD;
-        slot_time = FT8_SLOT_TIME;
-    }
-
-    auto *tones = (uint8_t *) malloc(nn);
-    memset(tones, 0, nn);
-
-    if (mode == SIGNAL_MODE_FT4) {
-        ft4_encode((uint8_t *) c_array, tones);
-    } else {
-        ft8_encode((uint8_t *) c_array, tones);
-    }
-
-    int max_block_size = (int) (slot_time / symbol_period) * kTime_osr * kFreq_osr
-                         * (int) (sample_rate * symbol_period / 2);
-    int block_size = (int) (symbol_period * dd->mon_cfg.sample_rate);
-    int freq_offset = (int) (frequency * symbol_period) * kFreq_osr;
-    int time_offset = (int) ((time_sec / symbol_period) * kTime_osr + 0.5f);
-
-    LOG_PRINTF("subtractSignal mode=%d nn=%d symbol_period=%f slot_time=%f",
-               mode, nn, symbol_period, slot_time);
-    LOG_PRINTF("max_block_size=%d block_size=%d freq_offset=%d time_offset=%d",
-               max_block_size, block_size, freq_offset, time_offset);
-
-    for (int i = 0; i < nn; ++i) {
-        int index = (i + time_offset) * 2;
-        int index1 = index * block_size + freq_offset + tones[i];
-        int index2 = (index + 1) * block_size + freq_offset + tones[i];
-        int index3 = index1 + 1;
-        int index4 = index2 + 1;
-        int index5 = index1 - 1;
-        int index6 = index2 - 1;
-        int index7 = index1 - 2;
-        int index8 = index2 - 2;
-        int index9 = index1 + 2;
-        int index10 = index2 + 2;
-
-        setMagToZero(dd, index1, max_block_size);
-        setMagToZero(dd, index2, max_block_size);
-        setMagToZero(dd, index3, max_block_size);
-        setMagToZero(dd, index4, max_block_size);
-        setMagToZero(dd, index5, max_block_size);
-        setMagToZero(dd, index6, max_block_size);
-        setMagToZero(dd, index7, max_block_size);
-        setMagToZero(dd, index8, max_block_size);
-        setMagToZero(dd, index9, max_block_size);
-        setMagToZero(dd, index10, max_block_size);
-    }
-
-    free(tones);
+    decoder_subtract_signal(dd,
+                            (uint8_t *) c_array,
+                            sample_rate,
+                            frequency,
+                            time_sec,
+                            mode);
     free(c_array);
 }
