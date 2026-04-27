@@ -102,6 +102,18 @@ static SessionPlan BuildFt8Plan(const ModeDescriptor &mode,
                                    true,
                                    true,
                                    false));
+
+    if (round_count >= 2 && pass_count >= 2 && enable_ap_pass) {
+        plan.passes.push_back(MakePass(PassRole::kAp,
+                                       CandidateSource::kWaterfall,
+                                       std::max(7, base_sync - 1),
+                                       deep_kLDPC_iterations,
+                                       0,
+                                       false,
+                                       false,
+                                       false));
+    }
+
     if (round_count >= 2 && pass_count >= 2) {
         plan.passes.push_back(MakePass(PassRole::kSubtract,
                                        CandidateSource::kWaterfall,
@@ -150,6 +162,17 @@ static SessionPlan BuildFt4Plan(const ModeDescriptor &mode,
 
     if (!deep_mode) {
         return plan;
+    }
+
+    if (round_count >= 2 && pass_count >= 2 && enable_ap_pass) {
+        plan.passes.push_back(MakePass(PassRole::kAp,
+                                       CandidateSource::kFt4RawFft,
+                                       std::max(8, base_sync - 1),
+                                       deep_kLDPC_iterations,
+                                       0,
+                                       false,
+                                       false,
+                                       false));
     }
 
     if (round_count >= 2 && pass_count >= 2) {
