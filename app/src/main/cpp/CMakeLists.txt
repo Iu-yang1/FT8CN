@@ -10,6 +10,8 @@ add_library(
         ft8Listener.cpp
         ft8Spectrum.cpp
         experimentalCodec.cpp
+        wsjtx/session_plan.cpp
+        wsjtx/wsjtx_port.cpp
 
         fft/kiss_fftr.c
         fft/kiss_fft.c

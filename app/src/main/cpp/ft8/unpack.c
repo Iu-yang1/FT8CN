@@ -858,6 +858,7 @@ int unpack77_fields_(const uint8_t *a77, message_t *message) {
             // 0.5   0123456789abcdef01                 71               71   Telemetry (18 hex)
             return unpack_telemetry(a77, message->extra);
         }
+        // 0.2 is intentionally still unsupported here, matching the current WSJT-X FT8 decode path.
     } else if (message->i3 == 1 || message->i3 == 2) {
         // Type 1 (standard message) or Type 2 ("/P" form for EU VHF contest)
         return unpack_type1_(a77, message);

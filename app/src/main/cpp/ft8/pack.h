@@ -8,7 +8,7 @@
 // [OUT] c77     - 10 byte array to store the 77 bit payload (MSB first)
 int pack77(const char* msg, uint8_t* c77);
 int pack77_1(const char* msg, uint8_t* c77);
-// AP-lite only builds standard type-1 hypotheses and must not silently fall back to free text.
+// pack77() is the general entry point; pack77_1() remains useful for explicit type-1-only callers.
 void packtext77(const char* text, uint8_t* b77);
 
 #endif // _INCLUDE_PACK_H_

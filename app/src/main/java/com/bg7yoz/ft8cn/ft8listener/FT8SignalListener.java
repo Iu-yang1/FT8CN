@@ -290,8 +290,18 @@ public class FT8SignalListener {
                         apHints[0],
                         apHints[1]
                 );
+                DecoderSetWsjtOptions(
+                        ft8Decoder,
+                        GeneralVariables.wsjtxDecodePassCount,
+                        GeneralVariables.wsjtxMultiDecodeRoundCount,
+                        GeneralVariables.wsjtxQsoFreqSensitivity,
+                        GeneralVariables.wsjtxDecodeSensitivity,
+                        GeneralVariables.wsjtxEnableEarlyDecode,
+                        GeneralVariables.wsjtxWidebandDxSearch
+                );
                 // AP-lite only receives my-call plus a few follow-call/grid hints before decode starts.
                 DecoderMonitorPressFloat(voiceData, ft8Decoder);
+                boolean nativeOwnsSessionFlow = DecoderOwnsSessionFlow(ft8Decoder);
 
                 ArrayList<Ft8Message> allMsg = new ArrayList<>();
                 ArrayList<Ft8Message> msgs = runDecode(ft8Decoder, utc, false, decodeMode, 0L);
@@ -329,10 +339,11 @@ public class FT8SignalListener {
                         );
                     }
 
-                    int maxRounds = getMaxSubtractRounds(decodeMode);
-                    int round = 0;
+                    if (!nativeOwnsSessionFlow) {
+                        int maxRounds = getMaxSubtractRounds(decodeMode);
+                        int round = 0;
 
-                    while (round < maxRounds) {
+                        while (round < maxRounds) {
                         if (System.currentTimeMillis() >= deepDecodeDeadlineMs) {
                             break;
                         }
@@ -364,6 +375,7 @@ public class FT8SignalListener {
                         }
 
                         round++;
+                    }
                     }
                 }
 
@@ -676,6 +688,14 @@ public class FT8SignalListener {
 
     public native void setDecodeMode(long decoder, boolean isDeep);//设置解码的模式，isDeep=true是多次迭代，=false是快速迭代
 
+    public native boolean DecoderOwnsSessionFlow(long decoder);
     public native void DecoderSetApHints(long decoder, String myCall, String[] hintCallsigns, String[] hintGrids);
+    public native void DecoderSetWsjtOptions(long decoder,
+                                             int decodePassCount,
+                                             int multiDecodeRoundCount,
+                                             int qsoFreqSensitivity,
+                                             int decodeSensitivity,
+                                             boolean enableEarlyDecode,
+                                             boolean enableWidebandDxSearch);
     // Native only receives a tiny hint set here; the AP logic still lives in the deep fallback path.
 }

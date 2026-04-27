@@ -2208,6 +2208,44 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("deepMode")) {
                     GeneralVariables.deepDecodeMode = result.equals("1");
                 }
+                if (name.equalsIgnoreCase("wsjtxDecodePassCount")) {
+                    try {
+                        int value = Integer.parseInt(result);
+                        GeneralVariables.wsjtxDecodePassCount = Math.max(1, Math.min(value, 3));
+                    } catch (Exception e) {
+                        GeneralVariables.wsjtxDecodePassCount = 3;
+                    }
+                }
+                if (name.equalsIgnoreCase("wsjtxMultiDecodeRoundCount")) {
+                    try {
+                        int value = Integer.parseInt(result);
+                        GeneralVariables.wsjtxMultiDecodeRoundCount = Math.max(1, Math.min(value, 3));
+                    } catch (Exception e) {
+                        GeneralVariables.wsjtxMultiDecodeRoundCount = 3;
+                    }
+                }
+                if (name.equalsIgnoreCase("wsjtxQsoFreqSensitivity")) {
+                    try {
+                        int value = Integer.parseInt(result);
+                        GeneralVariables.wsjtxQsoFreqSensitivity = Math.max(0, Math.min(value, 2));
+                    } catch (Exception e) {
+                        GeneralVariables.wsjtxQsoFreqSensitivity = GeneralVariables.WSJTX_SENSITIVITY_NORMAL;
+                    }
+                }
+                if (name.equalsIgnoreCase("wsjtxDecodeSensitivity")) {
+                    try {
+                        int value = Integer.parseInt(result);
+                        GeneralVariables.wsjtxDecodeSensitivity = Math.max(0, Math.min(value, 2));
+                    } catch (Exception e) {
+                        GeneralVariables.wsjtxDecodeSensitivity = GeneralVariables.WSJTX_SENSITIVITY_NORMAL;
+                    }
+                }
+                if (name.equalsIgnoreCase("wsjtxEnableEarlyDecode")) {
+                    GeneralVariables.wsjtxEnableEarlyDecode = result.equals("") || result.equals("1");
+                }
+                if (name.equalsIgnoreCase("wsjtxWidebandDxSearch")) {
+                    GeneralVariables.wsjtxWidebandDxSearch = result.equals("") || result.equals("1");
+                }
                 if (name.equalsIgnoreCase("expCodecDebug")) {
                     GeneralVariables.experimentalCodecDebugMode = result.equals("1");
                 }

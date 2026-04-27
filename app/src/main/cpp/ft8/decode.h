@@ -91,6 +91,9 @@ typedef struct
 int ft8_find_sync(const waterfall_t *power, int num_candidates, candidate_t heap[], int min_score);
 bool ft8_decode(waterfall_t *power, candidate_t *cand, message_t *message, int max_iterations,
                 const ap_hints_t *ap_hints, decode_status_t *status);
+bool ft8_decode_with_ap_texts(waterfall_t *power, candidate_t *cand,
+                              const char *const ap_texts[], int ap_text_count,
+                              int max_iterations, message_t *message, decode_status_t *status);
 // AP hints are only consumed by the final deep-decode fallback and do not change the first-pass API.
 
 #endif // _INCLUDE_DECODE_H_
