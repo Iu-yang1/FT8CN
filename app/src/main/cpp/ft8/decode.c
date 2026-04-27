@@ -16,19 +16,19 @@
 #include "../common/debug.h"
 #include "hash22.h"
 
-/// 为后续的软判�?LDPC 解码计算 174 个消息位的对数似然对�?log(p(1) / p(0))
+/// 为后续的软判决 LDPC 解码计算 174 个消息位的对数似然对数 log(p(1) / p(0))
 /// @param[in] wf 在消息时槽期间收集的瀑布数据
-/// @param[in] cand 从中提取消息的候选�?
+/// @param[in] cand 从中提取消息的候选
 /// @param[in] code_map 符号编码映射
 /// @param[out] log174 174 个消息位中每一个的解码对数似然输出
 static void ft4_extract_likelihood(const waterfall_t *wf, const candidate_t *cand, float *log174);
 static void ft8_extract_likelihood(const waterfall_t *wf, candidate_t *cand, float *log174);
 
-/// 将位字符串打包，每个位在 bit_array[] 中表示为一�?0/�?0 字节�?
-/// 作为一个打包位字符串，�?packed[] 的第一个字节的最高有效位 (MSB) 开�?
+/// 将位字符串打包，每个位在 bit_array[] 中表示为一个 0/非 0 字节。
+/// 作为一个打包位字符串，从 packed[] 的第一个字节的最高有效位 (MSB) 开始。
 /// @param[in] plain 包含 num_bits 个条目的位数组（0 和非零值）
-/// @param[in] num_bits bit_array 中传入的位数（条目数�?
-/// @param[out] packed 表示 bit_array 中数据的字节打包�?
+/// @param[in] num_bits bit_array 中传入的位数（条目数）
+/// @param[out] packed 表示 bit_array 中数据的字节打包位
 static void pack_bits(const uint8_t bit_array[], int num_bits, uint8_t packed[]);
 
 static float max2(float a, float b);
@@ -47,6 +47,7 @@ static void ft8_extract_likelihood_strong(const waterfall_t *wf, candidate_t *ca
 static void ftx_prepare_logl(const waterfall_t *wf, candidate_t *cand, bool strong, float *log174);
 static bool ftx_finalize_message(waterfall_t *wf, candidate_t *cand, const uint8_t a91[],
                                  message_t *message, decode_status_t *status);
+static bool ftx_message_text_is_blank(const char *text);
 static int ftx_ldpc_check_codeword(const uint8_t codeword[]);
 static bool ftx_osd_refine(const float *log174, uint8_t plain174[], int *errors);
 static bool ftx_try_decode_pass(const float *log174, int max_iterations, float llr_scale,
@@ -83,9 +84,9 @@ enum {
     kApTextBufferSize = 80,
     kApGeneratedTextLimit = FTX_AP_MAX_HINT_CALLS * 210
 };
-// AP 先按 soft evidence 排序，只对前几条候选做硬解，因此可以承受更宽的假设集�?
+// AP 先按 soft evidence 排序，只对前几条候选做硬解，因此可以承受更宽的假设集。
 /**
- * SNR 限幅，避免异常�?
+ * SNR 限幅，避免异常值
  */
 static inline int clamp_snr_value(int snr) {
     if (snr < -30) return -30;
@@ -94,7 +95,7 @@ static inline int clamp_snr_value(int snr) {
 }
 
 /**
- * 取候选在瀑布图中的起始索�?
+ * 取候选在瀑布图中的起始索引
  */
 static int get_index(const waterfall_t *wf, const candidate_t *candidate) {
     int offset = candidate->time_offset;
@@ -108,11 +109,11 @@ static int get_index(const waterfall_t *wf, const candidate_t *candidate) {
  * FT8 同步评分
  *
  * 改动点：
- * 1. 保留原来的频�?时间邻居差分
- * 2. 增加“目�?bin 与其�?bin 平均差值”的弱信号增益项
- * 3. 对后�?sync block 的边界判断统一修正
+ * 1. 保留原来的频率/时间邻居差分
+ * 2. 增加“目标 bin 与其它 bin 平均差值”的弱信号增益项
+ * 3. 对后续 sync block 的边界判断统一修正
  *
- * 这样会比原来稍微灵敏一些，但不至于把噪声候选放大得太夸张�?
+ * 这样会比原来稍微灵敏一些，但不至于把噪声候选放大得太夸张。
  */
 static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
     int score = 0;
@@ -153,8 +154,8 @@ static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
                 ++num_average;
             }
 
-            // 增加一个“目�?bin 相对其它 7 �?bin 的平均优势�?
-            // 这个项对弱信号更友好一�?
+            // 增加一个“目标 bin 相对其它 7 个 bin 的平均优势”。
+            // 这个项对弱信号更友好一些。
             {
                 int others = 0;
                 for (int n = 0; n < 8; ++n) {
@@ -178,9 +179,9 @@ static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
  * FT4 同步评分
  *
  * 改动点：
- * 1. 保留原来的频�?时间邻居差分
- * 2. 增加“目�?bin 与其�?3 �?bin 平均差值”的增强�?
- * 3. FT4 本来同步符号更短、更密，适当增强这一项有助于弱信号候选进入后�?LDPC
+ * 1. 保留原来的频率/时间邻居差分
+ * 2. 增加“目标 bin 与其余 3 个 bin 平均差值”的增强项
+ * 3. FT4 本来同步符号更短、更密，适当增强这一项有助于弱信号候选进入后续 LDPC
  */
 static int ft4_sync_score(const waterfall_t *wf, const candidate_t *candidate) {
     int score = 0;
@@ -222,7 +223,7 @@ static int ft4_sync_score(const waterfall_t *wf, const candidate_t *candidate) {
                 ++num_average;
             }
 
-            // 目标 bin 相对其余 3 �?bin 的平均优�?
+            // 目标 bin 相对其余 3 个 bin 的平均优势
             {
                 int others = 0;
                 for (int n = 0; n < 4; ++n) {
@@ -242,7 +243,7 @@ static int ft4_sync_score(const waterfall_t *wf, const candidate_t *candidate) {
     return score;
 }
 
-// 检测信号候�?
+// 检测信号候选
 int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[], int min_score) {
     int heap_size = 0;
     candidate_t candidate;
@@ -250,10 +251,10 @@ int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[],
     // FT4 对起始时刻偏差更敏感，放宽搜索窗口以提高检出率
     const int time_offset_min = is_ft4 ? -40 : -12;
     const int time_offset_max = is_ft4 ? 80 : 24;
-    // 频率扫描边界：FT4 �?4-FSK，FT8 �?8-FSK
+    // 频率扫描边界：FT4 为 4-FSK，FT8 为 8-FSK
     const int tone_span = is_ft4 ? 3 : 7;
 
-    // 注意�?
+    // 注意：
     // FT8 / FT4 共用同一套扫描框架，但窗口按协议分别配置
     // FT4 放宽时偏搜索范围，可减少“耳朵能听到但候选未入堆”的漏检
     for (candidate.time_sub = 0; candidate.time_sub < wf->time_osr; ++candidate.time_sub) {
@@ -287,7 +288,7 @@ int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[],
         }
     }
 
-    // 按同步分数排�?
+    // 按同步分数排序
     int len_unsorted = heap_size;
     while (len_unsorted > 1) {
         candidate_t tmp = heap[len_unsorted - 1];
@@ -333,7 +334,7 @@ static void ft8_extract_likelihood(const waterfall_t *wf, candidate_t *cand, flo
     memset(llr_acc, 0, sizeof(llr_acc));
     memset(llr_cnt, 0, sizeof(llr_cnt));
 
-    // FT8 融合 1/2/3 符号联合软判决，降低单符号判决波�?
+    // FT8 融合 1/2/3 符号联合软判决，降低单符号判决波动
     const int joint_list[] = {1, 2, 3};
     for (int j = 0; j < 3; ++j) {
         memset(llr_tmp, 0, sizeof(llr_tmp));
@@ -361,7 +362,7 @@ static void ft4_extract_likelihood_n(const waterfall_t *wf, const candidate_t *c
         while (pos < 29) {
             int group = n_syms;
             if ((pos + group) > 29) {
-                // 联合判决不能跨段，尾部退化为单符�?
+                // 联合判决不能跨段，尾部退化为单符号
                 group = 1;
             }
 
@@ -417,7 +418,7 @@ static void ft8_extract_likelihood_n(const waterfall_t *wf, const candidate_t *c
         while (pos < 29) {
             int group = n_syms;
             if ((pos + group) > 29) {
-                // 联合判决不能跨段，尾部退化为单符�?
+                // 联合判决不能跨段，尾部退化为单符号
                 group = 1;
             }
 
@@ -474,12 +475,12 @@ static void ftx_normalize_logl(float *log174) {
     float inv_n = 1.0f / FTX_LDPC_N;
     float variance = (sum2 - (sum * sum * inv_n)) * inv_n;
 
-    // 避免极弱信号/纯噪声下方差过小导致归一化爆�?
+    // 避免极弱信号/纯噪声下方差过小导致归一化爆炸
     if (variance < 1e-6f) {
         variance = 1e-6f;
     }
 
-    // 略微提高归一化系数，增强软判决输入的动态范�?
+    // 略微提高归一化系数，增强软判决输入的动态范围
     float norm_factor = sqrtf(26.0f / variance);
     for (int i = 0; i < FTX_LDPC_N; ++i) {
         log174[i] *= norm_factor;
@@ -567,7 +568,7 @@ static void ft4_guess_snr(const waterfall_t *wf, candidate_t *cand) {
         float signal_avg = signal / (float)signal_count;
         float noise_avg = noise / (float)noise_count;
 
-        // 这个 offset �?FT8 小，适合 FT4 显示
+        // 这个 offset 比 FT8 小，适合 FT4 显示
         int snr = (int)floorf(10.0f * log10f(1E-12f + signal_avg / noise_avg) - 20.0f + 0.5f);
         cand->snr = clamp_snr_value(snr);
     } else {
@@ -600,6 +601,19 @@ static void ftx_prepare_logl(const waterfall_t *wf, candidate_t *cand, bool stro
     ftx_normalize_logl(log174);
 }
 
+static bool ftx_message_text_is_blank(const char *text) {
+    if (text == NULL) {
+        return true;
+    }
+    while (*text != '\0') {
+        if (!isspace((unsigned char) *text)) {
+            return false;
+        }
+        ++text;
+    }
+    return true;
+}
+
 static bool ftx_finalize_message(waterfall_t *wf, candidate_t *cand, const uint8_t a91[],
                                  message_t *message, decode_status_t *status) {
     uint8_t payload[FTX_LDPC_K_BYTES];
@@ -624,6 +638,10 @@ static bool ftx_finalize_message(waterfall_t *wf, candidate_t *cand, const uint8
     memcpy(message->a91, payload, FTX_LDPC_K_BYTES);
     status->unpack_status = unpackToMessage_t(payload, message);
 
+    if (status->unpack_status >= 0 && ftx_message_text_is_blank(message->text)) {
+        // CRC 已经通过但文本为空通常来自空自由文本/损坏候选；不要向 UI 返回空白消息。
+        return false;
+    }
 
     if (status->unpack_status < 0) {
         // Keep a placeholder text when the payload decodes but this message type is unsupported.
@@ -1209,7 +1227,7 @@ static void heapify_up(candidate_t heap[], int heap_size) {
     }
 }
 
-// 检�?174 bit 是否满足 LDPC 校验方程，返回未满足个数
+// 检查 174 bit 是否满足 LDPC 校验方程，返回未满足个数
 static int ftx_ldpc_check_codeword(const uint8_t codeword[]) {
     int errors = 0;
     for (int m = 0; m < FTX_LDPC_M; ++m) {
@@ -1224,7 +1242,7 @@ static int ftx_ldpc_check_codeword(const uint8_t codeword[]) {
     return errors;
 }
 
-// 轻量 OSD：在最不可靠比特上�?1/2/3 位翻转搜�?
+// 轻量 OSD：在最不可靠比特上做 1/2/3 位翻转搜索
 static bool ftx_osd_refine(const float *log174, uint8_t plain174[], int *errors) {
     if (errors == NULL) {
         return false;

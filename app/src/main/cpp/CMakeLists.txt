@@ -7,6 +7,7 @@ add_library(
         SHARED
 
         generate_ft8.cpp
+        diagnostics/ap_regression.cpp
         ft8Listener.cpp
         ft8Spectrum.cpp
         experimentalCodec.cpp
