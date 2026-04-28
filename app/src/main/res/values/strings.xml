@@ -147,6 +147,12 @@
     <string name="not_concerned_about_CQ">No track CQ</string>
     <string name="automatic_call_following">Auto call tracked</string>
     <string name="do_not_call_the_following_callsign">No call tracked</string>
+    <string name="cq_queue_enabled">CQ queue auto reply</string>
+    <string name="cq_queue_disabled">CQ queue disabled</string>
+    <string name="cq_rank_method">CQ rank</string>
+    <string name="cq_max_queue">Queue</string>
+    <string name="cq_directed_prefixes">Directed CQ</string>
+    <string name="cq_directed_prefixes_hint">DX AS EU NA</string>
     <string name="dxpedition_auto_hound_on">DXpedition Hound auto</string>
     <string name="dxpedition_auto_hound_off">DXpedition Hound manual</string>
     <string name="dxpedition_auto_status">DXpedition Hound auto</string>

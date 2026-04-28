@@ -2145,6 +2145,27 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("autoCallFollow")) {
                     GeneralVariables.autoCallFollow = (result.equals("") || result.equals("1"));
                 }
+                if (name.equalsIgnoreCase("cqQueueEnabled")) {
+                    GeneralVariables.cqQueueEnabled = (result.equals("") || result.equals("1"));
+                }
+                if (name.equalsIgnoreCase("cqMaxQueueSize")) {
+                    try {
+                        int value = result.equals("") ? 20 : Integer.parseInt(result);
+                        GeneralVariables.cqMaxQueueSize = Math.max(1, Math.min(value, 100));
+                    } catch (Exception e) {
+                        GeneralVariables.cqMaxQueueSize = 20;
+                    }
+                }
+                if (name.equalsIgnoreCase("cqRankMethod")) {
+                    try {
+                        GeneralVariables.cqRankMethod = result.equals("") ? 3 : Integer.parseInt(result);
+                    } catch (Exception e) {
+                        GeneralVariables.cqRankMethod = 3;
+                    }
+                }
+                if (name.equalsIgnoreCase("cqDirectedCqPrefixes")) {
+                    GeneralVariables.cqDirectedCqPrefixes = result == null ? "" : result.toUpperCase();
+                }
                 if (name.equalsIgnoreCase("autoDxpeditionHound")) {
                     GeneralVariables.autoDxpeditionHound = (result.equals("") || result.equals("1"));
                 }

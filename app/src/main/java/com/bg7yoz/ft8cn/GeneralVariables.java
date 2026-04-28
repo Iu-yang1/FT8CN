@@ -310,6 +310,10 @@ public class GeneralVariables {
 
     public static boolean autoFollowCQ = true;
     public static boolean autoCallFollow = true;
+    public static boolean cqQueueEnabled = true;
+    public static int cqMaxQueueSize = 20;
+    public static int cqRankMethod = 3;
+    public static String cqDirectedCqPrefixes = "";
     public static boolean autoDxpeditionHound = true;
     public static boolean manualDxpeditionHoundMode = false;
     public static boolean manualDxpeditionFoxMode = false;

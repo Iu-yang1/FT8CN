@@ -139,6 +139,12 @@
     <string name="do_not_call_the_following_callsign">不呼叫关注的呼号</string>
 
     <!--   解码栏-->
+    <string name="cq_queue_enabled">CQ队列自动回应</string>
+    <string name="cq_queue_disabled">CQ队列关闭</string>
+    <string name="cq_rank_method">CQ排序</string>
+    <string name="cq_max_queue">队列</string>
+    <string name="cq_directed_prefixes">定向CQ</string>
+    <string name="cq_directed_prefixes_hint">DX AS EU NA</string>
     <string name="message_count_count">消息(%d/%d)</string>
     <string name="average_offset_seconds">平均偏移%.2f秒</string>
     <string name="my_grid">我的位置 : %s</string>

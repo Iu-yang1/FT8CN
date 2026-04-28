@@ -18,6 +18,8 @@ import com.bg7yoz.ft8cn.auto.AutoSessionState;
 import com.bg7yoz.ft8cn.auto.AutoSessionType;
 import com.bg7yoz.ft8cn.auto.AutoSessionUiPolicy;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
+import com.bg7yoz.ft8cn.cq.CallQueueManager;
+import com.bg7yoz.ft8cn.cq.CqCallEntry;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
 import com.bg7yoz.ft8cn.log.QSLRecord;
@@ -80,6 +82,8 @@ public class FT8TransmitSignal {
     private long foxSessionStartTimeMs = 0L;
     private int foxCallAttempts = 0;
     private int foxRr73Attempts = 0;
+    private int lastNoReplySequenceIndex = Integer.MIN_VALUE;
+    private String lastNoReplySessionKey = "";
     private final Object foxCandidateLock = new Object();
     private final ArrayList<DxpeditionFoxCandidate> dxpeditionFoxCandidates = new ArrayList<>();
     private final DxpeditionFoxSlotScheduler foxSlotScheduler = new DxpeditionFoxSlotScheduler();
@@ -92,6 +96,8 @@ public class FT8TransmitSignal {
     public UtcTimer utcTimer;
     public ArrayList<FunctionOfTransmit> functionList = new ArrayList<>();
     public MutableLiveData<ArrayList<FunctionOfTransmit>> mutableFunctions = new MutableLiveData<>();
+    private final CallQueueManager callQueueManager = new CallQueueManager();
+    public MutableLiveData<ArrayList<CqCallEntry>> mutableCqQueue = new MutableLiveData<>();
     private final OnDoTransmitted onDoTransmitted;
     private final ExecutorService doTransmitThreadPool = Executors.newCachedThreadPool();
     private final Observer<Float> volumePercentObserver = new Observer<Float>() {
@@ -108,6 +114,8 @@ public class FT8TransmitSignal {
         this.onDoTransmitted = doTransmitted;
         this.onTransmitSuccess = onTransmitSuccess;
         this.databaseOpr = databaseOpr;
+        callQueueManager.setDatabaseOpr(databaseOpr);
+        updateCqQueueSettings();
 
         setTransmitting(false);
         setActivated(false);
@@ -1348,6 +1356,10 @@ public class FT8TransmitSignal {
                     + " / " + foxSlotScheduler.getStatusText();
         }
         if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
+            int cqQueueSize = callQueueManager.size();
+            if (GeneralVariables.cqQueueEnabled && cqQueueSize > 0) {
+                return String.format("CQ队列 %d", cqQueueSize);
+            }
             return "";
         }
         if (autoSession.isDxpeditionHound()) {
@@ -1584,6 +1596,105 @@ public class FT8TransmitSignal {
                 && !GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo());
     }
 
+    public void updateCqQueueSettings() {
+        callQueueManager.configure(
+                GeneralVariables.cqMaxQueueSize,
+                GeneralVariables.cqRankMethod,
+                GeneralVariables.cqDirectedCqPrefixes
+        );
+        publishCqQueue();
+    }
+
+    public int getCqQueueSize() {
+        return callQueueManager.size();
+    }
+
+    public ArrayList<CqCallEntry> getCqQueueSnapshot() {
+        return callQueueManager.snapshot();
+    }
+
+    public void clearCqQueue() {
+        callQueueManager.clear();
+        publishCqQueue();
+    }
+
+    private void publishCqQueue() {
+        mutableCqQueue.postValue(callQueueManager.snapshot());
+    }
+
+    private void ingestCqQueue(ArrayList<Ft8Message> messages) {
+        updateCqQueueSettings();
+        if (!GeneralVariables.cqQueueEnabled) {
+            callQueueManager.clear();
+            publishCqQueue();
+            return;
+        }
+        if (messages == null || messages.size() == 0) {
+            return;
+        }
+        if (callQueueManager.addCandidates(messages) > 0) {
+            publishCqQueue();
+        } else {
+            publishCqQueue();
+        }
+    }
+
+    private boolean startNextCqFromQueue() {
+        if (!GeneralVariables.cqQueueEnabled || !GeneralVariables.autoCallFollow) {
+            return false;
+        }
+        updateCqQueueSettings();
+        CqCallEntry entry = null;
+        while (entry == null) {
+            CqCallEntry candidate = callQueueManager.pollNext();
+            if (candidate == null) {
+                publishCqQueue();
+                return false;
+            }
+            if (GeneralVariables.checkIsExcludeCallsign(candidate.callsign)
+                    || GeneralVariables.checkQSLCallsign(candidate.callsign)
+                    || (!GeneralVariables.autoFollowCQ && !candidate.followed && !candidate.directed && !candidate.manual)) {
+                continue;
+            }
+            entry = candidate;
+        }
+        publishCqQueue();
+        if (entry == null || entry.message == null) {
+            return false;
+        }
+        resetTargetReport();
+        setTransmit(new TransmitCallsign(
+                        entry.message.i3,
+                        entry.message.n3,
+                        entry.callsign,
+                        entry.freqHz,
+                        entry.sequence,
+                        entry.snr),
+                1,
+                entry.message.getAutoReplyExtraInfo());
+        return true;
+    }
+
+    private boolean startImmediateCqFromMessages(ArrayList<Ft8Message> messages) {
+        for (Ft8Message msg : messages) {
+            if (isExcludeMessage(msg)) continue;
+
+            if ((msg.checkIsCQ()
+                    && ((GeneralVariables.autoCallFollow && GeneralVariables.autoFollowCQ)
+                    || GeneralVariables.callsignInFollow(msg.getCallsignFrom()))
+                    && !GeneralVariables.checkQSLCallsign(msg.getCallsignFrom())
+                    && !GeneralVariables.checkIsMyCallsign(msg.callsignFrom))) {
+
+                resetTargetReport();
+                setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
+                        , msg.getSequence(), msg.snr), 1, msg.extraInfo);
+
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean checkCQMeOrFollowCQMessage(ArrayList<Ft8Message> messages) {
 
         for (Ft8Message msg : messages) {
@@ -1629,24 +1740,11 @@ public class FT8TransmitSignal {
             return false;
         }
 
-        for (Ft8Message msg : messages) {
-            if (isExcludeMessage(msg)) continue;
-
-            if ((msg.checkIsCQ()
-                    && ((GeneralVariables.autoCallFollow && GeneralVariables.autoFollowCQ)
-                    || GeneralVariables.callsignInFollow(msg.getCallsignFrom()))
-                    && !GeneralVariables.checkQSLCallsign(msg.getCallsignFrom())
-                    && !GeneralVariables.checkIsMyCallsign(msg.callsignFrom))) {
-
-                resetTargetReport();
-                setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
-                        , msg.getSequence(), msg.snr), 1, msg.extraInfo);
-
-                return true;
-            }
+        if (startNextCqFromQueue()) {
+            return true;
         }
 
-        return false;
+        return startImmediateCqFromMessages(messages);
     }
 
     private boolean isDxpeditionFoxInitialCall(Ft8Message msg) {
@@ -1779,10 +1877,7 @@ public class FT8TransmitSignal {
                 return;
             }
 
-            if (hasCurrentSessionActivity(messages)) {
-                autoSession.increaseNoReplyCount();
-                syncNoReplyCount();
-            }
+            increaseNoReplyCountForSlot(messages);
 
             boolean timeout = foxCallAttempts >= 3 || foxRr73Attempts >= 3;
             if (foxSessionStartTimeMs > 0
@@ -1916,6 +2011,8 @@ public class FT8TransmitSignal {
             return;
         }
 
+        ingestCqQueue(messages);
+
         int newOrder = checkFunctionOrdFromMessages(messages);
         if (newOrder != -1) {
             autoSession.resetNoReplyCount();
@@ -1970,10 +2067,7 @@ public class FT8TransmitSignal {
             return;
         }
 
-        if (hasCurrentSessionActivity(messages)) {
-            autoSession.increaseNoReplyCount();
-            syncNoReplyCount();
-        }
+        increaseNoReplyCountForSlot(messages);
 
         if ((autoSession.getNoReplyCount() > GeneralVariables.noReplyLimit) && (GeneralVariables.noReplyLimit > 0)) {
             if (!getNewTargetCallsign(messages)) {
@@ -2031,8 +2125,52 @@ public class FT8TransmitSignal {
         return false;
     }
 
+    private int latestStrongSequenceIndex(ArrayList<Ft8Message> messages) {
+        int result = Integer.MIN_VALUE;
+        if (messages == null) {
+            return result;
+        }
+        for (Ft8Message msg : messages) {
+            if (msg == null || msg.isWeakSignal) {
+                continue;
+            }
+            result = Math.max(result, msg.getFullSequenceIndex());
+        }
+        return result;
+    }
+
+    private void increaseNoReplyCountForSlot(ArrayList<Ft8Message> messages) {
+        if (!hasCurrentSessionActivity(messages)) {
+            return;
+        }
+        int sequenceIndex = latestStrongSequenceIndex(messages);
+        if (sequenceIndex == Integer.MIN_VALUE) {
+            return;
+        }
+        String target = normalizeCallsignToken(autoSession.getTargetCallsign());
+        if (target.length() == 0 || "CQ".equals(target)) {
+            return;
+        }
+        String sessionKey = autoSession.getSessionType()
+                + "|" + autoSession.getSignalFormat()
+                + "|" + autoSession.getBand()
+                + "|" + target;
+        if (sequenceIndex == lastNoReplySequenceIndex
+                && sessionKey.equals(lastNoReplySessionKey)) {
+            return;
+        }
+        lastNoReplySequenceIndex = sequenceIndex;
+        lastNoReplySessionKey = sessionKey;
+        autoSession.increaseNoReplyCount();
+        syncNoReplyCount();
+    }
+
     public boolean getNewTargetCallsign(ArrayList<Ft8Message> messages) {
         if (toCallsign == null) return false;
+        if (!GeneralVariables.autoCallFollow) return false;
+        if (startNextCqFromQueue()) {
+            return true;
+        }
         for (Ft8Message ft8Message : messages) {
             if (!ft8Message.isAutoFlowRelevant()) continue;
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;
