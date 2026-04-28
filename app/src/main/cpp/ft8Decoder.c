@@ -9,6 +9,8 @@
 
 #define LOG_LEVEL LOG_INFO
 
+static const float kDecodeDuplicateFrequencyToleranceHz = 20.0f;
+
 static float hann_i(int i, int N) {
     float x = sinf((float) M_PI * i / N);
     return x * x;
@@ -161,6 +163,7 @@ int decoder_ft8_find_sync(decoder_t *decoder) {
     decoder->num_decoded = 0;
     for (int i = 0; i < kMax_decoded_messages; ++i) {
         decoder->decoded_hashtable[i] = NULL;
+        decoder->decoded_freq_hz[i] = 0.0f;
     }
     return decoder->num_candidates;
 }
@@ -216,7 +219,13 @@ ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder) {
             found_empty_slot = true;
         } else if ((decoder->decoded_hashtable[idx_hash]->hash == ft8Message.message.hash) &&
                    (0 == strcmp(decoder->decoded_hashtable[idx_hash]->text, ft8Message.message.text))) {
-            found_duplicate = true;
+            float existing_freq = decoder->decoded_freq_hz[idx_hash];
+            if (existing_freq <= 0.0f || ft8Message.freq_hz <= 0.0f ||
+                fabsf(existing_freq - ft8Message.freq_hz) <= kDecodeDuplicateFrequencyToleranceHz) {
+                found_duplicate = true;
+            } else {
+                idx_hash = (idx_hash + 1) % kMax_decoded_messages;
+            }
         } else {
             idx_hash = (idx_hash + 1) % kMax_decoded_messages;
         }
@@ -225,6 +234,7 @@ ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder) {
 
     if (found_empty_slot) {
         memcpy(&decoder->decoded[idx_hash], &ft8Message.message, sizeof(ft8Message.message));
+        decoder->decoded_freq_hz[idx_hash] = ft8Message.freq_hz;
         decoder->decoded_hashtable[idx_hash] = &decoder->decoded[idx_hash];
         ++decoder->num_decoded;
         ft8Message.isValid = true;

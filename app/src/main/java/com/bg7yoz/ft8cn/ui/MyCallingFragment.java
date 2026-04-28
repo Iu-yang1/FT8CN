@@ -184,8 +184,8 @@ public class MyCallingFragment extends Fragment {
         Runnable refreshPreview = () -> {
             boolean manual = manualCheckBox.isChecked();
             int slots = slotsSpinner.getSelectedItemPosition() + 1;
-            int start = DxpeditionFoxSlotFrequencyConfig.clampFrequency(
-                    parseTxFrequencyInput(startInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_START_HZ));
+            int start = DxpeditionFoxSlotFrequencyConfig.clampManualFrequency(
+                    parseTxFrequencyInput(startInput, DxpeditionFoxSlotFrequencyConfig.MANUAL_START_HZ));
             int step = DxpeditionFoxSlotFrequencyConfig.clampStep(
                     parseTxFrequencyInput(stepInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ));
             previewView.setText(getString(
@@ -232,8 +232,8 @@ public class MyCallingFragment extends Fragment {
                 .setPositiveButton(R.string.ok_confirmed, (dialogInterface, which) -> {
                     int slots = slotsSpinner.getSelectedItemPosition() + 1;
                     boolean manual = manualCheckBox.isChecked();
-                    int start = DxpeditionFoxSlotFrequencyConfig.clampFrequency(
-                            parseTxFrequencyInput(startInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_START_HZ));
+                    int start = DxpeditionFoxSlotFrequencyConfig.clampManualFrequency(
+                            parseTxFrequencyInput(startInput, DxpeditionFoxSlotFrequencyConfig.MANUAL_START_HZ));
                     int step = DxpeditionFoxSlotFrequencyConfig.clampStep(
                             parseTxFrequencyInput(stepInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ));
                     mainViewModel.ft8TransmitSignal.setDxpeditionFoxTxSlots(slots);

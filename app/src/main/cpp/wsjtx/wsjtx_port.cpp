@@ -27,6 +27,7 @@ constexpr int kFt8FollowupMaxCandidatesPerEntry = 4;
 constexpr int kFollowupModeCount = 2;
 constexpr float kFt8FollowupHistoryMatchHz = 3.0f;
 constexpr float kFt8FollowupHistoryMatchTimeSec = 0.30f;
+constexpr float kDecodeDuplicateFrequencyToleranceHz = 20.0f;
 
 constexpr int kFt4CoarseFftSize = 2304;
 constexpr int kFt4CoarseHopSize = 576;
@@ -147,8 +148,12 @@ static bool is_duplicate_result(const wsjtx_port_decoder_t *state, const ft8_mes
         if (!existing.isValid) {
             continue;
         }
-        if (existing.message.hash == candidate.message.hash &&
-            0 == std::strcmp(existing.message.text, candidate.message.text)) {
+        if (existing.message.hash != candidate.message.hash ||
+            0 != std::strcmp(existing.message.text, candidate.message.text)) {
+            continue;
+        }
+        if (existing.freq_hz <= 0.0f || candidate.freq_hz <= 0.0f ||
+            std::fabs(existing.freq_hz - candidate.freq_hz) <= kDecodeDuplicateFrequencyToleranceHz) {
             return true;
         }
     }

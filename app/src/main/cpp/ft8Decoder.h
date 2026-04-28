@@ -38,6 +38,7 @@ typedef struct {
     void *backend_state;
 
     message_t decoded[kMax_decoded_messages];
+    float decoded_freq_hz[kMax_decoded_messages];
     message_t *decoded_hashtable[kMax_decoded_messages];
     candidate_t candidate_list[kMax_candidates];
 
