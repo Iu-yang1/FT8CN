@@ -85,14 +85,10 @@ public final class MultiSlotTransmitPlan {
         builder.append("[")
                 .append(modeLabel)
                 .append("] TX Slots ")
-                .append(items.size())
-                .append(": ");
+                .append(items.size());
         for (int i = 0; i < items.size(); i++) {
-            if (i > 0) {
-                builder.append(" | ");
-            }
             MultiSlotTransmitItem item = items.get(i);
-            builder.append("#")
+            builder.append("\n#")
                     .append(item.slotIndex + 1)
                     .append(" ")
                     .append(Math.round(item.frequencyHz))

@@ -22,6 +22,8 @@ import java.text.SimpleDateFormat;
 import java.util.Locale;
 
 public class Ft8Message {
+    private static final float DECODE_MERGE_FREQUENCY_TOLERANCE_HZ = 20f;
+
     private static final String TAG = "Ft8Message";
 
     public int i3 = 0;
@@ -280,14 +282,31 @@ public class Ft8Message {
                 .toUpperCase(Locale.US);
     }
 
+    private String getDecodedMessageTextKey() {
+        return signalFormat + "|" + normalizeDecodedMessageText();
+    }
+
+    private boolean hasDecodeFrequency() {
+        return freq_hz > 0.01f;
+    }
+
+    private boolean isSameDecodedFrequency(Ft8Message other) {
+        if (other == null) {
+            return false;
+        }
+        if (!hasDecodeFrequency() || !other.hasDecodeFrequency()) {
+            return true;
+        }
+        return Math.abs(freq_hz - other.freq_hz) <= DECODE_MERGE_FREQUENCY_TOLERANCE_HZ;
+    }
+
     public String getDecodedMessageKey() {
         if (isTransmitMessage) {
             return signalFormat + "|TX|"
                     + Math.round(freq_hz) + "|"
                     + normalizeDecodedMessageText();
         }
-        return signalFormat + "|"
-                + normalizeDecodedMessageText();
+        return getDecodedMessageTextKey();
     }
 
     public String getSlotDecodedMessageKey() {
@@ -295,11 +314,20 @@ public class Ft8Message {
     }
 
     public boolean isSameDecodedMessage(Ft8Message other) {
-        return other != null && getDecodedMessageKey().equals(other.getDecodedMessageKey());
+        if (other == null) {
+            return false;
+        }
+        if (isTransmitMessage || other.isTransmitMessage) {
+            return getDecodedMessageKey().equals(other.getDecodedMessageKey());
+        }
+        return getDecodedMessageTextKey().equals(other.getDecodedMessageTextKey())
+                && isSameDecodedFrequency(other);
     }
 
     public boolean isSameSlotDecodedMessage(Ft8Message other) {
-        return other != null && getSlotDecodedMessageKey().equals(other.getSlotDecodedMessageKey());
+        return other != null
+                && getFullSequenceIndex() == other.getFullSequenceIndex()
+                && isSameDecodedMessage(other);
     }
 
     public void mergeDecodeQualityFrom(Ft8Message other) {

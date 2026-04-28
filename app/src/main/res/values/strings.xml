@@ -188,6 +188,14 @@
     <string name="dxpedition_tx_slots_button">TX%1$d</string>
     <string name="dxpedition_tx_slots_title">Fox TX Slots</string>
     <string name="dxpedition_tx_slots_item">%1$d TX slot(s)</string>
+    <string name="dxpedition_tx_frequency_button">Freq</string>
+    <string name="dxpedition_tx_frequency_title">Fox slot frequencies</string>
+    <string name="dxpedition_tx_frequency_manual">Manual start/step</string>
+    <string name="dxpedition_tx_frequency_standard_item">Standard: 300 Hz + 60 Hz per slot</string>
+    <string name="dxpedition_tx_frequency_start_hint">Start Hz (300-900)</string>
+    <string name="dxpedition_tx_frequency_step_hint">Step Hz (20-300)</string>
+    <string name="dxpedition_tx_frequency_preview">Slots: %1$s</string>
+    <string name="dxpedition_tx_frequency_saved">Fox slot frequencies saved</string>
     <string name="dxpedition_help_button">?</string>
     <string name="dxpedition_guide_title">DXpedition Quick Guide</string>
     <string name="dxpedition_guide_text">1) FT8 only. Turn off TX=RX lock and use split.\n2) Hound mode: enable DXP, pick target, auto sequence uses Tx1/Tx3.\n3) Fox mode: enable FOX, CQ in 300-900 Hz, auto sequence uses Tx2/Tx4/CQ.\n4) TX1-TX5 sets Fox multi-slot audio transmit count.\n5) Hound: DXP+ opens quick reply macros. Long press DXP+ to edit custom templates.\n6) Fox: DXP+ opens Type 0.1 picker, auto or manual CALL1/CALL2 selection.\n7) Placeholders: {DXCALL}=target, {MYCALL}=your call, {RPT}=report, {RRPT}=R+report.\n8) WSJT-X Type 0.1 format: CALL1 RR73; CALL2 &lt;DXCALL&gt; -11\nExample: BG7UZR RR73; BG7QXX &lt;BG5JSU&gt; -01</string>

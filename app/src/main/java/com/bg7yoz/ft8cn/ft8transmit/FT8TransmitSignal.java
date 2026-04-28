@@ -890,7 +890,7 @@ public class FT8TransmitSignal {
         Ft8Message msg = buildTransmitMessage(order);
         float frequency = GeneralVariables.getBaseFrequency();
         if (autoSession.isDxpeditionFox() && order != 6) {
-            frequency = DxpeditionFrequencyPolicy.pickFoxSlotFrequency(0);
+            frequency = DxpeditionFoxSlotFrequencyConfig.resolveSlotFrequency(0);
         }
         return MultiSlotTransmitPlan.single(msg, order, frequency, currentMode);
     }
@@ -1378,10 +1378,23 @@ public class FT8TransmitSignal {
         return foxSlotScheduler.getMaxTxSlots();
     }
 
+    public String getDxpeditionFoxSlotFrequencyLabel() {
+        return DxpeditionFoxSlotFrequencyConfig.getModeLabel();
+    }
+
+    public String getDxpeditionFoxSlotFrequencyPreview() {
+        return DxpeditionFoxSlotFrequencyConfig.buildPreview(getDxpeditionFoxTxSlots());
+    }
+
     public void setDxpeditionFoxTxSlots(int slots) {
         int sanitized = DxpeditionFoxSlotScheduler.clampTxSlots(slots);
         GeneralVariables.dxpeditionFoxTxSlots = sanitized;
         foxSlotScheduler.setMaxTxSlots(sanitized);
+        updateDxpeditionFoxSlotStatus();
+    }
+
+    public void setDxpeditionFoxSlotFrequencyConfig(boolean manual, int startHz, int stepHz) {
+        DxpeditionFoxSlotFrequencyConfig.setManual(manual, startHz, stepHz);
         updateDxpeditionFoxSlotStatus();
     }
 

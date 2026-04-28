@@ -16,6 +16,7 @@ import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputFilter;
+import android.text.InputType;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -25,6 +26,7 @@ import android.view.ViewGroup;
 import android.view.animation.AnimationUtils;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
@@ -48,6 +50,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
+import com.bg7yoz.ft8cn.ft8transmit.DxpeditionFoxSlotFrequencyConfig;
 import com.bg7yoz.ft8cn.ft8transmit.DxpeditionMacroSupport;
 import com.bg7yoz.ft8cn.ft8transmit.FunctionOfTransmit;
 import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
@@ -88,9 +91,13 @@ public class MyCallingFragment extends Fragment {
         binding.dxpeditionTxSlotsButton.setEnabled(foxSlotsEnabled);
         binding.dxpeditionTxSlotsButton.setAlpha(foxSlotsEnabled ? 1.0f : 0.45f);
         if (mainViewModel != null && mainViewModel.ft8TransmitSignal != null) {
-            binding.dxpeditionTxSlotsButton.setText(getString(
+            String slotsText = getString(
                     R.string.dxpedition_tx_slots_button,
-                    mainViewModel.ft8TransmitSignal.getDxpeditionFoxTxSlots()));
+                    mainViewModel.ft8TransmitSignal.getDxpeditionFoxTxSlots());
+            if (GeneralVariables.dxpeditionFoxManualSlotFrequency) {
+                slotsText += "*";
+            }
+            binding.dxpeditionTxSlotsButton.setText(slotsText);
         }
         if (!enabled && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
             applyManualDxpeditionMode(false, false, true);
@@ -111,6 +118,9 @@ public class MyCallingFragment extends Fragment {
         int checked = mainViewModel.ft8TransmitSignal.getDxpeditionFoxTxSlots() - 1;
         new AlertDialog.Builder(requireContext())
                 .setTitle(R.string.dxpedition_tx_slots_title)
+                .setMessage(getString(
+                        R.string.dxpedition_tx_frequency_preview,
+                        mainViewModel.ft8TransmitSignal.getDxpeditionFoxSlotFrequencyPreview()))
                 .setSingleChoiceItems(items, checked, (dialogInterface, which) -> {
                     int slots = which + 1;
                     mainViewModel.ft8TransmitSignal.setDxpeditionFoxTxSlots(slots);
@@ -118,6 +128,110 @@ public class MyCallingFragment extends Fragment {
                     updateDxpeditionManualUi();
                     updateAutoSessionStatus();
                     dialogInterface.dismiss();
+                })
+                .setNeutralButton(R.string.dxpedition_tx_frequency_button,
+                        (dialogInterface, which) -> showDxpeditionTxFrequencyDialog())
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private int parseTxFrequencyInput(EditText input, int fallback) {
+        if (input == null || input.getText() == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(input.getText().toString().trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private void showDxpeditionTxFrequencyDialog() {
+        if (binding == null || mainViewModel == null || mainViewModel.ft8TransmitSignal == null) {
+            return;
+        }
+
+        LinearLayout root = new LinearLayout(requireContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        int padding = (int) (16 * requireContext().getResources().getDisplayMetrics().density);
+        root.setPadding(padding, padding, padding, 0);
+
+        CheckBox manualCheckBox = new CheckBox(requireContext());
+        manualCheckBox.setText(R.string.dxpedition_tx_frequency_manual);
+        manualCheckBox.setChecked(GeneralVariables.dxpeditionFoxManualSlotFrequency);
+        root.addView(manualCheckBox);
+
+        TextView standardView = new TextView(requireContext());
+        standardView.setText(R.string.dxpedition_tx_frequency_standard_item);
+        root.addView(standardView);
+
+        EditText startInput = new EditText(requireContext());
+        startInput.setSingleLine(true);
+        startInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        startInput.setHint(R.string.dxpedition_tx_frequency_start_hint);
+        startInput.setText(String.valueOf(DxpeditionFoxSlotFrequencyConfig.getStartHz()));
+        root.addView(startInput);
+
+        EditText stepInput = new EditText(requireContext());
+        stepInput.setSingleLine(true);
+        stepInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        stepInput.setHint(R.string.dxpedition_tx_frequency_step_hint);
+        stepInput.setText(String.valueOf(DxpeditionFoxSlotFrequencyConfig.getStepHz()));
+        root.addView(stepInput);
+
+        TextView previewView = new TextView(requireContext());
+        root.addView(previewView);
+
+        Runnable refreshPreview = () -> {
+            boolean manual = manualCheckBox.isChecked();
+            int start = DxpeditionFoxSlotFrequencyConfig.clampFrequency(
+                    parseTxFrequencyInput(startInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_START_HZ));
+            int step = DxpeditionFoxSlotFrequencyConfig.clampStep(
+                    parseTxFrequencyInput(stepInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ));
+            previewView.setText(getString(
+                    R.string.dxpedition_tx_frequency_preview,
+                    DxpeditionFoxSlotFrequencyConfig.buildPreview(
+                            mainViewModel.ft8TransmitSignal.getDxpeditionFoxTxSlots(),
+                            manual,
+                            start,
+                            step)));
+        };
+
+        manualCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> refreshPreview.run());
+        TextWatcher watcher = new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        };
+        startInput.addTextChangedListener(watcher);
+        stepInput.addTextChangedListener(watcher);
+        refreshPreview.run();
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_tx_frequency_title)
+                .setView(root)
+                .setPositiveButton(R.string.ok_confirmed, (dialogInterface, which) -> {
+                    boolean manual = manualCheckBox.isChecked();
+                    int start = DxpeditionFoxSlotFrequencyConfig.clampFrequency(
+                            parseTxFrequencyInput(startInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_START_HZ));
+                    int step = DxpeditionFoxSlotFrequencyConfig.clampStep(
+                            parseTxFrequencyInput(stepInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ));
+                    mainViewModel.ft8TransmitSignal.setDxpeditionFoxSlotFrequencyConfig(manual, start, step);
+                    mainViewModel.databaseOpr.writeConfig("dxpeditionFoxManualSlotFrequency", manual ? "1" : "0", null);
+                    mainViewModel.databaseOpr.writeConfig("dxpeditionFoxSlotStartHz", String.valueOf(start), null);
+                    mainViewModel.databaseOpr.writeConfig("dxpeditionFoxSlotStepHz", String.valueOf(step), null);
+                    updateDxpeditionManualUi();
+                    updateAutoSessionStatus();
+                    ToastMessage.show(getString(R.string.dxpedition_tx_frequency_saved));
                 })
                 .setNegativeButton(R.string.cancel, null)
                 .show();
@@ -671,7 +785,7 @@ public class MyCallingFragment extends Fragment {
         });
         binding.dxpeditionTxSlotsButton.setOnClickListener(view -> showDxpeditionTxSlotsPicker());
         binding.dxpeditionTxSlotsButton.setOnLongClickListener(view -> {
-            showDxpeditionTxSlotsPicker();
+            showDxpeditionTxFrequencyDialog();
             return true;
         });
         binding.dxpeditionHelpButton.setOnClickListener(view -> showDxpeditionGuideDialog());

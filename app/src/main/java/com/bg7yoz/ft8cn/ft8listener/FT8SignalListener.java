@@ -25,7 +25,6 @@ import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 
 public class FT8SignalListener {
     private static final String TAG = "FT8SignalListener";
@@ -45,7 +44,7 @@ public class FT8SignalListener {
 
     private final A91List a91List = new A91List();//a91列表
     private final Object slotDedupeLock = new Object();
-    private final HashMap<String, Boolean> slotDedupeMessageStrongState = new HashMap<>();
+    private final ArrayList<SlotDedupeEntry> slotDedupeEntries = new ArrayList<>();
     private long slotDedupeUtc = Long.MIN_VALUE;
     private int slotDedupeMode = -1;
 
@@ -64,6 +63,16 @@ public class FT8SignalListener {
         SlotFilterResult(ArrayList<Ft8Message> messages, boolean hadPublishedBefore) {
             this.messages = messages;
             this.hadPublishedBefore = hadPublishedBefore;
+        }
+    }
+
+    private static class SlotDedupeEntry {
+        final Ft8Message message;
+        boolean publishedAsStrong;
+
+        SlotDedupeEntry(Ft8Message message, boolean publishedAsStrong) {
+            this.message = message;
+            this.publishedAsStrong = publishedAsStrong;
         }
     }
 
@@ -217,7 +226,7 @@ public class FT8SignalListener {
         synchronized (slotDedupeLock) {
             slotDedupeUtc = utc;
             slotDedupeMode = decodeMode;
-            slotDedupeMessageStrongState.clear();
+            slotDedupeEntries.clear();
         }
     }
 
@@ -227,10 +236,10 @@ public class FT8SignalListener {
             if (slotDedupeUtc != utc || slotDedupeMode != decodeMode) {
                 slotDedupeUtc = utc;
                 slotDedupeMode = decodeMode;
-                slotDedupeMessageStrongState.clear();
+                slotDedupeEntries.clear();
             }
 
-            boolean hadPublishedBefore = slotDedupeMessageStrongState.size() > 0;
+            boolean hadPublishedBefore = slotDedupeEntries.size() > 0;
             if (messages == null) {
                 return new SlotFilterResult(filtered, hadPublishedBefore);
             }
@@ -239,16 +248,16 @@ public class FT8SignalListener {
                 if (message == null) {
                     continue;
                 }
-                String key = slotMessageKey(message);
                 boolean messageIsStrong = !message.isWeakSignal;
-                Boolean publishedAsStrong = slotDedupeMessageStrongState.get(key);
-                if (publishedAsStrong == null) {
-                    slotDedupeMessageStrongState.put(key, messageIsStrong);
+                SlotDedupeEntry entry = findSlotDedupeEntry(message);
+                if (entry == null) {
+                    slotDedupeEntries.add(new SlotDedupeEntry(message, messageIsStrong));
                     filtered.add(message);
                     continue;
                 }
-                if (!publishedAsStrong && messageIsStrong) {
-                    slotDedupeMessageStrongState.put(key, true);
+                entry.message.mergeDecodeQualityFrom(message);
+                if (!entry.publishedAsStrong && messageIsStrong) {
+                    entry.publishedAsStrong = true;
                     filtered.add(message);
                 }
             }
@@ -256,11 +265,13 @@ public class FT8SignalListener {
         }
     }
 
-    private String slotMessageKey(Ft8Message message) {
-        if (message == null) {
-            return "";
+    private SlotDedupeEntry findSlotDedupeEntry(Ft8Message message) {
+        for (SlotDedupeEntry entry : slotDedupeEntries) {
+            if (entry.message.isSameDecodedMessage(message)) {
+                return entry;
+            }
         }
-        return message.getDecodedMessageKey();
+        return null;
     }
 
     private void publishDecodeMessages(long utc,

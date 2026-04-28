@@ -315,6 +315,9 @@ public class GeneralVariables {
     public static boolean manualDxpeditionFoxMode = false;
     public static boolean dxpeditionFoxHoldFrequency = true;
     public static int dxpeditionFoxTxSlots = 1;
+    public static boolean dxpeditionFoxManualSlotFrequency = false;
+    public static int dxpeditionFoxSlotStartHz = 300;
+    public static int dxpeditionFoxSlotStepHz = 60;
     public static boolean dxpeditionFoxAutoSpecialMessage = true;
     public static boolean dxpeditionFoxCqOnFreeSlot = true;
     public static String manualDxpeditionMacroCustom1 = "{DXCALL} RR73";

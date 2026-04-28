@@ -22,6 +22,7 @@ import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
+import com.bg7yoz.ft8cn.ft8transmit.DxpeditionFoxSlotFrequencyConfig;
 import com.bg7yoz.ft8cn.ft8signal.FT8Package;
 import com.bg7yoz.ft8cn.log.OnQueryQSLCallsign;
 import com.bg7yoz.ft8cn.log.OnQueryQSLRecordCallsign;
@@ -2162,6 +2163,25 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                         GeneralVariables.dxpeditionFoxTxSlots = Math.max(1, Math.min(value, 5));
                     } catch (Exception e) {
                         GeneralVariables.dxpeditionFoxTxSlots = 1;
+                    }
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxManualSlotFrequency")) {
+                    GeneralVariables.dxpeditionFoxManualSlotFrequency = result.equals("1");
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxSlotStartHz")) {
+                    try {
+                        int value = result.equals("") ? DxpeditionFoxSlotFrequencyConfig.STANDARD_START_HZ : Integer.parseInt(result);
+                        GeneralVariables.dxpeditionFoxSlotStartHz = DxpeditionFoxSlotFrequencyConfig.clampFrequency(value);
+                    } catch (Exception e) {
+                        GeneralVariables.dxpeditionFoxSlotStartHz = DxpeditionFoxSlotFrequencyConfig.STANDARD_START_HZ;
+                    }
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxSlotStepHz")) {
+                    try {
+                        int value = result.equals("") ? DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ : Integer.parseInt(result);
+                        GeneralVariables.dxpeditionFoxSlotStepHz = DxpeditionFoxSlotFrequencyConfig.clampStep(value);
+                    } catch (Exception e) {
+                        GeneralVariables.dxpeditionFoxSlotStepHz = DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ;
                     }
                 }
                 if (name.equalsIgnoreCase("dxpeditionFoxAutoSpecialMessage")) {

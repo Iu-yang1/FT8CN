@@ -601,6 +601,14 @@
     <string name="dxpedition_tx_slots_button">TX%1$d</string>
     <string name="dxpedition_tx_slots_title">Fox 发射槽位</string>
     <string name="dxpedition_tx_slots_item">%1$d 个 TX 槽位</string>
+    <string name="dxpedition_tx_frequency_button">频率</string>
+    <string name="dxpedition_tx_frequency_title">Fox 槽位频率</string>
+    <string name="dxpedition_tx_frequency_manual">手动起点/步进</string>
+    <string name="dxpedition_tx_frequency_standard_item">标准：300 Hz 起，每槽 +60 Hz</string>
+    <string name="dxpedition_tx_frequency_start_hint">起始 Hz（300-900）</string>
+    <string name="dxpedition_tx_frequency_step_hint">步进 Hz（20-300）</string>
+    <string name="dxpedition_tx_frequency_preview">槽位：%1$s</string>
+    <string name="dxpedition_tx_frequency_saved">Fox 槽位频率已保存</string>
     <string name="dxpedition_help_button">?</string>
     <string name="dxpedition_guide_title">DXpedition 快速指南</string>
     <string name="dxpedition_guide_text">1）仅支持 FT8，建议关闭 TX=RX 锁定并使用分离收发。\n2）Hound 模式：勾选 DXP，选中目标后自动流程使用 Tx1/Tx3。\n3）Fox 模式：勾选 FOX，CQ 建议在 300-900Hz，自动流程使用 Tx2/Tx4/CQ。\n4）TX1-TX5 用于设置 Fox 多槽音频同时发射数量。\n5）Hound：点 DXP+ 可发快捷回复；长按 DXP+ 可编辑自定义宏。\n6）Fox：点 F01（DXP+）可打开 0.1 选择器，支持自动或手动选择 CALL1/CALL2。\n7）占位符：{DXCALL}=对方呼号，{MYCALL}=本台呼号，{RPT}=报告，{RRPT}=R+报告。\n8）WSJT-X 0.1 格式：CALL1 RR73; CALL2 &lt;DXCALL&gt; -11。\n示例：BG7UZR RR73; BG7QXX &lt;BG5JSU&gt; -01</string>

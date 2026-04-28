@@ -192,7 +192,7 @@ public final class DxpeditionFoxSlotScheduler {
         if (session == null) {
             return null;
         }
-        float frequency = DxpeditionFrequencyPolicy.pickFoxSlotFrequency(slotIndex);
+        float frequency = DxpeditionFoxSlotFrequencyConfig.resolveSlotFrequency(slotIndex);
         Ft8Message message;
         if (session.stage == STAGE_SEND_RR73) {
             message = new Ft8Message(FT8Common.FT8_MODE, 1, 0,
@@ -238,7 +238,7 @@ public final class DxpeditionFoxSlotScheduler {
                 slotIndex,
                 message,
                 4,
-                DxpeditionFrequencyPolicy.pickFoxSlotFrequency(slotIndex),
+                DxpeditionFoxSlotFrequencyConfig.resolveSlotFrequency(slotIndex),
                 true)
                 .addRr73Callsign(rr73.callsign)
                 .addReportCallsign(report.callsign);
@@ -261,7 +261,7 @@ public final class DxpeditionFoxSlotScheduler {
                 slotIndex,
                 message,
                 6,
-                DxpeditionFrequencyPolicy.pickFoxSlotFrequency(slotIndex)
+                DxpeditionFoxSlotFrequencyConfig.resolveSlotFrequency(slotIndex)
         );
     }
 
