@@ -601,6 +601,7 @@
     <string name="dxpedition_tx_slots_button">TX%1$d</string>
     <string name="dxpedition_tx_slots_title">Fox 发射槽位</string>
     <string name="dxpedition_tx_slots_item">%1$d 个 TX 槽位</string>
+    <string name="dxpedition_tx_settings_title">Fox 发射设置</string>
     <string name="dxpedition_tx_frequency_button">频率</string>
     <string name="dxpedition_tx_frequency_title">Fox 槽位频率</string>
     <string name="dxpedition_tx_frequency_manual">手动起点/步进</string>

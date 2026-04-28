@@ -188,6 +188,7 @@
     <string name="dxpedition_tx_slots_button">TX%1$d</string>
     <string name="dxpedition_tx_slots_title">Fox TX Slots</string>
     <string name="dxpedition_tx_slots_item">%1$d TX slot(s)</string>
+    <string name="dxpedition_tx_settings_title">Fox transmit settings</string>
     <string name="dxpedition_tx_frequency_button">Freq</string>
     <string name="dxpedition_tx_frequency_title">Fox slot frequencies</string>
     <string name="dxpedition_tx_frequency_manual">Manual start/step</string>
