@@ -87,6 +87,7 @@ public class Ft8Message {
     public LatLng toLatLng = null;
 
     public boolean isWeakSignal = false;
+    public boolean isTransmitMessage = false;
 
     @NonNull
     @SuppressLint({"SimpleDateFormat", "DefaultLocale"})
@@ -176,6 +177,7 @@ public class Ft8Message {
             score = message.score;
             band = message.band;
             isWeakSignal = message.isWeakSignal;
+            isTransmitMessage = message.isTransmitMessage;
 
             messageHash = message.messageHash;
 
@@ -279,6 +281,11 @@ public class Ft8Message {
     }
 
     public String getDecodedMessageKey() {
+        if (isTransmitMessage) {
+            return signalFormat + "|TX|"
+                    + Math.round(freq_hz) + "|"
+                    + normalizeDecodedMessageText();
+        }
         return signalFormat + "|"
                 + normalizeDecodedMessageText();
     }
@@ -300,17 +307,21 @@ public class Ft8Message {
             return;
         }
 
+        boolean thisHasDecodeMetrics = freq_hz > 0.01f;
+        boolean otherHasDecodeMetrics = other.freq_hz > 0.01f;
         boolean preferOtherTiming = !other.isWeakSignal || other.score >= score;
         isWeakSignal = isWeakSignal && other.isWeakSignal;
-        if (other.snr > snr) {
+        if ((!thisHasDecodeMetrics && otherHasDecodeMetrics) || other.snr > snr) {
             snr = other.snr;
         }
         if (other.score > score) {
             score = other.score;
         }
-        if (preferOtherTiming) {
+        if ((!thisHasDecodeMetrics && otherHasDecodeMetrics) || preferOtherTiming) {
             time_sec = other.time_sec;
-            freq_hz = other.freq_hz;
+            if (otherHasDecodeMetrics || !thisHasDecodeMetrics) {
+                freq_hz = other.freq_hz;
+            }
         }
     }
 

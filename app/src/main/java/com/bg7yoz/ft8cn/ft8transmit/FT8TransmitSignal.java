@@ -119,6 +119,7 @@ public class FT8TransmitSignal {
         utcTimer.start();
         foxSlotScheduler.setMaxTxSlots(GeneralVariables.dxpeditionFoxTxSlots);
         foxSlotScheduler.setSpecialMessageEnabled(GeneralVariables.dxpeditionFoxAutoSpecialMessage);
+        foxSlotScheduler.setCqOnFreeSlotEnabled(GeneralVariables.dxpeditionFoxCqOnFreeSlot);
         updateDxpeditionFoxSlotStatus();
         syncNoReplyCount();
     }
@@ -896,7 +897,6 @@ public class FT8TransmitSignal {
 
     private boolean shouldUseFoxSlotScheduler() {
         return isManualDxpeditionFoxEnabled()
-                && autoSession.isDxpeditionFox()
                 && !transmitFreeText
                 && !hasPendingDxpeditionMacro()
                 && !isExperimentalManualTxMode();
@@ -1343,7 +1343,7 @@ public class FT8TransmitSignal {
     }
 
     public String getAutoSessionStatusText() {
-        if (autoSession.isDxpeditionFox() && isManualDxpeditionFoxEnabled()) {
+        if (isManualDxpeditionFoxEnabled()) {
             return GeneralVariables.getStringFromResource(R.string.dxpedition_fox_status)
                     + " / " + foxSlotScheduler.getStatusText();
         }
@@ -1709,6 +1709,7 @@ public class FT8TransmitSignal {
 
         foxSlotScheduler.setMaxTxSlots(GeneralVariables.dxpeditionFoxTxSlots);
         foxSlotScheduler.setSpecialMessageEnabled(GeneralVariables.dxpeditionFoxAutoSpecialMessage);
+        foxSlotScheduler.setCqOnFreeSlotEnabled(GeneralVariables.dxpeditionFoxCqOnFreeSlot);
         foxSlotScheduler.ingestMessages(messages, GeneralVariables.myCallsign);
         if (foxSlotScheduler.hasWork()) {
             TransmitCallsign primary = foxSlotScheduler.getPrimaryTransmitCallsign();

@@ -2167,6 +2167,9 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("dxpeditionFoxAutoSpecialMessage")) {
                     GeneralVariables.dxpeditionFoxAutoSpecialMessage = (result.equals("") || result.equals("1"));
                 }
+                if (name.equalsIgnoreCase("dxpeditionFoxCqOnFreeSlot")) {
+                    GeneralVariables.dxpeditionFoxCqOnFreeSlot = (result.equals("") || result.equals("1"));
+                }
                 if (name.equalsIgnoreCase("manualDxpeditionMacroCustom1")) {
                     GeneralVariables.manualDxpeditionMacroCustom1 = result.equals("")
                             ? "{DXCALL} RR73"
