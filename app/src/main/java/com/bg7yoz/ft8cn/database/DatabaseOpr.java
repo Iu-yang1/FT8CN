@@ -2170,10 +2170,10 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 }
                 if (name.equalsIgnoreCase("dxpeditionFoxSlotStartHz")) {
                     try {
-                        int value = result.equals("") ? DxpeditionFoxSlotFrequencyConfig.STANDARD_START_HZ : Integer.parseInt(result);
-                        GeneralVariables.dxpeditionFoxSlotStartHz = DxpeditionFoxSlotFrequencyConfig.clampFrequency(value);
+                        int value = result.equals("") ? DxpeditionFoxSlotFrequencyConfig.MANUAL_START_HZ : Integer.parseInt(result);
+                        GeneralVariables.dxpeditionFoxSlotStartHz = DxpeditionFoxSlotFrequencyConfig.clampManualFrequency(value);
                     } catch (Exception e) {
-                        GeneralVariables.dxpeditionFoxSlotStartHz = DxpeditionFoxSlotFrequencyConfig.STANDARD_START_HZ;
+                        GeneralVariables.dxpeditionFoxSlotStartHz = DxpeditionFoxSlotFrequencyConfig.MANUAL_START_HZ;
                     }
                 }
                 if (name.equalsIgnoreCase("dxpeditionFoxSlotStepHz")) {

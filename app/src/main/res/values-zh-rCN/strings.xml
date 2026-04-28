@@ -606,9 +606,9 @@
     <string name="dxpedition_tx_frequency_title">Fox 槽位频率</string>
     <string name="dxpedition_tx_frequency_manual">手动起点/步进</string>
     <string name="dxpedition_tx_frequency_standard_item">标准：300 Hz 起，每槽 +60 Hz</string>
-    <string name="dxpedition_tx_frequency_start_hint">起始 Hz（300-900）</string>
+    <string name="dxpedition_tx_frequency_start_hint">起始 Hz（200-4000）</string>
     <string name="dxpedition_tx_frequency_step_hint">步进 Hz（20-300）</string>
-    <string name="dxpedition_tx_frequency_preview">槽位：%1$s</string>
+    <string name="dxpedition_tx_frequency_preview">槽位：\n%1$s</string>
     <string name="dxpedition_tx_frequency_saved">Fox 槽位频率已保存</string>
     <string name="dxpedition_help_button">?</string>
     <string name="dxpedition_guide_title">DXpedition 快速指南</string>

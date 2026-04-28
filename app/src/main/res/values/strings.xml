@@ -193,9 +193,9 @@
     <string name="dxpedition_tx_frequency_title">Fox slot frequencies</string>
     <string name="dxpedition_tx_frequency_manual">Manual start/step</string>
     <string name="dxpedition_tx_frequency_standard_item">Standard: 300 Hz + 60 Hz per slot</string>
-    <string name="dxpedition_tx_frequency_start_hint">Start Hz (300-900)</string>
+    <string name="dxpedition_tx_frequency_start_hint">Start Hz (200-4000)</string>
     <string name="dxpedition_tx_frequency_step_hint">Step Hz (20-300)</string>
-    <string name="dxpedition_tx_frequency_preview">Slots: %1$s</string>
+    <string name="dxpedition_tx_frequency_preview">Slots:\n%1$s</string>
     <string name="dxpedition_tx_frequency_saved">Fox slot frequencies saved</string>
     <string name="dxpedition_help_button">?</string>
     <string name="dxpedition_guide_title">DXpedition Quick Guide</string>

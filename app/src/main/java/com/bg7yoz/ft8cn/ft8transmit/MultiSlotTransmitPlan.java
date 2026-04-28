@@ -77,7 +77,7 @@ public final class MultiSlotTransmitPlan {
                     .append(modeLabel)
                     .append("] (")
                     .append(Math.round(item.frequencyHz))
-                    .append("Hz) ")
+                    .append(" Hz) ")
                     .append(item.message.getMessageText());
             return builder.toString();
         }
@@ -88,11 +88,11 @@ public final class MultiSlotTransmitPlan {
                 .append(items.size());
         for (int i = 0; i < items.size(); i++) {
             MultiSlotTransmitItem item = items.get(i);
-            builder.append("\n#")
+            builder.append("\nTX")
                     .append(item.slotIndex + 1)
-                    .append(" ")
+                    .append(": ")
                     .append(Math.round(item.frequencyHz))
-                    .append("Hz ")
+                    .append(" Hz ")
                     .append(item.message.getMessageText());
         }
         return builder.toString();

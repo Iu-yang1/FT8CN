@@ -7,6 +7,7 @@ import java.util.Locale;
 public final class DxpeditionFoxSlotFrequencyConfig {
     public static final int STANDARD_START_HZ = 300;
     public static final int STANDARD_STEP_HZ = 60;
+    public static final int MANUAL_START_HZ = 1300;
     public static final int MIN_STEP_HZ = 20;
     public static final int MAX_STEP_HZ = 300;
 
@@ -26,13 +27,13 @@ public final class DxpeditionFoxSlotFrequencyConfig {
         if (!manual) {
             return DxpeditionFrequencyPolicy.pickFoxSlotFrequency(slotIndex);
         }
-        return DxpeditionFrequencyPolicy.clampFoxTxFrequency(
-                clampFrequency(startHz) + Math.max(0, slotIndex) * clampStep(stepHz)
+        return clampManualFrequency(
+                clampManualFrequency(startHz) + Math.max(0, slotIndex) * clampStep(stepHz)
         );
     }
 
     public static int getStartHz() {
-        return clampFrequency(GeneralVariables.dxpeditionFoxSlotStartHz);
+        return clampManualFrequency(GeneralVariables.dxpeditionFoxSlotStartHz);
     }
 
     public static int getStepHz() {
@@ -48,7 +49,7 @@ public final class DxpeditionFoxSlotFrequencyConfig {
 
     public static void setManual(boolean enabled, int startHz, int stepHz) {
         GeneralVariables.dxpeditionFoxManualSlotFrequency = enabled;
-        GeneralVariables.dxpeditionFoxSlotStartHz = clampFrequency(startHz);
+        GeneralVariables.dxpeditionFoxSlotStartHz = clampManualFrequency(startHz);
         GeneralVariables.dxpeditionFoxSlotStepHz = clampStep(stepHz);
     }
 
@@ -73,18 +74,24 @@ public final class DxpeditionFoxSlotFrequencyConfig {
         StringBuilder builder = new StringBuilder();
         for (int i = 0; i < count; i++) {
             if (i > 0) {
-                builder.append(" / ");
+                builder.append("\n");
             }
-            builder.append("#")
+            builder.append("TX")
                     .append(i + 1)
-                    .append(" ")
+                    .append(": ")
                     .append(Math.round(resolveSlotFrequency(i, manual, startHz, stepHz)))
-                    .append("Hz");
+                    .append(" Hz");
         }
         return builder.toString();
     }
 
-    public static int clampFrequency(int hz) {
+    public static int clampManualFrequency(int hz) {
+        return Math.round(clamp(hz,
+                DxpeditionFrequencyPolicy.TX_AUDIO_MIN_HZ,
+                DxpeditionFrequencyPolicy.TX_AUDIO_MAX_HZ));
+    }
+
+    public static int clampStandardFrequency(int hz) {
         return Math.round(DxpeditionFrequencyPolicy.clampFoxTxFrequency(hz));
     }
 
@@ -96,5 +103,15 @@ public final class DxpeditionFoxSlotFrequencyConfig {
             return MAX_STEP_HZ;
         }
         return hz;
+    }
+
+    private static float clamp(float value, float min, float max) {
+        if (value < min) {
+            return min;
+        }
+        if (value > max) {
+            return max;
+        }
+        return value;
     }
 }
