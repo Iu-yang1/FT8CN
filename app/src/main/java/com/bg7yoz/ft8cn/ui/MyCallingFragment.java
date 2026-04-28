@@ -67,6 +67,7 @@ public class MyCallingFragment extends Fragment {
 
     private RecyclerView transmitRecycleView;
     private CallingListAdapter transmitCallListAdapter;
+    private CqQueueAdapter cqQueueAdapter;
     private FunctionOrderSpinnerAdapter functionOrderSpinnerAdapter;
     private boolean updatingDxpeditionModeUi = false;
 
@@ -565,6 +566,51 @@ public class MyCallingFragment extends Fragment {
         binding.autoSessionTextView.setText(mainViewModel.ft8TransmitSignal.getAutoSessionStatusText());
     }
 
+    private void initCqQueuePanel() {
+        cqQueueAdapter = new CqQueueAdapter(requireContext(), new CqQueueAdapter.OnQueueAction() {
+            @Override
+            public void onPromote(CqCallEntry entry) {
+                if (entry == null) {
+                    return;
+                }
+                mainViewModel.ft8TransmitSignal.promoteCqQueueEntry(entry.callsign);
+                updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+            }
+
+            @Override
+            public void onRemove(CqCallEntry entry) {
+                if (entry == null) {
+                    return;
+                }
+                mainViewModel.ft8TransmitSignal.removeCqQueueEntry(entry.callsign);
+                updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+            }
+        });
+        binding.cqQueueRecyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
+        binding.cqQueueRecyclerView.setAdapter(cqQueueAdapter);
+        updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+    }
+
+    private void updateCqQueuePanel(ArrayList<CqCallEntry> entries) {
+        if (binding == null || cqQueueAdapter == null || mainViewModel == null
+                || mainViewModel.ft8TransmitSignal == null) {
+            return;
+        }
+        int count = entries == null ? 0 : entries.size();
+        boolean visible = GeneralVariables.cqQueueEnabled || count > 0;
+        binding.cqQueuePanelLayout.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (!visible) {
+            return;
+        }
+        binding.cqQueueStatusTextView.setText(String.format(
+                getString(R.string.cq_queue_panel_status),
+                mainViewModel.ft8TransmitSignal.getCqQueueNowText(),
+                count
+        ));
+        cqQueueAdapter.submitList(entries);
+        binding.cqQueueRecyclerView.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+    }
+
     static {
         System.loadLibrary("ft8cn");
     }
@@ -761,6 +807,7 @@ public class MyCallingFragment extends Fragment {
         transmitRecycleView.setLayoutManager(new LinearLayoutManager(requireContext()));
         transmitRecycleView.setAdapter(transmitCallListAdapter);
         transmitCallListAdapter.notifyDataSetChanged();
+        initCqQueuePanel();
 
         // 设置消息列表滑动，用于快速呼叫
         initRecyclerViewAction();
@@ -927,6 +974,7 @@ public class MyCallingFragment extends Fragment {
                 binding.functionOrderSpinner.setSelection(
                         mainViewModel.ft8TransmitSignal.getFunctionSelectionIndex(integer)
                 );
+                updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
                 updateAutoSessionStatus();
             }
         });
@@ -935,6 +983,7 @@ public class MyCallingFragment extends Fragment {
         mainViewModel.ft8TransmitSignal.mutableCqQueue.observe(getViewLifecycleOwner(), new Observer<ArrayList<CqCallEntry>>() {
             @Override
             public void onChanged(ArrayList<CqCallEntry> cqCallEntries) {
+                updateCqQueuePanel(cqCallEntries);
                 updateAutoSessionStatus();
             }
         });
@@ -962,6 +1011,7 @@ public class MyCallingFragment extends Fragment {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
                             "[" + getCurrentModeLabel() + "]"));
+                    updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
                     updateAutoSessionStatus();
                     return;
                 }
@@ -976,6 +1026,7 @@ public class MyCallingFragment extends Fragment {
                             "[" + getCurrentModeLabel() + "] "
                                     + transmitCallsign.callsign));
                 }
+                updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
                 updateAutoSessionStatus();
             }
         });

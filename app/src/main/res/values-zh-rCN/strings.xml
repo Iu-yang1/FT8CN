@@ -145,6 +145,9 @@
     <string name="cq_max_queue">队列</string>
     <string name="cq_directed_prefixes">定向CQ</string>
     <string name="cq_directed_prefixes_hint">DX AS EU NA</string>
+    <string name="cq_queue_panel_status">Now: %1$s   Queue: %2$d</string>
+    <string name="cq_queue_promote">TOP</string>
+    <string name="cq_queue_remove">DEL</string>
     <string name="message_count_count">消息(%d/%d)</string>
     <string name="average_offset_seconds">平均偏移%.2f秒</string>
     <string name="my_grid">我的位置 : %s</string>

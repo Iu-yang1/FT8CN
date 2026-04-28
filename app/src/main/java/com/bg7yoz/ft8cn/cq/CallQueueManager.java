@@ -118,6 +118,19 @@ public final class CallQueueManager {
         return true;
     }
 
+    public synchronized boolean promote(String callsign) {
+        String normalized = normalizeCallsign(callsign);
+        CqCallEntry entry = byCallsign.get(normalized);
+        if (entry == null) {
+            return false;
+        }
+        entry.manual = true;
+        entry.priority = CqCallEntry.PRIORITY_MANUAL;
+        entry.lastHeardMs = UtcTimer.getSystemTime();
+        sortLocked();
+        return true;
+    }
+
     public synchronized ArrayList<CqCallEntry> snapshot() {
         pruneLocked();
         return new ArrayList<>(queue);
@@ -206,6 +219,9 @@ public final class CallQueueManager {
             public int compare(CqCallEntry left, CqCallEntry right) {
                 if (left.priority != right.priority) {
                     return left.priority - right.priority;
+                }
+                if (left.manual && right.manual && left.lastHeardMs != right.lastHeardMs) {
+                    return left.lastHeardMs < right.lastHeardMs ? 1 : -1;
                 }
                 int rank = compareByRankMethod(left, right);
                 if (rank != 0) {

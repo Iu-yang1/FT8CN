@@ -1618,6 +1618,34 @@ public class FT8TransmitSignal {
         publishCqQueue();
     }
 
+    public boolean removeCqQueueEntry(String callsign) {
+        boolean removed = callQueueManager.remove(callsign);
+        publishCqQueue();
+        return removed;
+    }
+
+    public boolean promoteCqQueueEntry(String callsign) {
+        boolean promoted = callQueueManager.promote(callsign);
+        publishCqQueue();
+        return promoted;
+    }
+
+    @SuppressLint("DefaultLocale")
+    public String getCqQueueNowText() {
+        TransmitCallsign target = toCallsign;
+        if (target == null || !target.haveTargetCallsign()) {
+            return "CQ";
+        }
+        String frequency = target.frequency > 0
+                ? String.format(" %.0fHz", target.frequency)
+                : "";
+        return String.format("%s TX%d%s NR%d",
+                target.callsign,
+                functionOrder,
+                frequency,
+                autoSession.getNoReplyCount());
+    }
+
     private void publishCqQueue() {
         mutableCqQueue.postValue(callQueueManager.snapshot());
     }
