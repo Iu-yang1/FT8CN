@@ -7,26 +7,28 @@
 #include "unpack.h"
 
 #include <stdbool.h>
+#include <ctype.h>
 #include <float.h>
 #include <math.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 #include "../common/debug.h"
 #include "hash22.h"
 
-/// 为后续的软判决 LDPC 解码计算 174 个消息位的对数似然对数 log(p(1) / p(0))
+/// 为后续的软判�?LDPC 解码计算 174 个消息位的对数似然对�?log(p(1) / p(0))
 /// @param[in] wf 在消息时槽期间收集的瀑布数据
-/// @param[in] cand 从中提取消息的候选者
+/// @param[in] cand 从中提取消息的候选�?
 /// @param[in] code_map 符号编码映射
 /// @param[out] log174 174 个消息位中每一个的解码对数似然输出
 static void ft4_extract_likelihood(const waterfall_t *wf, const candidate_t *cand, float *log174);
 static void ft8_extract_likelihood(const waterfall_t *wf, candidate_t *cand, float *log174);
 
-/// 将位字符串打包，每个位在 bit_array[] 中表示为一个 0/非 0 字节，
-/// 作为一个打包位字符串，从 packed[] 的第一个字节的最高有效位 (MSB) 开始
+/// 将位字符串打包，每个位在 bit_array[] 中表示为一�?0/�?0 字节�?
+/// 作为一个打包位字符串，�?packed[] 的第一个字节的最高有效位 (MSB) 开�?
 /// @param[in] plain 包含 num_bits 个条目的位数组（0 和非零值）
-/// @param[in] num_bits bit_array 中传入的位数（条目数）
-/// @param[out] packed 表示 bit_array 中数据的字节打包位
+/// @param[in] num_bits bit_array 中传入的位数（条目数�?
+/// @param[out] packed 表示 bit_array 中数据的字节打包�?
 static void pack_bits(const uint8_t bit_array[], int num_bits, uint8_t packed[]);
 
 static float max2(float a, float b);
@@ -42,30 +44,48 @@ static void ft4_extract_likelihood_n(const waterfall_t *wf, const candidate_t *c
 static void ft8_extract_likelihood_n(const waterfall_t *wf, const candidate_t *cand, int n_syms, float *log174);
 static void ft4_extract_likelihood_strong(const waterfall_t *wf, const candidate_t *cand, float *log174);
 static void ft8_extract_likelihood_strong(const waterfall_t *wf, candidate_t *cand, float *log174);
+static void ftx_prepare_logl(const waterfall_t *wf, candidate_t *cand, bool strong, float *log174);
+static bool ftx_finalize_message(waterfall_t *wf, candidate_t *cand, const uint8_t a91[],
+                                 message_t *message, decode_status_t *status);
 static int ftx_ldpc_check_codeword(const uint8_t codeword[]);
 static bool ftx_osd_refine(const float *log174, uint8_t plain174[], int *errors);
 static bool ftx_try_decode_pass(const float *log174, int max_iterations, float llr_scale,
                                 uint8_t plain174[], uint8_t a91[], decode_status_t *status);
 static void ftx_unpack_bits_from_bytes(const uint8_t packed[], int num_bits, uint8_t unpacked[]);
+static void ftx_normalize_ap_text(const char *src, char *dst, int dst_size);
 static bool ftx_build_ap_hypothesis(ftx_protocol_t protocol, const char *text,
                                     uint8_t a91[], uint8_t codeword174[]);
 static void ftx_apply_ap_prior(float *log174, const uint8_t codeword174[], float prior_strength);
 static float ftx_score_ap_match(const float *log174, const uint8_t codeword174[]);
-static bool ftx_try_ap_hypothesis(const float *log174, ftx_protocol_t protocol, const char *text,
-                                  int max_iterations, uint8_t plain174[], uint8_t a91[],
-                                  decode_status_t *status, float *evidence_out);
+static bool ftx_try_ap_codeword(const float *log174, const uint8_t hypothesisA91[],
+                                const uint8_t hypothesisCodeword174[], int max_iterations,
+                                uint8_t plain174[], uint8_t a91[], decode_status_t *status);
+static bool ftx_try_ap_text_list(const float *log174, ftx_protocol_t protocol,
+                                 const char *const texts[], int text_count,
+                                 int max_iterations, uint8_t plain174[], uint8_t a91[],
+                                 decode_status_t *status);
 static bool ftx_try_ap_decode(const float *log174, ftx_protocol_t protocol, const ap_hints_t *ap_hints,
                               int max_iterations, uint8_t plain174[], uint8_t a91[],
                               decode_status_t *status);
 
-static const int kApReportValues[] = {1, 3, 5, 7, 10, 12, 15, 18, 20, 24};
+typedef struct
+{
+    float evidence;
+    uint8_t a91[FTX_LDPC_K_BYTES];
+    uint8_t codeword174[FTX_LDPC_N];
+} ap_trial_candidate_t;
+
 static const float kApPriorStrength = 0.75f;
 static const float kApMinEvidence = 1.15f;
 static const float kApMinMargin = 0.18f;
-// AP-lite 使用一个非常小的固定假设集，因此回退路径保持有界且可审查。
-
+enum {
+    kApMaxDecodeTrials = 8,
+    kApTextBufferSize = 80,
+    kApGeneratedTextLimit = FTX_AP_MAX_HINT_CALLS * 210
+};
+// AP 先按 soft evidence 排序，只对前几条候选做硬解，因此可以承受更宽的假设集�?
 /**
- * SNR 限幅，避免异常值
+ * SNR 限幅，避免异常�?
  */
 static inline int clamp_snr_value(int snr) {
     if (snr < -30) return -30;
@@ -74,7 +94,7 @@ static inline int clamp_snr_value(int snr) {
 }
 
 /**
- * 取候选在瀑布图中的起始索引
+ * 取候选在瀑布图中的起始索�?
  */
 static int get_index(const waterfall_t *wf, const candidate_t *candidate) {
     int offset = candidate->time_offset;
@@ -88,11 +108,11 @@ static int get_index(const waterfall_t *wf, const candidate_t *candidate) {
  * FT8 同步评分
  *
  * 改动点：
- * 1. 保留原来的频率/时间邻居差分
- * 2. 增加“目标 bin 与其余 bin 平均差值”的弱信号增益项
- * 3. 对后段 sync block 的边界判断统一修正
+ * 1. 保留原来的频�?时间邻居差分
+ * 2. 增加“目�?bin 与其�?bin 平均差值”的弱信号增益项
+ * 3. 对后�?sync block 的边界判断统一修正
  *
- * 这样会比原来稍微灵敏一些，但不至于把噪声候选放大得太夸张。
+ * 这样会比原来稍微灵敏一些，但不至于把噪声候选放大得太夸张�?
  */
 static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
     int score = 0;
@@ -133,8 +153,8 @@ static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
                 ++num_average;
             }
 
-            // 增加一个“目标 bin 相对其它 7 个 bin 的平均优势”
-            // 这个项对弱信号更友好一些
+            // 增加一个“目�?bin 相对其它 7 �?bin 的平均优势�?
+            // 这个项对弱信号更友好一�?
             {
                 int others = 0;
                 for (int n = 0; n < 8; ++n) {
@@ -158,9 +178,9 @@ static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
  * FT4 同步评分
  *
  * 改动点：
- * 1. 保留原来的频率/时间邻居差分
- * 2. 增加“目标 bin 与其余 3 个 bin 平均差值”的增强项
- * 3. FT4 本来同步符号更短、更密，适当增强这一项有助于弱信号候选进入后续 LDPC
+ * 1. 保留原来的频�?时间邻居差分
+ * 2. 增加“目�?bin 与其�?3 �?bin 平均差值”的增强�?
+ * 3. FT4 本来同步符号更短、更密，适当增强这一项有助于弱信号候选进入后�?LDPC
  */
 static int ft4_sync_score(const waterfall_t *wf, const candidate_t *candidate) {
     int score = 0;
@@ -202,7 +222,7 @@ static int ft4_sync_score(const waterfall_t *wf, const candidate_t *candidate) {
                 ++num_average;
             }
 
-            // 目标 bin 相对其余 3 个 bin 的平均优势
+            // 目标 bin 相对其余 3 �?bin 的平均优�?
             {
                 int others = 0;
                 for (int n = 0; n < 4; ++n) {
@@ -222,7 +242,7 @@ static int ft4_sync_score(const waterfall_t *wf, const candidate_t *candidate) {
     return score;
 }
 
-// 检测信号候选
+// 检测信号候�?
 int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[], int min_score) {
     int heap_size = 0;
     candidate_t candidate;
@@ -230,10 +250,10 @@ int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[],
     // FT4 对起始时刻偏差更敏感，放宽搜索窗口以提高检出率
     const int time_offset_min = is_ft4 ? -40 : -12;
     const int time_offset_max = is_ft4 ? 80 : 24;
-    // 频率扫描边界：FT4 为 4-FSK，FT8 为 8-FSK
+    // 频率扫描边界：FT4 �?4-FSK，FT8 �?8-FSK
     const int tone_span = is_ft4 ? 3 : 7;
 
-    // 注意：
+    // 注意�?
     // FT8 / FT4 共用同一套扫描框架，但窗口按协议分别配置
     // FT4 放宽时偏搜索范围，可减少“耳朵能听到但候选未入堆”的漏检
     for (candidate.time_sub = 0; candidate.time_sub < wf->time_osr; ++candidate.time_sub) {
@@ -267,7 +287,7 @@ int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[],
         }
     }
 
-    // 按同步分数排序
+    // 按同步分数排�?
     int len_unsorted = heap_size;
     while (len_unsorted > 1) {
         candidate_t tmp = heap[len_unsorted - 1];
@@ -313,7 +333,7 @@ static void ft8_extract_likelihood(const waterfall_t *wf, candidate_t *cand, flo
     memset(llr_acc, 0, sizeof(llr_acc));
     memset(llr_cnt, 0, sizeof(llr_cnt));
 
-    // FT8 融合 1/2/3 符号联合软判决，降低单符号判决波动
+    // FT8 融合 1/2/3 符号联合软判决，降低单符号判决波�?
     const int joint_list[] = {1, 2, 3};
     for (int j = 0; j < 3; ++j) {
         memset(llr_tmp, 0, sizeof(llr_tmp));
@@ -341,7 +361,7 @@ static void ft4_extract_likelihood_n(const waterfall_t *wf, const candidate_t *c
         while (pos < 29) {
             int group = n_syms;
             if ((pos + group) > 29) {
-                // 联合判决不能跨段，尾部退化为单符号
+                // 联合判决不能跨段，尾部退化为单符�?
                 group = 1;
             }
 
@@ -397,7 +417,7 @@ static void ft8_extract_likelihood_n(const waterfall_t *wf, const candidate_t *c
         while (pos < 29) {
             int group = n_syms;
             if ((pos + group) > 29) {
-                // 联合判决不能跨段，尾部退化为单符号
+                // 联合判决不能跨段，尾部退化为单符�?
                 group = 1;
             }
 
@@ -454,12 +474,12 @@ static void ftx_normalize_logl(float *log174) {
     float inv_n = 1.0f / FTX_LDPC_N;
     float variance = (sum2 - (sum * sum * inv_n)) * inv_n;
 
-    // 避免极弱信号/纯噪声下方差过小导致归一化爆掉
+    // 避免极弱信号/纯噪声下方差过小导致归一化爆�?
     if (variance < 1e-6f) {
         variance = 1e-6f;
     }
 
-    // 略微提高归一化系数，增强软判决输入的动态范围
+    // 略微提高归一化系数，增强软判决输入的动态范�?
     float norm_factor = sqrtf(26.0f / variance);
     for (int i = 0; i < FTX_LDPC_N; ++i) {
         log174[i] *= norm_factor;
@@ -547,7 +567,7 @@ static void ft4_guess_snr(const waterfall_t *wf, candidate_t *cand) {
         float signal_avg = signal / (float)signal_count;
         float noise_avg = noise / (float)noise_count;
 
-        // 这个 offset 比 FT8 小，适合 FT4 显示
+        // 这个 offset �?FT8 小，适合 FT4 显示
         int snr = (int)floorf(10.0f * log10f(1E-12f + signal_avg / noise_avg) - 20.0f + 0.5f);
         cand->snr = clamp_snr_value(snr);
     } else {
@@ -563,7 +583,73 @@ static void ftx_guess_snr(const waterfall_t *wf, candidate_t *cand) {
     }
 }
 
- //max_iterations=20 LDPC的迭代次数。
+static void ftx_prepare_logl(const waterfall_t *wf, candidate_t *cand, bool strong, float *log174) {
+    if (wf->protocol == PROTO_FT4) {
+        if (strong) {
+            ft4_extract_likelihood_strong(wf, cand, log174);
+        } else {
+            ft4_extract_likelihood(wf, cand, log174);
+        }
+    } else {
+        if (strong) {
+            ft8_extract_likelihood_strong(wf, cand, log174);
+        } else {
+            ft8_extract_likelihood(wf, cand, log174);
+        }
+    }
+    ftx_normalize_logl(log174);
+}
+
+static bool ftx_finalize_message(waterfall_t *wf, candidate_t *cand, const uint8_t a91[],
+                                 message_t *message, decode_status_t *status) {
+    uint8_t payload[FTX_LDPC_K_BYTES];
+    memcpy(payload, a91, sizeof(payload));
+
+    if (wf->protocol == PROTO_FT4) {
+        // Undo FT4 whitening before unpacking the final message fields.
+        for (int i = 0; i < 10; ++i) {
+            payload[i] ^= kFT4XORSequence[i];
+        }
+    }
+
+    message->call_to[0] = message->call_de[0] = message->dx_call_to2[0] =
+            message->maidenGrid[0] = message->extra[0] = message->rtty_state[0] =
+            message->arrl_rac[0] = message->arrl_class[0] = '\0';
+    message->call_de_hash.hash10 = message->call_de_hash.hash12 = message->call_de_hash.hash22 = 0;
+    message->call_to_hash.hash10 = message->call_to_hash.hash12 = message->call_to_hash.hash22 = 0;
+    message->report = -100;
+    message->r_flag = 0;
+    message->rtty_tu = 0;
+    message->eu_serial = 0;
+    memcpy(message->a91, payload, FTX_LDPC_K_BYTES);
+    status->unpack_status = unpackToMessage_t(payload, message);
+
+
+    if (status->unpack_status < 0) {
+        // Keep a placeholder text when the payload decodes but this message type is unsupported.
+        message->call_to[0] = '\0';
+        message->call_de[0] = '\0';
+        message->dx_call_to2[0] = '\0';
+        message->maidenGrid[0] = '\0';
+        message->rtty_state[0] = '\0';
+        message->arrl_rac[0] = '\0';
+        message->arrl_class[0] = '\0';
+        message->call_de_hash.hash10 = message->call_de_hash.hash12 = message->call_de_hash.hash22 = 0;
+        message->call_to_hash.hash10 = message->call_to_hash.hash12 = message->call_to_hash.hash22 = 0;
+        message->r_flag = 0;
+        message->rtty_tu = 0;
+        message->eu_serial = 0;
+        snprintf(message->extra, sizeof(message->extra), "UNSUP i3=%u n3=%u",
+                 (unsigned) message->i3, (unsigned) message->n3);
+        snprintf(message->text, sizeof(message->text), "%s", message->extra);
+    }
+
+    message->hash = status->crc_extracted;
+    ftx_guess_snr(wf, cand);
+    return true;
+}
+
+// max_iterations=20 means the basic LDPC iteration budget.
 bool
 ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_iterations,
            const ap_hints_t *ap_hints, decode_status_t *status) {
@@ -573,14 +659,7 @@ ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_itera
     status->unpack_status = -1;
 
     float log174[FTX_LDPC_N];
-
-    if (wf->protocol == PROTO_FT4) {
-        ft4_extract_likelihood(wf, cand, log174);
-    } else {
-        ft8_extract_likelihood(wf, cand, log174);
-    }
-
-    ftx_normalize_logl(log174);
+    ftx_prepare_logl(wf, cand, false, log174);
     float ap_base_log174[FTX_LDPC_N];
     memcpy(ap_base_log174, log174, sizeof(ap_base_log174));
     // AP-lite starts from the same normalized LLRs as the regular decode path.
@@ -600,12 +679,7 @@ ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_itera
             retry_iterations = 320;
         }
 
-        if (wf->protocol == PROTO_FT4) {
-            ft4_extract_likelihood_strong(wf, cand, retry_log174);
-        } else {
-            ft8_extract_likelihood_strong(wf, cand, retry_log174);
-        }
-        ftx_normalize_logl(retry_log174);
+        ftx_prepare_logl(wf, cand, true, retry_log174);
         memcpy(ap_base_log174, retry_log174, sizeof(ap_base_log174));
         // When the strong retry runs, AP-lite reuses that stronger LLR view as its input.
 
@@ -639,51 +713,44 @@ ft8_decode(waterfall_t *wf, candidate_t *cand, message_t *message, int max_itera
         return false;
     }
 
-    if (wf->protocol == PROTO_FT4) {
-        // FT4 在 CRC/FEC 前做过异或扰码，解码后恢复
-        for (int i = 0; i < 10; ++i) {
-            a91[i] ^= kFT4XORSequence[i];
-        }
+    return ftx_finalize_message(wf, cand, a91, message, status);
+}
+
+bool ft8_decode_with_ap_texts(waterfall_t *wf, candidate_t *cand,
+                              const char *const ap_texts[], int ap_text_count,
+                              int max_iterations, message_t *message, decode_status_t *status) {
+    status->ldpc_errors = FTX_LDPC_M;
+    status->crc_extracted = 0;
+    status->crc_calculated = 0;
+    status->unpack_status = -1;
+
+    if (ap_texts == NULL || ap_text_count <= 0) {
+        return false;
     }
 
-    message->call_to[0] = message->call_de[0] = message->dx_call_to2[0] =
-            message->maidenGrid[0] = message->extra[0] = message->rtty_state[0] =
-            message->arrl_rac[0] = message->arrl_class[0] = '\0';
-    message->call_de_hash.hash10 = message->call_de_hash.hash12 = message->call_de_hash.hash22 = 0;
-    message->call_to_hash.hash10 = message->call_to_hash.hash12 = message->call_to_hash.hash22 = 0;
-    message->report = -100;
-    message->r_flag = 0;
-    message->rtty_tu = 0;
-    message->eu_serial = 0;
-    memcpy(message->a91, a91, FTX_LDPC_K_BYTES);
+    float log174[FTX_LDPC_N];
+    ftx_prepare_logl(wf, cand, false, log174);
 
-    status->unpack_status = unpackToMessage_t(a91, message);
+    uint8_t plain174[FTX_LDPC_N];
+    uint8_t a91[FTX_LDPC_K_BYTES];
+    decode_status_t ap_status = *status;
+    bool crc_ok = ftx_try_ap_text_list(log174, wf->protocol, ap_texts, ap_text_count,
+                                       max_iterations, plain174, a91, &ap_status);
 
-    if (status->unpack_status < 0) {
-        // CRC/FEC 已通过但当前实现不支持该消息类型时，保留占位文本而不直接丢弃
-        message->call_to[0] = '\0';
-        message->call_de[0] = '\0';
-        message->dx_call_to2[0] = '\0';
-        message->maidenGrid[0] = '\0';
-        message->rtty_state[0] = '\0';
-        message->arrl_rac[0] = '\0';
-        message->arrl_class[0] = '\0';
-        message->call_de_hash.hash10 = message->call_de_hash.hash12 = message->call_de_hash.hash22 = 0;
-        message->call_to_hash.hash10 = message->call_to_hash.hash12 = message->call_to_hash.hash22 = 0;
-        message->r_flag = 0;
-        message->rtty_tu = 0;
-        message->eu_serial = 0;
-        snprintf(message->extra, sizeof(message->extra), "UNSUP i3=%u n3=%u",
-                 (unsigned) message->i3, (unsigned) message->n3);
-        snprintf(message->text, sizeof(message->text), "%s", message->extra);
+    if (!crc_ok && max_iterations >= 100) {
+        float strong_log174[FTX_LDPC_N];
+        ftx_prepare_logl(wf, cand, true, strong_log174);
+        ap_status = *status;
+        crc_ok = ftx_try_ap_text_list(strong_log174, wf->protocol, ap_texts, ap_text_count,
+                                      max_iterations, plain174, a91, &ap_status);
     }
 
-    message->hash = status->crc_extracted;
+    if (!crc_ok) {
+        return false;
+    }
 
-    // 按当前协议分别估算 SNR
-    ftx_guess_snr(wf, cand);
-
-    return true;
+    *status = ap_status;
+    return ftx_finalize_message(wf, cand, a91, message, status);
 }
 
 static bool ftx_try_decode_pass(const float *log174, int max_iterations, float llr_scale,
@@ -735,10 +802,71 @@ static void ftx_unpack_bits_from_bytes(const uint8_t packed[], int num_bits, uin
     // AP-lite expands the packed 174-bit codeword so soft-prior injection and evidence scoring can share it.
 }
 
+static void ftx_normalize_ap_text(const char *src, char *dst, int dst_size) {
+    if (dst == NULL || dst_size <= 0) {
+        return;
+    }
+
+    int out = 0;
+    bool pending_space = false;
+    while (src != NULL && *src != '\0' && out < dst_size - 1) {
+        unsigned char ch = (unsigned char) *src++;
+        if (isspace(ch)) {
+            pending_space = (out > 0);
+            continue;
+        }
+
+        if (pending_space && out < dst_size - 1) {
+            dst[out++] = ' ';
+            pending_space = false;
+        }
+
+        if (ch >= 'a' && ch <= 'z') {
+            ch = (unsigned char) (ch - ('a' - 'A'));
+        }
+        dst[out++] = (char) ch;
+    }
+
+    dst[out] = '\0';
+}
+
+static void ftx_append_ap_text(char text_storage[][kApTextBufferSize], const char *text_ptrs[],
+                               int max_texts, int *text_count, const char *format, ...) {
+    if (text_storage == NULL || text_ptrs == NULL || text_count == NULL || *text_count >= max_texts) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, format);
+    vsnprintf(text_storage[*text_count], kApTextBufferSize, format, args);
+    va_end(args);
+
+    text_ptrs[*text_count] = text_storage[*text_count];
+    ++(*text_count);
+}
+
 static bool ftx_build_ap_hypothesis(ftx_protocol_t protocol, const char *text,
                                     uint8_t a91[], uint8_t codeword174[]) {
     uint8_t payload[10];
-    if (pack77_1(text, payload) != 0) {
+    if (pack77(text, payload) != 0) {
+        return false;
+    }
+
+    message_t roundtrip;
+    memset(&roundtrip, 0, sizeof(roundtrip));
+    if (unpackToMessage_t(payload, &roundtrip) < 0) {
+        return false;
+    }
+    if (roundtrip.i3 == 0 && roundtrip.n3 == 0) {
+        // Reject silent pack77() free-text fallback; AP must target a structured on-air message.
+        return false;
+    }
+
+    char normalized_input[kApTextBufferSize];
+    char normalized_roundtrip[kApTextBufferSize];
+    ftx_normalize_ap_text(text, normalized_input, sizeof(normalized_input));
+    ftx_normalize_ap_text(roundtrip.text, normalized_roundtrip, sizeof(normalized_roundtrip));
+    if (strcmp(normalized_input, normalized_roundtrip) != 0) {
         return false;
     }
 
@@ -775,15 +903,9 @@ static float ftx_score_ap_match(const float *log174, const uint8_t codeword174[]
     return score / (float) FTX_LDPC_N;
 }
 
-static bool ftx_try_ap_hypothesis(const float *log174, ftx_protocol_t protocol, const char *text,
-                                  int max_iterations, uint8_t plain174[], uint8_t a91[],
-                                  decode_status_t *status, float *evidence_out) {
-    uint8_t hypothesisA91[FTX_LDPC_K_BYTES];
-    uint8_t hypothesisCodeword174[FTX_LDPC_N];
-    if (!ftx_build_ap_hypothesis(protocol, text, hypothesisA91, hypothesisCodeword174)) {
-        return false;
-    }
-
+static bool ftx_try_ap_codeword(const float *log174, const uint8_t hypothesisA91[],
+                                const uint8_t hypothesisCodeword174[], int max_iterations,
+                                uint8_t plain174[], uint8_t a91[], decode_status_t *status) {
     float apLog174[FTX_LDPC_N];
     memcpy(apLog174, log174, sizeof(apLog174));
     ftx_apply_ap_prior(apLog174, hypothesisCodeword174, kApPriorStrength);
@@ -801,14 +923,10 @@ static bool ftx_try_ap_hypothesis(const float *log174, ftx_protocol_t protocol, 
         return false;
     }
 
-    if (memcmp(apA91, hypothesisA91, sizeof(hypothesisA91)) != 0) {
+    if (memcmp(apA91, hypothesisA91, FTX_LDPC_K_BYTES) != 0) {
         return false;
     }
     // Even after AP assistance, LDPC and CRC must land on the exact same hypothesis message.
-
-    if (evidence_out != NULL) {
-        *evidence_out = ftx_score_ap_match(log174, hypothesisCodeword174);
-    }
 
     memcpy(plain174, apPlain174, sizeof(apPlain174));
     memcpy(a91, apA91, sizeof(apA91));
@@ -816,10 +934,69 @@ static bool ftx_try_ap_hypothesis(const float *log174, ftx_protocol_t protocol, 
     return true;
 }
 
-static bool ftx_try_ap_decode(const float *log174, ftx_protocol_t protocol, const ap_hints_t *ap_hints,
-                              int max_iterations, uint8_t plain174[], uint8_t a91[],
-                              decode_status_t *status) {
-    if (ap_hints == NULL || ap_hints->my_call[0] == '\0' || ap_hints->hint_call_count <= 0) {
+static void ftx_insert_ap_trial(ap_trial_candidate_t best_trials[], int *trial_count,
+                                float evidence, const uint8_t a91[], const uint8_t codeword174[]) {
+    if (best_trials == NULL || trial_count == NULL) {
+        return;
+    }
+
+    if (*trial_count < kApMaxDecodeTrials) {
+        best_trials[*trial_count].evidence = evidence;
+        memcpy(best_trials[*trial_count].a91, a91, FTX_LDPC_K_BYTES);
+        memcpy(best_trials[*trial_count].codeword174, codeword174, FTX_LDPC_N);
+        ++(*trial_count);
+    } else if (evidence > best_trials[*trial_count - 1].evidence) {
+        best_trials[*trial_count - 1].evidence = evidence;
+        memcpy(best_trials[*trial_count - 1].a91, a91, FTX_LDPC_K_BYTES);
+        memcpy(best_trials[*trial_count - 1].codeword174, codeword174, FTX_LDPC_N);
+    } else {
+        return;
+    }
+
+    for (int pos = *trial_count - 1; pos > 0; --pos) {
+        const ap_trial_candidate_t *lhs = &best_trials[pos - 1];
+        const ap_trial_candidate_t *rhs = &best_trials[pos];
+        if (lhs->evidence >= rhs->evidence) {
+            break;
+        }
+
+        ap_trial_candidate_t tmp = best_trials[pos - 1];
+        best_trials[pos - 1] = best_trials[pos];
+        best_trials[pos] = tmp;
+    }
+}
+
+static bool ftx_try_ap_text_list(const float *log174, ftx_protocol_t protocol,
+                                 const char *const texts[], int text_count,
+                                 int max_iterations, uint8_t plain174[], uint8_t a91[],
+                                 decode_status_t *status) {
+    if (texts == NULL || text_count <= 0) {
+        return false;
+    }
+
+    ap_trial_candidate_t best_trials[kApMaxDecodeTrials];
+    int trial_count = 0;
+
+    for (int idx = 0; idx < text_count; ++idx) {
+        const char *text = texts[idx];
+        if (text == NULL || text[0] == '\0') {
+            continue;
+        }
+
+        uint8_t hypothesisA91[FTX_LDPC_K_BYTES];
+        uint8_t hypothesisCodeword174[FTX_LDPC_N];
+        if (!ftx_build_ap_hypothesis(protocol, text, hypothesisA91, hypothesisCodeword174)) {
+            continue;
+        }
+
+        const float evidence = ftx_score_ap_match(log174, hypothesisCodeword174);
+        if (evidence < kApMinEvidence) {
+            continue;
+        }
+        ftx_insert_ap_trial(best_trials, &trial_count, evidence, hypothesisA91, hypothesisCodeword174);
+    }
+
+    if (trial_count <= 0) {
         return false;
     }
 
@@ -829,98 +1006,31 @@ static bool ftx_try_ap_decode(const float *log174, ftx_protocol_t protocol, cons
     float bestEvidence = -FLT_MAX;
     float secondBestEvidence = -FLT_MAX;
     bool found = false;
-    char text[48];
-    char extra[8];
 
-    for (int i = 0; i < ap_hints->hint_call_count; ++i) {
-        const char *otherCall = ap_hints->hint_calls[i];
-        const char *otherGrid = ap_hints->hint_grids[i];
+    for (int idx = 0; idx < trial_count; ++idx) {
+        uint8_t trialPlain174[FTX_LDPC_N];
+        uint8_t trialA91[FTX_LDPC_K_BYTES];
+        decode_status_t trialStatus = *status;
 
-        if (otherCall[0] == '\0') {
+        if (!ftx_try_ap_codeword(log174,
+                                 best_trials[idx].a91,
+                                 best_trials[idx].codeword174,
+                                 max_iterations,
+                                 trialPlain174,
+                                 trialA91,
+                                 &trialStatus)) {
             continue;
         }
 
-        if (otherGrid[0] != '\0') {
-            uint8_t trialPlain174[FTX_LDPC_N];
-            uint8_t trialA91[FTX_LDPC_K_BYTES];
-            decode_status_t trialStatus = *status;
-            float evidence = 0.0f;
-
-            snprintf(text, sizeof(text), "%s %s %s", ap_hints->my_call, otherCall, otherGrid);
-            if (ftx_try_ap_hypothesis(log174, protocol, text, max_iterations,
-                                      trialPlain174, trialA91, &trialStatus, &evidence)) {
-                if (evidence > bestEvidence) {
-                    secondBestEvidence = bestEvidence;
-                    bestEvidence = evidence;
-                    memcpy(bestPlain174, trialPlain174, sizeof(bestPlain174));
-                    memcpy(bestA91, trialA91, sizeof(bestA91));
-                    bestStatus = trialStatus;
-                    found = true;
-                } else if (evidence > secondBestEvidence) {
-                    secondBestEvidence = evidence;
-                }
-            }
-            // If the peer grid is known, try the most common standard first-reply shape: MYCALL DXCALL GRID.
-        }
-
-        for (int reportIdx = 0; reportIdx < (int) (sizeof(kApReportValues) / sizeof(kApReportValues[0])); ++reportIdx) {
-            int reportValue = kApReportValues[reportIdx];
-            const char *prefixList[] = {"-", "R-"};
-
-            for (int prefixIdx = 0; prefixIdx < 2; ++prefixIdx) {
-                snprintf(extra, sizeof(extra), "%s%02d", prefixList[prefixIdx], reportValue);
-
-                for (int order = 0; order < 2; ++order) {
-                    const char *callA = (order == 0) ? ap_hints->my_call : otherCall;
-                    const char *callB = (order == 0) ? otherCall : ap_hints->my_call;
-                    uint8_t trialPlain174[FTX_LDPC_N];
-                    uint8_t trialA91[FTX_LDPC_K_BYTES];
-                    decode_status_t trialStatus = *status;
-                    float evidence = 0.0f;
-
-                    snprintf(text, sizeof(text), "%s %s %s", callA, callB, extra);
-                    if (ftx_try_ap_hypothesis(log174, protocol, text, max_iterations,
-                                              trialPlain174, trialA91, &trialStatus, &evidence)) {
-                        if (evidence > bestEvidence) {
-                            secondBestEvidence = bestEvidence;
-                            bestEvidence = evidence;
-                            memcpy(bestPlain174, trialPlain174, sizeof(bestPlain174));
-                            memcpy(bestA91, trialA91, sizeof(bestA91));
-                            bestStatus = trialStatus;
-                            found = true;
-                        } else if (evidence > secondBestEvidence) {
-                            secondBestEvidence = evidence;
-                        }
-                    }
-                }
-            }
-        }
-
-        const char *ackList[] = {"RRR", "RR73", "73"};
-        for (int ackIdx = 0; ackIdx < 3; ++ackIdx) {
-            for (int order = 0; order < 2; ++order) {
-                const char *callA = (order == 0) ? ap_hints->my_call : otherCall;
-                const char *callB = (order == 0) ? otherCall : ap_hints->my_call;
-                uint8_t trialPlain174[FTX_LDPC_N];
-                uint8_t trialA91[FTX_LDPC_K_BYTES];
-                decode_status_t trialStatus = *status;
-                float evidence = 0.0f;
-
-                snprintf(text, sizeof(text), "%s %s %s", callA, callB, ackList[ackIdx]);
-                if (ftx_try_ap_hypothesis(log174, protocol, text, max_iterations,
-                                          trialPlain174, trialA91, &trialStatus, &evidence)) {
-                    if (evidence > bestEvidence) {
-                        secondBestEvidence = bestEvidence;
-                        bestEvidence = evidence;
-                        memcpy(bestPlain174, trialPlain174, sizeof(bestPlain174));
-                        memcpy(bestA91, trialA91, sizeof(bestA91));
-                        bestStatus = trialStatus;
-                        found = true;
-                    } else if (evidence > secondBestEvidence) {
-                        secondBestEvidence = evidence;
-                    }
-                }
-            }
+        if (best_trials[idx].evidence > bestEvidence) {
+            secondBestEvidence = bestEvidence;
+            bestEvidence = best_trials[idx].evidence;
+            memcpy(bestPlain174, trialPlain174, sizeof(bestPlain174));
+            memcpy(bestA91, trialA91, sizeof(bestA91));
+            bestStatus = trialStatus;
+            found = true;
+        } else if (best_trials[idx].evidence > secondBestEvidence) {
+            secondBestEvidence = best_trials[idx].evidence;
         }
     }
 
@@ -932,12 +1042,76 @@ static bool ftx_try_ap_decode(const float *log174, ftx_protocol_t protocol, cons
         (bestEvidence - secondBestEvidence) < kApMinMargin) {
         return false;
     }
-    // Only accept AP when the best hypothesis is both strong enough and clearly ahead of the runner-up.
 
     memcpy(plain174, bestPlain174, sizeof(bestPlain174));
     memcpy(a91, bestA91, sizeof(bestA91));
     *status = bestStatus;
     return true;
+}
+
+static bool ftx_try_ap_decode(const float *log174, ftx_protocol_t protocol, const ap_hints_t *ap_hints,
+                              int max_iterations, uint8_t plain174[], uint8_t a91[],
+                              decode_status_t *status) {
+    if (ap_hints == NULL || ap_hints->my_call[0] == '\0' || ap_hints->hint_call_count <= 0) {
+        return false;
+    }
+
+    char text_storage[kApGeneratedTextLimit][kApTextBufferSize];
+    const char *text_ptrs[kApGeneratedTextLimit];
+    int text_count = 0;
+
+    for (int i = 0; i < ap_hints->hint_call_count; ++i) {
+        const char *otherCall = ap_hints->hint_calls[i];
+        const char *otherGrid = ap_hints->hint_grids[i];
+
+        if (otherCall[0] == '\0') {
+            continue;
+        }
+
+        ftx_append_ap_text(text_storage, text_ptrs, kApGeneratedTextLimit, &text_count,
+                           "%s %s", ap_hints->my_call, otherCall);
+        ftx_append_ap_text(text_storage, text_ptrs, kApGeneratedTextLimit, &text_count,
+                           "%s %s", otherCall, ap_hints->my_call);
+
+        if (otherGrid[0] != '\0') {
+            ftx_append_ap_text(text_storage, text_ptrs, kApGeneratedTextLimit, &text_count,
+                               "%s %s %s", ap_hints->my_call, otherCall, otherGrid);
+            // If the peer grid is known, try the most common standard first-reply shape: MYCALL DXCALL GRID.
+        }
+
+        const char *ackList[] = {"RRR", "RR73", "73"};
+        for (int ackIdx = 0; ackIdx < 3; ++ackIdx) {
+            for (int order = 0; order < 2; ++order) {
+                const char *callA = (order == 0) ? ap_hints->my_call : otherCall;
+                const char *callB = (order == 0) ? otherCall : ap_hints->my_call;
+                ftx_append_ap_text(text_storage, text_ptrs, kApGeneratedTextLimit, &text_count,
+                                   "%s %s %s", callA, callB, ackList[ackIdx]);
+            }
+        }
+
+        for (int reportValue = -50; reportValue <= 49; ++reportValue) {
+            char reportText[6];
+            char replyReportText[7];
+            snprintf(reportText, sizeof(reportText), "%+03d", reportValue);
+            snprintf(replyReportText, sizeof(replyReportText), "R%+03d", reportValue);
+
+            for (int order = 0; order < 2; ++order) {
+                const char *callA = (order == 0) ? ap_hints->my_call : otherCall;
+                const char *callB = (order == 0) ? otherCall : ap_hints->my_call;
+                ftx_append_ap_text(text_storage, text_ptrs, kApGeneratedTextLimit, &text_count,
+                                   "%s %s %s", callA, callB, reportText);
+                ftx_append_ap_text(text_storage, text_ptrs, kApGeneratedTextLimit, &text_count,
+                                   "%s %s %s", callA, callB, replyReportText);
+            }
+        }
+    }
+
+    if (text_count <= 0) {
+        return false;
+    }
+
+    return ftx_try_ap_text_list(log174, protocol, text_ptrs, text_count,
+                                max_iterations, plain174, a91, status);
 }
 
 static void ft4_extract_likelihood_strong(const waterfall_t *wf, const candidate_t *cand, float *log174) {
@@ -1035,7 +1209,7 @@ static void heapify_up(candidate_t heap[], int heap_size) {
     }
 }
 
-// 检查 174 bit 是否满足 LDPC 校验方程，返回未满足个数
+// 检�?174 bit 是否满足 LDPC 校验方程，返回未满足个数
 static int ftx_ldpc_check_codeword(const uint8_t codeword[]) {
     int errors = 0;
     for (int m = 0; m < FTX_LDPC_M; ++m) {
@@ -1050,7 +1224,7 @@ static int ftx_ldpc_check_codeword(const uint8_t codeword[]) {
     return errors;
 }
 
-// 轻量 OSD：在最不可靠比特上做 1/2/3 位翻转搜索
+// 轻量 OSD：在最不可靠比特上�?1/2/3 位翻转搜�?
 static bool ftx_osd_refine(const float *log174, uint8_t plain174[], int *errors) {
     if (errors == NULL) {
         return false;

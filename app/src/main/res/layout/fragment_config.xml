@@ -1706,7 +1706,7 @@
 
 
                     <androidx.constraintlayout.widget.ConstraintLayout
-                            android:id="@+id/experimentalCodecLayout"
+                            android:id="@+id/wsjtxDecodeOptionsLayout"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
@@ -1714,6 +1714,285 @@
                             app:layout_constraintEnd_toEndOf="parent"
                             app:layout_constraintStart_toStartOf="parent"
                             app:layout_constraintTop_toBottomOf="@+id/decodeModeLayout">
+
+                        <TextView
+                                android:id="@+id/wsjtxDecodeOptionsTitle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="6dp"
+                                android:text="@string/wsjtx_decode_advanced"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toTopOf="parent" />
+
+                        <ImageButton
+                                android:id="@+id/wsjtxDecodeOptionsHelpButton"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginEnd="8dp"
+                                android:background="@drawable/imagebutton_transparent_style"
+                                android:contentDescription="@string/help"
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintTop_toTopOf="parent"
+                                app:srcCompat="@drawable/ic_baseline_info_32"
+                                tools:ignore="TouchTargetSizeCheck,DuplicateSpeakableTextCheck" />
+
+                        <TextView
+                                android:id="@+id/wsjtxDecodePassCountLabel"
+                                android:layout_width="120dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/wsjtx_decode_pass_count"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="13sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxDecodeOptionsTitle" />
+
+                        <com.bg7yoz.ft8cn.ui.RadioGroupFt8cn
+                                android:id="@+id/wsjtxDecodePassCountRadioGroup"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:orientation="horizontal"
+                                app:layout_constraintBottom_toBottomOf="@+id/wsjtxDecodePassCountLabel"
+                                app:layout_constraintEnd_toStartOf="@+id/wsjtxDecodeOptionsHelpButton"
+                                app:layout_constraintStart_toEndOf="@+id/wsjtxDecodePassCountLabel"
+                                app:layout_constraintTop_toTopOf="@+id/wsjtxDecodePassCountLabel">
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodePass1RadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="1"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodePass2RadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="2"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodePass3RadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="3"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                        </com.bg7yoz.ft8cn.ui.RadioGroupFt8cn>
+
+                        <TextView
+                                android:id="@+id/wsjtxMultiDecodeRoundsLabel"
+                                android:layout_width="120dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="6dp"
+                                android:text="@string/wsjtx_multi_decode_rounds"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="13sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxDecodePassCountRadioGroup" />
+
+                        <com.bg7yoz.ft8cn.ui.RadioGroupFt8cn
+                                android:id="@+id/wsjtxMultiDecodeRoundsRadioGroup"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:orientation="horizontal"
+                                app:layout_constraintBottom_toBottomOf="@+id/wsjtxMultiDecodeRoundsLabel"
+                                app:layout_constraintEnd_toStartOf="@+id/wsjtxDecodeOptionsHelpButton"
+                                app:layout_constraintStart_toEndOf="@+id/wsjtxMultiDecodeRoundsLabel"
+                                app:layout_constraintTop_toTopOf="@+id/wsjtxMultiDecodeRoundsLabel">
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodeRound1RadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="1"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodeRound2RadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="2"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodeRound3RadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="3"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                        </com.bg7yoz.ft8cn.ui.RadioGroupFt8cn>
+
+                        <TextView
+                                android:id="@+id/wsjtxQsoFreqSensitivityLabel"
+                                android:layout_width="120dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="6dp"
+                                android:text="@string/wsjtx_qso_freq_sensitivity"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="13sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxMultiDecodeRoundsRadioGroup" />
+
+                        <com.bg7yoz.ft8cn.ui.RadioGroupFt8cn
+                                android:id="@+id/wsjtxQsoFreqSensitivityRadioGroup"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:orientation="horizontal"
+                                app:layout_constraintBottom_toBottomOf="@+id/wsjtxQsoFreqSensitivityLabel"
+                                app:layout_constraintEnd_toStartOf="@+id/wsjtxDecodeOptionsHelpButton"
+                                app:layout_constraintStart_toEndOf="@+id/wsjtxQsoFreqSensitivityLabel"
+                                app:layout_constraintTop_toTopOf="@+id/wsjtxQsoFreqSensitivityLabel">
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxQsoFreqSensitivityNarrowRadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="@string/wsjtx_option_narrow"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxQsoFreqSensitivityNormalRadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="@string/wsjtx_option_normal"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxQsoFreqSensitivityWideRadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="@string/wsjtx_option_wide"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                        </com.bg7yoz.ft8cn.ui.RadioGroupFt8cn>
+
+                        <TextView
+                                android:id="@+id/wsjtxDecodeSensitivityLabel"
+                                android:layout_width="120dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="6dp"
+                                android:text="@string/wsjtx_decode_sensitivity"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="13sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxQsoFreqSensitivityRadioGroup" />
+
+                        <com.bg7yoz.ft8cn.ui.RadioGroupFt8cn
+                                android:id="@+id/wsjtxDecodeSensitivityRadioGroup"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:orientation="horizontal"
+                                app:layout_constraintBottom_toBottomOf="@+id/wsjtxDecodeSensitivityLabel"
+                                app:layout_constraintEnd_toStartOf="@+id/wsjtxDecodeOptionsHelpButton"
+                                app:layout_constraintStart_toEndOf="@+id/wsjtxDecodeSensitivityLabel"
+                                app:layout_constraintTop_toTopOf="@+id/wsjtxDecodeSensitivityLabel">
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodeSensitivityConservativeRadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="@string/wsjtx_option_conservative"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodeSensitivityNormalRadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="@string/wsjtx_option_normal"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                            <RadioButton
+                                    android:id="@+id/wsjtxDecodeSensitivitySensitiveRadioButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:buttonTint="?attr/colorPrimary"
+                                    android:text="@string/wsjtx_option_sensitive"
+                                    android:textColor="@color/text_view_color"
+                                    android:textSize="12sp" />
+
+                        </com.bg7yoz.ft8cn.ui.RadioGroupFt8cn>
+
+                        <Switch
+                                android:id="@+id/wsjtxEarlyDecodeSwitch"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="6dp"
+                                android:text="@string/wsjtx_enable_early_decode"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="13sp"
+                                android:thumbTint="?attr/colorPrimary"
+                                android:thumbTintMode="multiply"
+                                android:trackTint="@color/button_start_color"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxDecodeSensitivityRadioGroup"
+                                tools:ignore="TouchTargetSizeCheck,UseSwitchCompatOrMaterialXml" />
+
+                        <Switch
+                                android:id="@+id/wsjtxWidebandDxSwitch"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="2dp"
+                                android:layout_marginBottom="6dp"
+                                android:text="@string/wsjtx_enable_wideband_dx_search"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="13sp"
+                                android:thumbTint="?attr/colorPrimary"
+                                android:thumbTintMode="multiply"
+                                android:trackTint="@color/button_start_color"
+                                app:layout_constraintBottom_toBottomOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxEarlyDecodeSwitch"
+                                tools:ignore="TouchTargetSizeCheck,UseSwitchCompatOrMaterialXml" />
+
+                    </androidx.constraintlayout.widget.ConstraintLayout>
+
+
+                    <androidx.constraintlayout.widget.ConstraintLayout
+                            android:id="@+id/experimentalCodecLayout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:background="@drawable/editor_layout_style"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@+id/wsjtxDecodeOptionsLayout">
 
                         <TextView
                                 android:id="@+id/experimentalCodecText"

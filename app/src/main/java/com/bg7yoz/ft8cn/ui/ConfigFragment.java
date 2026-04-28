@@ -368,6 +368,7 @@ public class ConfigFragment extends Fragment {
 
         //设置解码模式
         setDecodeMode();
+        setWsjtxDecodeOptions();
         setExperimentalCodecSwitch();
 
         //设置音频输出的位数
@@ -1157,6 +1158,145 @@ public class ConfigFragment extends Fragment {
 
     }
 
+    private int clampWsjtDecodeCount(int value) {
+        return Math.max(1, Math.min(value, 3));
+    }
+
+    private int clampWsjtSensitivity(int value) {
+        return Math.max(0, Math.min(value, 2));
+    }
+
+    private void setWsjtxDecodeOptions() {
+        GeneralVariables.wsjtxDecodePassCount = clampWsjtDecodeCount(GeneralVariables.wsjtxDecodePassCount);
+        GeneralVariables.wsjtxMultiDecodeRoundCount = clampWsjtDecodeCount(GeneralVariables.wsjtxMultiDecodeRoundCount);
+        GeneralVariables.wsjtxQsoFreqSensitivity = clampWsjtSensitivity(GeneralVariables.wsjtxQsoFreqSensitivity);
+        GeneralVariables.wsjtxDecodeSensitivity = clampWsjtSensitivity(GeneralVariables.wsjtxDecodeSensitivity);
+
+        binding.wsjtxDecodePassCountRadioGroup.clearCheck();
+        if (GeneralVariables.wsjtxDecodePassCount == 1) {
+            binding.wsjtxDecodePass1RadioButton.setChecked(true);
+        } else if (GeneralVariables.wsjtxDecodePassCount == 2) {
+            binding.wsjtxDecodePass2RadioButton.setChecked(true);
+        } else {
+            binding.wsjtxDecodePass3RadioButton.setChecked(true);
+        }
+
+        View.OnClickListener decodePassListener = new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                int value = 3;
+                if (binding.wsjtxDecodePass1RadioButton.isChecked()) {
+                    value = 1;
+                } else if (binding.wsjtxDecodePass2RadioButton.isChecked()) {
+                    value = 2;
+                }
+                GeneralVariables.wsjtxDecodePassCount = value;
+                writeConfig("wsjtxDecodePassCount", String.valueOf(value));
+            }
+        };
+        binding.wsjtxDecodePass1RadioButton.setOnClickListener(decodePassListener);
+        binding.wsjtxDecodePass2RadioButton.setOnClickListener(decodePassListener);
+        binding.wsjtxDecodePass3RadioButton.setOnClickListener(decodePassListener);
+
+        binding.wsjtxMultiDecodeRoundsRadioGroup.clearCheck();
+        if (GeneralVariables.wsjtxMultiDecodeRoundCount == 1) {
+            binding.wsjtxDecodeRound1RadioButton.setChecked(true);
+        } else if (GeneralVariables.wsjtxMultiDecodeRoundCount == 2) {
+            binding.wsjtxDecodeRound2RadioButton.setChecked(true);
+        } else {
+            binding.wsjtxDecodeRound3RadioButton.setChecked(true);
+        }
+
+        View.OnClickListener decodeRoundListener = new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                int value = 3;
+                if (binding.wsjtxDecodeRound1RadioButton.isChecked()) {
+                    value = 1;
+                } else if (binding.wsjtxDecodeRound2RadioButton.isChecked()) {
+                    value = 2;
+                }
+                GeneralVariables.wsjtxMultiDecodeRoundCount = value;
+                writeConfig("wsjtxMultiDecodeRoundCount", String.valueOf(value));
+            }
+        };
+        binding.wsjtxDecodeRound1RadioButton.setOnClickListener(decodeRoundListener);
+        binding.wsjtxDecodeRound2RadioButton.setOnClickListener(decodeRoundListener);
+        binding.wsjtxDecodeRound3RadioButton.setOnClickListener(decodeRoundListener);
+
+        binding.wsjtxQsoFreqSensitivityRadioGroup.clearCheck();
+        if (GeneralVariables.wsjtxQsoFreqSensitivity == GeneralVariables.WSJTX_SENSITIVITY_LOW) {
+            binding.wsjtxQsoFreqSensitivityNarrowRadioButton.setChecked(true);
+        } else if (GeneralVariables.wsjtxQsoFreqSensitivity == GeneralVariables.WSJTX_SENSITIVITY_HIGH) {
+            binding.wsjtxQsoFreqSensitivityWideRadioButton.setChecked(true);
+        } else {
+            binding.wsjtxQsoFreqSensitivityNormalRadioButton.setChecked(true);
+        }
+
+        View.OnClickListener qsoFreqSensitivityListener = new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                int value = GeneralVariables.WSJTX_SENSITIVITY_NORMAL;
+                if (binding.wsjtxQsoFreqSensitivityNarrowRadioButton.isChecked()) {
+                    value = GeneralVariables.WSJTX_SENSITIVITY_LOW;
+                } else if (binding.wsjtxQsoFreqSensitivityWideRadioButton.isChecked()) {
+                    value = GeneralVariables.WSJTX_SENSITIVITY_HIGH;
+                }
+                GeneralVariables.wsjtxQsoFreqSensitivity = value;
+                writeConfig("wsjtxQsoFreqSensitivity", String.valueOf(value));
+            }
+        };
+        binding.wsjtxQsoFreqSensitivityNarrowRadioButton.setOnClickListener(qsoFreqSensitivityListener);
+        binding.wsjtxQsoFreqSensitivityNormalRadioButton.setOnClickListener(qsoFreqSensitivityListener);
+        binding.wsjtxQsoFreqSensitivityWideRadioButton.setOnClickListener(qsoFreqSensitivityListener);
+
+        binding.wsjtxDecodeSensitivityRadioGroup.clearCheck();
+        if (GeneralVariables.wsjtxDecodeSensitivity == GeneralVariables.WSJTX_SENSITIVITY_LOW) {
+            binding.wsjtxDecodeSensitivityConservativeRadioButton.setChecked(true);
+        } else if (GeneralVariables.wsjtxDecodeSensitivity == GeneralVariables.WSJTX_SENSITIVITY_HIGH) {
+            binding.wsjtxDecodeSensitivitySensitiveRadioButton.setChecked(true);
+        } else {
+            binding.wsjtxDecodeSensitivityNormalRadioButton.setChecked(true);
+        }
+
+        View.OnClickListener decodeSensitivityListener = new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                int value = GeneralVariables.WSJTX_SENSITIVITY_NORMAL;
+                if (binding.wsjtxDecodeSensitivityConservativeRadioButton.isChecked()) {
+                    value = GeneralVariables.WSJTX_SENSITIVITY_LOW;
+                } else if (binding.wsjtxDecodeSensitivitySensitiveRadioButton.isChecked()) {
+                    value = GeneralVariables.WSJTX_SENSITIVITY_HIGH;
+                }
+                GeneralVariables.wsjtxDecodeSensitivity = value;
+                writeConfig("wsjtxDecodeSensitivity", String.valueOf(value));
+            }
+        };
+        binding.wsjtxDecodeSensitivityConservativeRadioButton.setOnClickListener(decodeSensitivityListener);
+        binding.wsjtxDecodeSensitivityNormalRadioButton.setOnClickListener(decodeSensitivityListener);
+        binding.wsjtxDecodeSensitivitySensitiveRadioButton.setOnClickListener(decodeSensitivityListener);
+
+        binding.wsjtxEarlyDecodeSwitch.setOnCheckedChangeListener(null);
+        binding.wsjtxEarlyDecodeSwitch.setChecked(GeneralVariables.wsjtxEnableEarlyDecode);
+        binding.wsjtxEarlyDecodeSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+                GeneralVariables.wsjtxEnableEarlyDecode = checked;
+                writeConfig("wsjtxEnableEarlyDecode", checked ? "1" : "0");
+            }
+        });
+
+        binding.wsjtxWidebandDxSwitch.setOnCheckedChangeListener(null);
+        binding.wsjtxWidebandDxSwitch.setChecked(GeneralVariables.wsjtxWidebandDxSearch);
+        binding.wsjtxWidebandDxSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+                GeneralVariables.wsjtxWidebandDxSearch = checked;
+                writeConfig("wsjtxWidebandDxSearch", checked ? "1" : "0");
+            }
+        });
+    }
+
     private void setExperimentalCodecSwitch() {
         // Keep experimental path opt-in so production FT8/FT4 behavior is unchanged by default.
         binding.experimentalCodecSwitch.setOnCheckedChangeListener(null);
@@ -1658,6 +1798,15 @@ public class ConfigFragment extends Fragment {
                 new HelpDialog(requireContext(),requireActivity()
                         ,GeneralVariables.getStringFromResource(R.string.deep_mode_help)
                         ,true).show();
+            }
+        });
+
+        binding.wsjtxDecodeOptionsHelpButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                new HelpDialog(requireContext(), requireActivity()
+                        , GeneralVariables.getStringFromResource(R.string.deep_mode_help)
+                        , true).show();
             }
         });
 
