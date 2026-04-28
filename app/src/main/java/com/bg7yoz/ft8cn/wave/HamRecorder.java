@@ -61,10 +61,11 @@ public class HamRecorder {
      */
     public void doOnWaveDataReceived(int bufferLen,float[] buffer){
         if (!isRunning) return;
-        for (int i = 0; i < voiceDataMonitorList.size(); i++) {
+        ArrayList<VoiceDataMonitor> monitors = new ArrayList<>(voiceDataMonitorList);
+        for (int i = 0; i < monitors.size(); i++) {
             //逐个监听器调用回调，把数据提供给回调函数
-            if (voiceDataMonitorList.get(i)!=null) {
-                voiceDataMonitorList.get(i).onHamRecord.OnReceiveData(buffer, bufferLen);
+            if (monitors.get(i)!=null && voiceDataMonitorList.contains(monitors.get(i))) {
+                monitors.get(i).onHamRecord.OnReceiveData(buffer, bufferLen);
             }
         }
 

@@ -46,7 +46,6 @@ struct SessionPass {
     int phase_ticks;
     bool apply_subtract_history;
     bool subtract_after_decode;
-    bool limit_early_dt;
 };
 
 struct DecoderOptions {

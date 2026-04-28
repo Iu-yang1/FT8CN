@@ -112,16 +112,20 @@ void delete_decoder(decoder_t *decoder) {
     free(decoder);
 }
 
-void decoder_monitor_press(float signal[], decoder_t *decoder) {
+void decoder_monitor_press_samples(float signal[], decoder_t *decoder, int sample_count) {
     if (decoder == NULL || signal == NULL) {
         return;
     }
+    if (sample_count < 0) {
+        sample_count = 0;
+    }
 
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
-        wsjtx_port_monitor_press(decoder, signal, decoder->num_samples);
+        wsjtx_port_monitor_press(decoder, signal, sample_count);
         return;
     }
 
+    decoder->num_samples = sample_count;
     for (int frame_pos = 0;
          frame_pos + decoder->mon.block_size <= decoder->num_samples;
          frame_pos += decoder->mon.block_size) {
@@ -130,6 +134,13 @@ void decoder_monitor_press(float signal[], decoder_t *decoder) {
 
     LOG(LOG_DEBUG, "Waterfall accumulated %d symbols\n", decoder->mon.wf.num_blocks);
     LOG(LOG_INFO, "Max magnitude: %.1f dB\n", decoder->mon.max_mag);
+}
+
+void decoder_monitor_press(float signal[], decoder_t *decoder) {
+    if (decoder == NULL) {
+        return;
+    }
+    decoder_monitor_press_samples(signal, decoder, decoder->num_samples);
 }
 
 int decoder_ft8_find_sync(decoder_t *decoder) {

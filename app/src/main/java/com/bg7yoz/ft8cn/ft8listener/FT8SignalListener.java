@@ -25,10 +25,13 @@ import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 
 public class FT8SignalListener {
     private static final String TAG = "FT8SignalListener";
     private static final int AP_HINT_CALL_LIMIT = 4;
+    private static final int DECODE_STAGE_FULL = 0;
+    private static final int DECODE_STAGE_EARLY = 1;
     // AP-lite only keeps a few recent follow calls so the native fallback stays cheap.
 
     private UtcTimer utcTimer;
@@ -41,6 +44,10 @@ public class FT8SignalListener {
     private DatabaseOpr db;
 
     private final A91List a91List = new A91List();//a91列表
+    private final Object slotDedupeLock = new Object();
+    private final HashMap<String, Boolean> slotDedupeMessageStrongState = new HashMap<>();
+    private long slotDedupeUtc = Long.MIN_VALUE;
+    private int slotDedupeMode = -1;
 
     static {
         System.loadLibrary("ft8cn");
@@ -48,6 +55,16 @@ public class FT8SignalListener {
 
     public interface OnWaveDataListener {
         void getVoiceData(int duration, boolean afterDoneRemove, OnGetVoiceDataDone getVoiceDataDone);
+    }
+
+    private static class SlotFilterResult {
+        final ArrayList<Ft8Message> messages;
+        final boolean hadPublishedBefore;
+
+        SlotFilterResult(ArrayList<Ft8Message> messages, boolean hadPublishedBefore) {
+            this.messages = messages;
+            this.hadPublishedBefore = hadPublishedBefore;
+        }
     }
 
     public FT8SignalListener(DatabaseOpr db, OnFt8Listen onFt8Listen) {
@@ -127,6 +144,36 @@ public class FT8SignalListener {
         if (onWaveDataListener != null) {
             final int recordMode = GeneralVariables.getSignalMode();
             final int duration = FT8Common.getSlotTimeMillisecond(recordMode);
+            final int expectedSamples = FT8Common.getSamplesPerSlot(recordMode);
+
+            resetSlotDedupe(utc, recordMode);
+            if (onFt8Listen != null) {
+                onFt8Listen.beforeListen(utc);
+            }
+
+            if (shouldRunEarlyDecodeStage(recordMode)) {
+                final int earlyDuration = FT8Common.getEarlyDecodeDurationMs(recordMode);
+                onWaveDataListener.getVoiceData(
+                        earlyDuration,
+                        true,
+                        new OnGetVoiceDataDone() {
+                            @Override
+                            public void onGetDone(float[] data) {
+                                Log.d(TAG, String.format("开始提前解码,数据长度:%d,mode=%s",
+                                        data.length,
+                                        FT8Common.modeToString(recordMode)));
+                                decodeFt8(
+                                        utc,
+                                        data,
+                                        recordMode,
+                                        DECODE_STAGE_EARLY,
+                                        expectedSamples,
+                                        false,
+                                        false
+                                );
+                            }
+                        });
+            }
 
             onWaveDataListener.getVoiceData(
                     duration,
@@ -137,7 +184,15 @@ public class FT8SignalListener {
                             Log.d(TAG, String.format("开始解码...###,数据长度：%d,mode=%s",
                                     data.length,
                                     FT8Common.modeToString(recordMode)));
-                            decodeFt8(utc, data, recordMode);
+                            decodeFt8(
+                                    utc,
+                                    data,
+                                    recordMode,
+                                    DECODE_STAGE_FULL,
+                                    expectedSamples,
+                                    false,
+                                    true
+                            );
                         }
                     });
         }
@@ -148,6 +203,87 @@ public class FT8SignalListener {
      */
     public void decodeFt8(long utc, float[] voiceData) {
         decodeFt8(utc, voiceData, GeneralVariables.getSignalMode());
+    }
+
+    private boolean shouldRunEarlyDecodeStage(int decodeMode) {
+        return GeneralVariables.deepDecodeMode
+                && GeneralVariables.wsjtxEnableEarlyDecode
+                && FT8Common.supportsEarlyDecodeStage(decodeMode)
+                && ReBuildSignal.supportSubtract(decodeMode)
+                && !GeneralVariables.isExperimentalCodecEnabled();
+    }
+
+    private void resetSlotDedupe(long utc, int decodeMode) {
+        synchronized (slotDedupeLock) {
+            slotDedupeUtc = utc;
+            slotDedupeMode = decodeMode;
+            slotDedupeMessageStrongState.clear();
+        }
+    }
+
+    private SlotFilterResult filterNewSlotMessages(long utc, int decodeMode, ArrayList<Ft8Message> messages) {
+        ArrayList<Ft8Message> filtered = new ArrayList<>();
+        synchronized (slotDedupeLock) {
+            if (slotDedupeUtc != utc || slotDedupeMode != decodeMode) {
+                slotDedupeUtc = utc;
+                slotDedupeMode = decodeMode;
+                slotDedupeMessageStrongState.clear();
+            }
+
+            boolean hadPublishedBefore = slotDedupeMessageStrongState.size() > 0;
+            if (messages == null) {
+                return new SlotFilterResult(filtered, hadPublishedBefore);
+            }
+
+            for (Ft8Message message : messages) {
+                if (message == null) {
+                    continue;
+                }
+                String key = slotMessageKey(message);
+                boolean messageIsStrong = !message.isWeakSignal;
+                Boolean publishedAsStrong = slotDedupeMessageStrongState.get(key);
+                if (publishedAsStrong == null) {
+                    slotDedupeMessageStrongState.put(key, messageIsStrong);
+                    filtered.add(message);
+                    continue;
+                }
+                if (!publishedAsStrong && messageIsStrong) {
+                    slotDedupeMessageStrongState.put(key, true);
+                    filtered.add(message);
+                }
+            }
+            return new SlotFilterResult(filtered, hadPublishedBefore);
+        }
+    }
+
+    private String slotMessageKey(Ft8Message message) {
+        if (message == null) {
+            return "";
+        }
+        return message.getDecodedMessageKey();
+    }
+
+    private void publishDecodeMessages(long utc,
+                                       int slotTimeM,
+                                       int decodeMode,
+                                       ArrayList<Ft8Message> messages,
+                                       ArrayList<Ft8Message> offsetMessages,
+                                       boolean isDeep,
+                                       boolean publishEmptyWhenSlotIsNew) {
+        SlotFilterResult filtered = filterNewSlotMessages(utc, decodeMode, messages);
+        if (filtered.messages.size() == 0 && (!publishEmptyWhenSlotIsNew || filtered.hadPublishedBefore)) {
+            return;
+        }
+
+        if (onFt8Listen != null) {
+            onFt8Listen.afterDecode(
+                    utc,
+                    averageOffset(offsetMessages == null ? filtered.messages : offsetMessages),
+                    UtcTimer.sequential(utc, slotTimeM),
+                    filtered.messages,
+                    isDeep
+            );
+        }
     }
 
     /**
@@ -255,7 +391,28 @@ public class FT8SignalListener {
      * @param decodeMode 本轮固定模式，避免线程运行过程中模式切换导致同一轮解码混用 FT8 / FT4
      */
     public void decodeFt8(long utc, float[] voiceData, int decodeMode) {
+        decodeFt8(
+                utc,
+                voiceData,
+                decodeMode,
+                DECODE_STAGE_FULL,
+                FT8Common.getSamplesPerSlot(decodeMode),
+                true,
+                true
+        );
+    }
+
+    private void decodeFt8(long utc,
+                           float[] voiceData,
+                           int decodeMode,
+                           int decodeStage,
+                           int expectedSamples,
+                           boolean notifyBefore,
+                           boolean notifyFinished) {
         if (GeneralVariables.isExperimentalCodecEnabled()) {
+            if (decodeStage == DECODE_STAGE_EARLY) {
+                return;
+            }
             // Experimental modem bypasses the FT8/FT4 native decoder but still
             // feeds results through the same UI callback path.
             decodeExperimentalAsync(utc, voiceData, FT8Common.SAMPLE_RATE, decodeMode, "rx");
@@ -268,7 +425,7 @@ public class FT8SignalListener {
                 long time = System.currentTimeMillis();
                 final int slotTimeM = FT8Common.getSlotTimeM(decodeMode);
 
-                if (onFt8Listen != null) {
+                if (notifyBefore && onFt8Listen != null) {
                     onFt8Listen.beforeListen(utc);
                 }
 
@@ -278,7 +435,7 @@ public class FT8SignalListener {
                 long ft8Decoder = InitDecoder(
                         utc,
                         FT8Common.SAMPLE_RATE,
-                        voiceData.length,
+                        expectedSamples,
                         isFt8
                 );
 
@@ -304,20 +461,51 @@ public class FT8SignalListener {
                 boolean nativeOwnsSessionFlow = DecoderOwnsSessionFlow(ft8Decoder);
 
                 ArrayList<Ft8Message> allMsg = new ArrayList<>();
+                if (decodeStage == DECODE_STAGE_EARLY) {
+                    long earlyDecodeDeadlineMs = System.currentTimeMillis()
+                            + FT8Common.getEarlyDecodeTimeoutMs(decodeMode);
+                    ArrayList<Ft8Message> earlyMsgs = runDecode(
+                            ft8Decoder,
+                            utc,
+                            true,
+                            decodeMode,
+                            earlyDecodeDeadlineMs
+                    );
+                    addMsgToList(allMsg, earlyMsgs);
+
+                    timeSec = System.currentTimeMillis() - time;
+                    publishDecodeMessages(
+                            utc,
+                            slotTimeM,
+                            decodeMode,
+                            earlyMsgs,
+                            allMsg,
+                            true,
+                            false
+                    );
+
+                    DeleteDecoder(ft8Decoder);
+                    timeSec = System.currentTimeMillis() - time;
+                    Log.d(TAG, String.format("提前解码耗时:%d毫秒,mode=%s",
+                            timeSec,
+                            FT8Common.modeToString(decodeMode)));
+                    return;
+                }
+
                 ArrayList<Ft8Message> msgs = runDecode(ft8Decoder, utc, false, decodeMode, 0L);
                 addMsgToList(allMsg, msgs);
 
                 timeSec = System.currentTimeMillis() - time;
 
-                if (onFt8Listen != null) {
-                    onFt8Listen.afterDecode(
-                            utc,
-                            averageOffset(allMsg),
-                            UtcTimer.sequential(utc, slotTimeM),
-                            msgs,
-                            false
-                    );
-                }
+                publishDecodeMessages(
+                        utc,
+                        slotTimeM,
+                        decodeMode,
+                        msgs,
+                        allMsg,
+                        false,
+                        true
+                );
 
                 // FT8 / FT4 都允许进入深度解码，但使用有限轮重解
                 if (GeneralVariables.deepDecodeMode && ReBuildSignal.supportSubtract(decodeMode)) {
@@ -329,53 +517,53 @@ public class FT8SignalListener {
 
                     timeSec = System.currentTimeMillis() - time;
 
-                    if (onFt8Listen != null) {
-                        onFt8Listen.afterDecode(
-                                utc,
-                                averageOffset(allMsg),
-                                UtcTimer.sequential(utc, slotTimeM),
-                                msgs,
-                                true
-                        );
-                    }
+                    publishDecodeMessages(
+                            utc,
+                            slotTimeM,
+                            decodeMode,
+                            msgs,
+                            allMsg,
+                            true,
+                            false
+                    );
 
                     if (!nativeOwnsSessionFlow) {
                         int maxRounds = getMaxSubtractRounds(decodeMode);
                         int round = 0;
 
                         while (round < maxRounds) {
-                        if (System.currentTimeMillis() >= deepDecodeDeadlineMs) {
-                            break;
-                        }
+                            if (System.currentTimeMillis() >= deepDecodeDeadlineMs) {
+                                break;
+                            }
 
-                        if (!hasQualifiedSubtractMsg(msgs, decodeMode)) {
-                            break;
-                        }
+                            if (!hasQualifiedSubtractMsg(msgs, decodeMode)) {
+                                break;
+                            }
 
                         // 按本轮固定模式做 subtract，避免中途切模式
-                        ReBuildSignal.subtractSignal(ft8Decoder, a91List, decodeMode);
+                            ReBuildSignal.subtractSignal(ft8Decoder, a91List, decodeMode);
 
-                        msgs = runDecode(ft8Decoder, utc, true, decodeMode, deepDecodeDeadlineMs);
-                        if (msgs.size() == 0) {
-                            break;
-                        }
+                            msgs = runDecode(ft8Decoder, utc, true, decodeMode, deepDecodeDeadlineMs);
+                            if (msgs.size() == 0) {
+                                break;
+                            }
 
-                        addMsgToList(allMsg, msgs);
+                            addMsgToList(allMsg, msgs);
 
-                        timeSec = System.currentTimeMillis() - time;
+                            timeSec = System.currentTimeMillis() - time;
 
-                        if (onFt8Listen != null) {
-                            onFt8Listen.afterDecode(
+                            publishDecodeMessages(
                                     utc,
-                                    averageOffset(allMsg),
-                                    UtcTimer.sequential(utc, slotTimeM),
+                                    slotTimeM,
+                                    decodeMode,
                                     msgs,
-                                    true
+                                    allMsg,
+                                    true,
+                                    false
                             );
-                        }
 
-                        round++;
-                    }
+                            round++;
+                        }
                     }
                 }
 
@@ -383,7 +571,7 @@ public class FT8SignalListener {
                 timeSec = System.currentTimeMillis() - time;
                 decodeTimeSec.postValue(timeSec);
 
-                if (onFt8Listen != null) {
+                if (notifyFinished && onFt8Listen != null) {
                     onFt8Listen.afterDecodeFinished(utc, timeSec);
                 }
 
@@ -476,12 +664,12 @@ public class FT8SignalListener {
                     if (ft8Message.isValid) {
                         Ft8Message msg = new Ft8Message(ft8Message);
                         msg.signalFormat = decodeMode;
+                        msg.isWeakSignal = isDeep;//是不是弱信号
 
                         if (checkMessageSame(ft8Messages, msg)) {
                             continue;
                         }
 
-                        msg.isWeakSignal = isDeep;//是不是弱信号
                         ft8Messages.add(msg);
 
                         if (shouldAddToSubtractList(msg, isDeep, decodeMode)) {
@@ -532,10 +720,8 @@ public class FT8SignalListener {
             if (msg.signalFormat != ft8Message.signalFormat) {
                 continue;
             }
-            if (msg.getMessageText().equals(ft8Message.getMessageText())) {
-                if (msg.snr < ft8Message.snr) {
-                    msg.snr = ft8Message.snr;
-                }
+            if (msg.isSameDecodedMessage(ft8Message)) {
+                msg.mergeDecodeQualityFrom(ft8Message);
                 return true;
             }
         }

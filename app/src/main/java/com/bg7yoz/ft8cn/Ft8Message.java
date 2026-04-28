@@ -19,6 +19,7 @@ import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.google.android.gms.maps.model.LatLng;
 
 import java.text.SimpleDateFormat;
+import java.util.Locale;
 
 public class Ft8Message {
     private static final String TAG = "Ft8Message";
@@ -266,6 +267,50 @@ public class Ft8Message {
             return "*" + getMessageText();
         } else {
             return getMessageText();
+        }
+    }
+
+    private String normalizeDecodedMessageText() {
+        return getMessageText()
+                .replace("*", "")
+                .trim()
+                .replaceAll("\\s+", " ")
+                .toUpperCase(Locale.US);
+    }
+
+    public String getDecodedMessageKey() {
+        return signalFormat + "|"
+                + normalizeDecodedMessageText();
+    }
+
+    public String getSlotDecodedMessageKey() {
+        return getFullSequenceIndex() + "|" + getDecodedMessageKey();
+    }
+
+    public boolean isSameDecodedMessage(Ft8Message other) {
+        return other != null && getDecodedMessageKey().equals(other.getDecodedMessageKey());
+    }
+
+    public boolean isSameSlotDecodedMessage(Ft8Message other) {
+        return other != null && getSlotDecodedMessageKey().equals(other.getSlotDecodedMessageKey());
+    }
+
+    public void mergeDecodeQualityFrom(Ft8Message other) {
+        if (other == null) {
+            return;
+        }
+
+        boolean preferOtherTiming = !other.isWeakSignal || other.score >= score;
+        isWeakSignal = isWeakSignal && other.isWeakSignal;
+        if (other.snr > snr) {
+            snr = other.snr;
+        }
+        if (other.score > score) {
+            score = other.score;
+        }
+        if (preferOtherTiming) {
+            time_sec = other.time_sec;
+            freq_hz = other.freq_hz;
         }
     }
 

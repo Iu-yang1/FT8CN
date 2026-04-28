@@ -18,17 +18,15 @@ extern "C" {
 namespace {
 
 constexpr int kFt8PhaseTicksFull = 50;
-constexpr float kFt8EarlySubtractDtSec = 0.40f;
 constexpr int64_t kFt8SlotMilliseconds = 15000;
 constexpr int64_t kFt4SlotMilliseconds = 7500;
 constexpr int kFt8FollowupMinSyncScore = 6;
 constexpr int kFt4FollowupMinSyncScore = 7;
 constexpr int kFt8FollowupMaxEntries = 16;
-constexpr int kFt8FollowupMaxCandidatesPerEntry = 2;
+constexpr int kFt8FollowupMaxCandidatesPerEntry = 4;
 constexpr int kFollowupModeCount = 2;
-constexpr int kFollowupParityCount = 2;
 constexpr float kFt8FollowupHistoryMatchHz = 3.0f;
-constexpr float kFt8FollowupTimeWindowSec = 0.30f;
+constexpr float kFt8FollowupHistoryMatchTimeSec = 0.30f;
 
 constexpr int kFt4CoarseFftSize = 2304;
 constexpr int kFt4CoarseHopSize = 576;
@@ -56,8 +54,15 @@ struct ft8_followup_entry_t {
     float time_sec;
 };
 
+struct followup_search_policy_t {
+    float freq_window_hz;
+    float time_window_sec;
+    int max_candidates;
+};
+
 struct wsjtx_port_decoder_t {
     int64_t utc_time;
+    int slot_samples;
     int num_samples;
     int num_candidates;
     int num_decoded;
@@ -75,12 +80,9 @@ struct wsjtx_port_decoder_t {
 };
 
 std::mutex g_ft8_followup_mutex;
-std::array<std::array<std::vector<ft8_followup_entry_t>, kFollowupParityCount>, kFollowupModeCount> g_ft8_followup_current;
-std::array<std::array<std::vector<ft8_followup_entry_t>, kFollowupParityCount>, kFollowupModeCount> g_ft8_followup_previous;
-std::array<std::array<int64_t, kFollowupParityCount>, kFollowupModeCount> g_ft8_followup_slot_ids = {{
-        {{-1, -1}},
-        {{-1, -1}},
-}};
+std::array<std::vector<ft8_followup_entry_t>, kFollowupModeCount> g_ft8_followup_current_slot;
+std::array<std::vector<ft8_followup_entry_t>, kFollowupModeCount> g_ft8_followup_previous_slot;
+std::array<int64_t, kFollowupModeCount> g_ft8_followup_slot_ids = {{-1, -1}};
 
 static wsjtx::DecoderOptions convert_decoder_options(const wsjtx_decoder_options_t *options) {
     wsjtx::DecoderOptions converted = wsjtx::DefaultDecoderOptions();
@@ -296,16 +298,29 @@ static int sample_count_for_phase(const wsjtx_port_decoder_t *state, int phase_t
         return 0;
     }
 
-    const int total_samples = (int) state->raw_samples.size();
+    const int available_samples = (int) state->raw_samples.size();
+    const int slot_samples = (state->slot_samples > 0) ? state->slot_samples : available_samples;
+    int sample_count = 0;
     if (phase_ticks >= kFt8PhaseTicksFull) {
-        return total_samples;
+        sample_count = slot_samples;
+    } else {
+        sample_count = (slot_samples * phase_ticks) / kFt8PhaseTicksFull;
     }
-
-    int sample_count = (total_samples * phase_ticks) / kFt8PhaseTicksFull;
-    if (sample_count < state->mon.block_size) {
+    if (sample_count < state->mon.block_size || available_samples < sample_count) {
         return 0;
     }
     return sample_count;
+}
+
+static bool has_full_slot_samples(const wsjtx_port_decoder_t *state) {
+    if (state == nullptr) {
+        return false;
+    }
+
+    const int slot_samples = (state->slot_samples > 0)
+                             ? state->slot_samples
+                             : (int) state->raw_samples.size();
+    return slot_samples > 0 && (int) state->raw_samples.size() >= slot_samples;
 }
 
 static void rebuild_waterfall(wsjtx_port_decoder_t *state, int sample_count) {
@@ -360,7 +375,6 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
                              candidate_t candidates[kMax_candidates],
                              int candidate_count,
                              int iterations,
-                             float max_time_sec,
                              std::vector<subtract_job_t> *jobs) {
     if (state == nullptr || candidate_count <= 0) {
         return 0;
@@ -374,10 +388,6 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
                                              candidates[idx],
                                              iterations,
                                              &decoded)) {
-            continue;
-        }
-
-        if (max_time_sec >= 0.0f && decoded.time_sec > max_time_sec) {
             continue;
         }
 
@@ -398,9 +408,8 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
                                   candidate_t out[kMax_candidates]);
 static int ft8_followup_mode_index(const wsjtx_port_decoder_t *state);
 static int64_t ft8_slot_id(const wsjtx_port_decoder_t *state);
-static int ft8_slot_parity(const wsjtx_port_decoder_t *state);
 static int ft8_followup_min_sync_score(const wsjtx_port_decoder_t *state);
-static float ft8_followup_freq_window_hz(const wsjtx_port_decoder_t *state);
+static followup_search_policy_t ft8_followup_search_policy(const wsjtx_port_decoder_t *state);
 static bool is_plain_grid4(const char *grid);
 static bool is_cq_call_token(const char *call);
 static bool is_contest_cq_call(const char *call);
@@ -536,50 +545,47 @@ static int select_ft8_followup_candidates(const wsjtx_port_decoder_t *state,
         float metric;
     };
 
-    std::array<ranked_candidate_t, kFt8FollowupMaxCandidatesPerEntry> best{};
-    int best_count = 0;
-    const float freq_window = ft8_followup_freq_window_hz(state);
+    const followup_search_policy_t policy = ft8_followup_search_policy(state);
+    std::vector<ranked_candidate_t> ranked;
+    ranked.reserve(candidate_count);
 
     for (int idx = 0; idx < candidate_count; ++idx) {
         const float freq_delta = abs_diff(candidate_freq_hz(state, candidates[idx]), entry.frequency);
-        if (freq_delta > freq_window) {
+        if (freq_delta > policy.freq_window_hz) {
             continue;
         }
 
         const float time_delta = abs_diff(candidate_time_sec(state, candidates[idx]), entry.time_sec);
-        if (time_delta > kFt8FollowupTimeWindowSec) {
+        if (time_delta > policy.time_window_sec) {
             continue;
         }
 
-        ranked_candidate_t ranked{candidates[idx], (freq_delta / std::max(freq_window, 1.0f))
-                                                   + (time_delta / kFt8FollowupTimeWindowSec)};
-
-        if (best_count < kFt8FollowupMaxCandidatesPerEntry) {
-            best[best_count++] = ranked;
-        } else {
-            const ranked_candidate_t &tail = best[best_count - 1];
-            if (ranked.metric > tail.metric ||
-                (ranked.metric == tail.metric && ranked.candidate.score <= tail.candidate.score)) {
-                continue;
-            }
-            best[best_count - 1] = ranked;
-        }
-
-        for (int pos = best_count - 1; pos > 0; --pos) {
-            const ranked_candidate_t &lhs = best[pos - 1];
-            const ranked_candidate_t &rhs = best[pos];
-            if (lhs.metric < rhs.metric ||
-                (lhs.metric == rhs.metric && lhs.candidate.score >= rhs.candidate.score)) {
-                break;
-            }
-            std::swap(best[pos - 1], best[pos]);
-        }
+        const float freq_term = freq_delta / std::max(policy.freq_window_hz, 1.0f);
+        const float time_term = time_delta / std::max(policy.time_window_sec, 0.1f);
+        const float score_bonus = (float) candidates[idx].score * 0.025f;
+        ranked.push_back({candidates[idx], freq_term + time_term - score_bonus});
     }
 
-    for (int idx = 0; idx < best_count; ++idx) {
-        out[idx] = best[idx].candidate;
+    std::stable_sort(ranked.begin(), ranked.end(),
+                     [](const ranked_candidate_t &lhs, const ranked_candidate_t &rhs) {
+                         if (lhs.metric != rhs.metric) {
+                             return lhs.metric < rhs.metric;
+                         }
+                         if (lhs.candidate.score != rhs.candidate.score) {
+                             return lhs.candidate.score > rhs.candidate.score;
+                         }
+                         if (lhs.candidate.time_offset != rhs.candidate.time_offset) {
+                             return lhs.candidate.time_offset < rhs.candidate.time_offset;
+                         }
+                         return lhs.candidate.freq_offset < rhs.candidate.freq_offset;
+                     });
+
+    const int selected_count = std::min((int) ranked.size(),
+                                        std::min(policy.max_candidates, kFt8FollowupMaxCandidatesPerEntry));
+    for (int idx = 0; idx < selected_count; ++idx) {
+        out[idx] = ranked[idx].candidate;
     }
-    return best_count;
+    return selected_count;
 }
 
 static void run_ft8_followup_pass(wsjtx_port_decoder_t *state,
@@ -674,26 +680,23 @@ static int64_t ft8_slot_id(const wsjtx_port_decoder_t *state) {
     return (utc_time - (slot_milliseconds - 1)) / slot_milliseconds;
 }
 
-static int ft8_slot_parity(const wsjtx_port_decoder_t *state) {
-    return (int) (ft8_slot_id(state) & 1LL);
-}
-
 static int ft8_followup_min_sync_score(const wsjtx_port_decoder_t *state) {
     return (state != nullptr && state_is_ft4(state)) ? kFt4FollowupMinSyncScore : kFt8FollowupMinSyncScore;
 }
 
-static float ft8_followup_freq_window_hz(const wsjtx_port_decoder_t *state) {
-    if (state == nullptr) {
-        return 6.0f;
-    }
+static followup_search_policy_t ft8_followup_search_policy(const wsjtx_port_decoder_t *state) {
+    const float rx_span_hz = (state == nullptr)
+                             ? 2900.0f
+                             : std::max(1000.0f, state->mon_cfg.f_max - state->mon_cfg.f_min);
+    const int sensitivity = (state == nullptr) ? 1 : state->options.qso_freq_sensitivity;
 
-    switch (state->options.qso_freq_sensitivity) {
+    switch (sensitivity) {
         case 0:
-            return 4.0f;
+            return {80.0f, 0.60f, 2};
         case 2:
-            return 8.0f;
+            return {rx_span_hz, 1.20f, kFt8FollowupMaxCandidatesPerEntry};
         default:
-            return 6.0f;
+            return {rx_span_hz, 0.90f, 3};
     }
 }
 
@@ -766,7 +769,7 @@ static bool same_ft8_followup_entry(const ft8_followup_entry_t &lhs, const ft8_f
            0 == std::strcmp(lhs.call_2, rhs.call_2) &&
            0 == std::strcmp(lhs.grid4, rhs.grid4) &&
            abs_diff(lhs.frequency, rhs.frequency) <= kFt8FollowupHistoryMatchHz &&
-           abs_diff(lhs.time_sec, rhs.time_sec) <= kFt8FollowupTimeWindowSec;
+           abs_diff(lhs.time_sec, rhs.time_sec) <= kFt8FollowupHistoryMatchTimeSec;
 }
 
 static void append_ft8_followup_entry_unique(std::vector<ft8_followup_entry_t> *entries,
@@ -789,16 +792,15 @@ static std::vector<ft8_followup_entry_t> prepare_ft8_followup_history(const wsjt
     }
 
     const int mode_index = ft8_followup_mode_index(state);
-    const int parity = ft8_slot_parity(state);
     const int64_t slot = ft8_slot_id(state);
 
     std::lock_guard<std::mutex> lock(g_ft8_followup_mutex);
-    if (g_ft8_followup_slot_ids[mode_index][parity] != slot) {
-        g_ft8_followup_previous[mode_index][parity] = g_ft8_followup_current[mode_index][parity];
-        g_ft8_followup_current[mode_index][parity].clear();
-        g_ft8_followup_slot_ids[mode_index][parity] = slot;
+    if (g_ft8_followup_slot_ids[mode_index] != slot) {
+        g_ft8_followup_previous_slot[mode_index] = g_ft8_followup_current_slot[mode_index];
+        g_ft8_followup_current_slot[mode_index].clear();
+        g_ft8_followup_slot_ids[mode_index] = slot;
     }
-    return g_ft8_followup_previous[mode_index][parity];
+    return g_ft8_followup_previous_slot[mode_index];
 }
 
 static bool ft8_followup_entry_is_covered(const wsjtx_port_decoder_t *state,
@@ -809,9 +811,6 @@ static bool ft8_followup_entry_is_covered(const wsjtx_port_decoder_t *state,
 
     for (const ft8_message &decoded : state->session_results) {
         if (!decoded.isValid) {
-            continue;
-        }
-        if (abs_diff(decoded.freq_hz, entry.frequency) > kFt8FollowupHistoryMatchHz) {
             continue;
         }
         if (is_cq_call_token(entry.call_1)) {
@@ -848,18 +847,17 @@ static void commit_ft8_followup_history(const wsjtx_port_decoder_t *state) {
     }
 
     const int mode_index = ft8_followup_mode_index(state);
-    const int parity = ft8_slot_parity(state);
     const int64_t slot = ft8_slot_id(state);
 
     std::lock_guard<std::mutex> lock(g_ft8_followup_mutex);
-    if (g_ft8_followup_slot_ids[mode_index][parity] != slot) {
-        g_ft8_followup_previous[mode_index][parity] = g_ft8_followup_current[mode_index][parity];
-        g_ft8_followup_current[mode_index][parity].clear();
-        g_ft8_followup_slot_ids[mode_index][parity] = slot;
+    if (g_ft8_followup_slot_ids[mode_index] != slot) {
+        g_ft8_followup_previous_slot[mode_index] = g_ft8_followup_current_slot[mode_index];
+        g_ft8_followup_current_slot[mode_index].clear();
+        g_ft8_followup_slot_ids[mode_index] = slot;
     }
 
     for (const ft8_followup_entry_t &entry : additions) {
-        append_ft8_followup_entry_unique(&g_ft8_followup_current[mode_index][parity], entry);
+        append_ft8_followup_entry_unique(&g_ft8_followup_current_slot[mode_index], entry);
     }
 }
 
@@ -1223,20 +1221,30 @@ static void append_subtract_history(std::vector<subtract_job_t> *history,
     history->insert(history->end(), pass_jobs.begin(), pass_jobs.end());
 }
 
-static void rebuild_for_pass(wsjtx_port_decoder_t *state, const wsjtx::SessionPass &pass) {
+static bool rebuild_for_pass(wsjtx_port_decoder_t *state, const wsjtx::SessionPass &pass) {
     if (state == nullptr) {
-        return;
+        return false;
     }
 
     if (pass.phase_ticks <= 0) {
-        return;
+        return has_full_slot_samples(state);
     }
 
     if (pass.phase_ticks >= kFt8PhaseTicksFull) {
-        rebuild_fullslot_waterfall(state);
-        return;
+        const int sample_count = sample_count_for_phase(state, pass.phase_ticks);
+        if (sample_count <= 0) {
+            return false;
+        }
+        rebuild_waterfall(state, sample_count);
+        return true;
     }
-    rebuild_waterfall(state, sample_count_for_phase(state, pass.phase_ticks));
+
+    const int sample_count = sample_count_for_phase(state, pass.phase_ticks);
+    if (sample_count <= 0) {
+        return false;
+    }
+    rebuild_waterfall(state, sample_count);
+    return true;
 }
 
 static bool should_continue_after_empty_pass(const wsjtx::SessionPass &pass) {
@@ -1276,7 +1284,9 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
     std::vector<subtract_job_t> subtract_history;
 
     for (const wsjtx::SessionPass &pass : plan.passes) {
-        rebuild_for_pass(state, pass);
+        if (!rebuild_for_pass(state, pass)) {
+            continue;
+        }
         if (pass.apply_subtract_history && !subtract_history.empty()) {
             apply_subtract_jobs(state, subtract_history, plan.mode.subtract_mode);
         }
@@ -1294,7 +1304,6 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
                                                   state->candidate_list,
                                                   candidate_count,
                                                   pass.iterations,
-                                                  pass.limit_early_dt ? kFt8EarlySubtractDtSec : -1.0f,
                                                   &pass_jobs);
         if (new_results == 0) {
             if (should_continue_after_empty_pass(pass)) {
@@ -1309,7 +1318,7 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
         }
     }
 
-    if (enable_ft8_followup && !followup_history.empty()) {
+    if (enable_ft8_followup && has_full_slot_samples(state) && !followup_history.empty()) {
         run_ft8_followup_pass(state, subtract_history, followup_history);
     }
 
@@ -1337,6 +1346,7 @@ bool wsjtx_port_init_decoder(decoder_t *decoder,
     }
 
     state->utc_time = utcTime;
+    state->slot_samples = num_samples;
     state->num_samples = num_samples;
     state->ldpc_iterations = fast_kLDPC_iterations;
     state->mon_cfg.f_min = 100;
@@ -1434,6 +1444,7 @@ void wsjtx_port_reset(decoder_t *decoder, long utcTime, int num_samples) {
     }
 
     state->utc_time = utcTime;
+    state->slot_samples = num_samples;
     state->num_samples = num_samples;
     state->num_candidates = 0;
     state->raw_samples.clear();

@@ -2156,6 +2156,17 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("dxpeditionFoxHoldFrequency")) {
                     GeneralVariables.dxpeditionFoxHoldFrequency = (result.equals("") || result.equals("1"));
                 }
+                if (name.equalsIgnoreCase("dxpeditionFoxTxSlots")) {
+                    try {
+                        int value = result.equals("") ? 1 : Integer.parseInt(result);
+                        GeneralVariables.dxpeditionFoxTxSlots = Math.max(1, Math.min(value, 5));
+                    } catch (Exception e) {
+                        GeneralVariables.dxpeditionFoxTxSlots = 1;
+                    }
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxAutoSpecialMessage")) {
+                    GeneralVariables.dxpeditionFoxAutoSpecialMessage = (result.equals("") || result.equals("1"));
+                }
                 if (name.equalsIgnoreCase("manualDxpeditionMacroCustom1")) {
                     GeneralVariables.manualDxpeditionMacroCustom1 = result.equals("")
                             ? "{DXCALL} RR73"

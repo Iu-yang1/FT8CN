@@ -83,12 +83,44 @@ public class MyCallingFragment extends Fragment {
                 && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE;
         binding.dxpeditionManualCheckBox.setEnabled(enabled);
         binding.dxpeditionFoxCheckBox.setEnabled(enabled);
+        boolean foxSlotsEnabled = enabled && binding.dxpeditionFoxCheckBox.isChecked();
+        binding.dxpeditionTxSlotsButton.setVisibility(foxSlotsEnabled ? View.VISIBLE : View.GONE);
+        binding.dxpeditionTxSlotsButton.setEnabled(foxSlotsEnabled);
+        binding.dxpeditionTxSlotsButton.setAlpha(foxSlotsEnabled ? 1.0f : 0.45f);
+        if (mainViewModel != null && mainViewModel.ft8TransmitSignal != null) {
+            binding.dxpeditionTxSlotsButton.setText(getString(
+                    R.string.dxpedition_tx_slots_button,
+                    mainViewModel.ft8TransmitSignal.getDxpeditionFoxTxSlots()));
+        }
         if (!enabled && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
             applyManualDxpeditionMode(false, false, true);
         }
         binding.dxpeditionManualCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
         binding.dxpeditionFoxCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
         updateDxpeditionMacroUi();
+    }
+
+    private void showDxpeditionTxSlotsPicker() {
+        if (binding == null || mainViewModel == null || mainViewModel.ft8TransmitSignal == null) {
+            return;
+        }
+        String[] items = new String[5];
+        for (int i = 0; i < items.length; i++) {
+            items[i] = getString(R.string.dxpedition_tx_slots_item, i + 1);
+        }
+        int checked = mainViewModel.ft8TransmitSignal.getDxpeditionFoxTxSlots() - 1;
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_tx_slots_title)
+                .setSingleChoiceItems(items, checked, (dialogInterface, which) -> {
+                    int slots = which + 1;
+                    mainViewModel.ft8TransmitSignal.setDxpeditionFoxTxSlots(slots);
+                    mainViewModel.databaseOpr.writeConfig("dxpeditionFoxTxSlots", String.valueOf(slots), null);
+                    updateDxpeditionManualUi();
+                    updateAutoSessionStatus();
+                    dialogInterface.dismiss();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
     }
 
     private boolean canUseDxpeditionMacroUi() {
@@ -637,6 +669,11 @@ public class MyCallingFragment extends Fragment {
             }
             applyManualDxpeditionMode(false, isChecked, true);
         });
+        binding.dxpeditionTxSlotsButton.setOnClickListener(view -> showDxpeditionTxSlotsPicker());
+        binding.dxpeditionTxSlotsButton.setOnLongClickListener(view -> {
+            showDxpeditionTxSlotsPicker();
+            return true;
+        });
         binding.dxpeditionHelpButton.setOnClickListener(view -> showDxpeditionGuideDialog());
         binding.dxpeditionManualCheckBox.setOnLongClickListener(view -> {
             showDxpeditionGuideDialog();
@@ -747,6 +784,15 @@ public class MyCallingFragment extends Fragment {
                 });
 
         // 观察指令序号的变化
+        mainViewModel.ft8TransmitSignal.mutableDxpeditionFoxSlotStatus.observe(getViewLifecycleOwner(),
+                new Observer<String>() {
+                    @Override
+                    public void onChanged(String s) {
+                        updateDxpeditionManualUi();
+                        updateAutoSessionStatus();
+                    }
+                });
+
         mainViewModel.ft8TransmitSignal.mutableFunctionOrder.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @Override
             public void onChanged(Integer integer) {

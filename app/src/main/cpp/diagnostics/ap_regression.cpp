@@ -25,6 +25,7 @@ constexpr float kSeedNoise = 0.01f;
 constexpr float kWeakAmplitude = 0.18f;
 constexpr float kWeakNoise = 0.16f;
 constexpr float kRegressionFrequency = 1500.0f;
+constexpr float kFollowupFrequency = kRegressionFrequency + 180.0f;
 constexpr const char *kMyCall = "N0CALL";
 constexpr const char *kOtherCall = "K1ABC";
 constexpr const char *kOtherGrid = "FN20";
@@ -248,7 +249,7 @@ static void append_summary_line(std::string *out,
 static std::string run_case(const RegressionCase &test_case, int case_index) {
     const int64_t base_utc = 1800000000000LL +
                              (int64_t) case_index * 8LL * slot_milliseconds_for_mode(test_case.mode);
-    const int64_t follow_utc = base_utc + 2LL * slot_milliseconds_for_mode(test_case.mode);
+    const int64_t follow_utc = base_utc + slot_milliseconds_for_mode(test_case.mode);
 
     std::vector<float> seed_slot;
     std::vector<float> target_slot;
@@ -261,7 +262,7 @@ static std::string run_case(const RegressionCase &test_case, int case_index) {
                                             &seed_slot);
     const bool target_ok = synthesize_message(test_case.target_text,
                                               test_case.mode,
-                                              kRegressionFrequency,
+                                              kFollowupFrequency,
                                               kWeakAmplitude,
                                               kWeakNoise,
                                               0x2000u + (uint32_t) case_index,
@@ -306,7 +307,7 @@ static std::string run_synthetic_suite(void) {
     };
 
     std::string out;
-    out.append("AP synthetic regression weakAmp=0.18 weakNoise=0.16\n");
+    out.append("AP synthetic regression weakAmp=0.18 weakNoise=0.16 followOffsetHz=180\n");
     for (int i = 0; i < (int) (sizeof(cases) / sizeof(cases[0])); ++i) {
         out.append(run_case(cases[i], i));
     }

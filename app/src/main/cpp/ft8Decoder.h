@@ -66,6 +66,7 @@ void signalToFFT(decoder_t *decoder, float signal[], int sample_rate);
 void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8);
 void delete_decoder(decoder_t *decoder);
 void decoder_monitor_press(float signal[], decoder_t *decoder);
+void decoder_monitor_press_samples(float signal[], decoder_t *decoder, int sample_count);
 int decoder_ft8_find_sync(decoder_t *decoder);
 ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder);
 void decoder_ft8_reset(decoder_t *decoder, long utcTime, int num_samples);

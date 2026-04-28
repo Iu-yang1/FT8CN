@@ -193,6 +193,20 @@
                             android:textSize="11sp" />
 
                     <Button
+                            android:id="@+id/dxpeditionTxSlotsButton"
+                            android:layout_width="38dp"
+                            android:layout_height="24dp"
+                            android:layout_marginStart="2dp"
+                            android:layout_marginEnd="2dp"
+                            android:background="@drawable/imagebutton_style"
+                            android:minHeight="0dp"
+                            android:minWidth="0dp"
+                            android:padding="0dp"
+                            android:text="@string/dxpedition_tx_slots_short"
+                            android:textColor="@color/bar_text_view_color"
+                            android:textSize="10sp" />
+
+                    <Button
                             android:id="@+id/dxpeditionHelpButton"
                             android:layout_width="28dp"
                             android:layout_height="24dp"
