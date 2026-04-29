@@ -578,6 +578,18 @@ public class MyCallingFragment extends Fragment {
             }
 
             @Override
+            public void onStartNow(CqCallEntry entry) {
+                if (entry == null) {
+                    return;
+                }
+                if (mainViewModel.ft8TransmitSignal.startCqQueueEntryNow(entry.callsign)) {
+                    GeneralVariables.resetLaunchSupervision();
+                    updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+                    updateAutoSessionStatus();
+                }
+            }
+
+            @Override
             public void onRemove(CqCallEntry entry) {
                 if (entry == null) {
                     return;

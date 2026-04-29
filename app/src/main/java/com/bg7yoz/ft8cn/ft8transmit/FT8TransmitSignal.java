@@ -1630,6 +1630,17 @@ public class FT8TransmitSignal {
         return promoted;
     }
 
+    public boolean startCqQueueEntryNow(String callsign) {
+        updateCqQueueSettings();
+        CqCallEntry entry = callQueueManager.poll(callsign);
+        publishCqQueue();
+        if (!prepareCqQueueEntry(entry)) {
+            return false;
+        }
+        setActivated(true);
+        return true;
+    }
+
     @SuppressLint("DefaultLocale")
     public String getCqQueueNowText() {
         TransmitCallsign target = toCallsign;
@@ -1687,6 +1698,10 @@ public class FT8TransmitSignal {
             entry = candidate;
         }
         publishCqQueue();
+        return prepareCqQueueEntry(entry);
+    }
+
+    private boolean prepareCqQueueEntry(CqCallEntry entry) {
         if (entry == null || entry.message == null) {
             return false;
         }

@@ -21,6 +21,8 @@ public class CqQueueAdapter extends RecyclerView.Adapter<CqQueueAdapter.CqQueueI
     public interface OnQueueAction {
         void onPromote(CqCallEntry entry);
 
+        void onStartNow(CqCallEntry entry);
+
         void onRemove(CqCallEntry entry);
     }
 
@@ -61,6 +63,11 @@ public class CqQueueAdapter extends RecyclerView.Adapter<CqQueueAdapter.CqQueueI
         holder.promoteButton.setOnClickListener(view -> {
             if (onQueueAction != null) {
                 onQueueAction.onPromote(entry);
+            }
+        });
+        holder.nowButton.setOnClickListener(view -> {
+            if (onQueueAction != null) {
+                onQueueAction.onStartNow(entry);
             }
         });
         holder.removeButton.setOnClickListener(view -> {
@@ -128,6 +135,7 @@ public class CqQueueAdapter extends RecyclerView.Adapter<CqQueueAdapter.CqQueueI
         final TextView metaTextView;
         final TextView messageTextView;
         final Button promoteButton;
+        final Button nowButton;
         final Button removeButton;
 
         CqQueueItemHolder(@NonNull View itemView) {
@@ -138,6 +146,7 @@ public class CqQueueAdapter extends RecyclerView.Adapter<CqQueueAdapter.CqQueueI
             metaTextView = itemView.findViewById(R.id.cqQueueMetaTextView);
             messageTextView = itemView.findViewById(R.id.cqQueueMessageTextView);
             promoteButton = itemView.findViewById(R.id.cqQueuePromoteButton);
+            nowButton = itemView.findViewById(R.id.cqQueueNowButton);
             removeButton = itemView.findViewById(R.id.cqQueueRemoveButton);
         }
     }

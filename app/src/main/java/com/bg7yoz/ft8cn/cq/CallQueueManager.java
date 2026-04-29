@@ -93,6 +93,16 @@ public final class CallQueueManager {
         return entry;
     }
 
+    public synchronized CqCallEntry poll(String callsign) {
+        String normalized = normalizeCallsign(callsign);
+        CqCallEntry entry = byCallsign.remove(normalized);
+        if (entry == null) {
+            return null;
+        }
+        queue.remove(entry);
+        return entry;
+    }
+
     public synchronized CqCallEntry peekNext() {
         pruneLocked();
         return queue.isEmpty() ? null : queue.get(0);
