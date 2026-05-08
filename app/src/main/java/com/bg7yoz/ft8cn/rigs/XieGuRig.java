@@ -294,3 +294,4 @@ public class XieGuRig extends BaseRig {
         //readFreqTimer.schedule(readTask(),START_QUERY_FREQ_DELAY,1000);
     }
 }
+

@@ -35,3 +35,4 @@ char charn(int c, int table_idx);
 int nchar(char c, int table_idx);
 
 #endif // _INCLUDE_TEXT_H_
+

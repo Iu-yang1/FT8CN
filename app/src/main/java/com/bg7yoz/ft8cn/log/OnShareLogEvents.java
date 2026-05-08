@@ -11,3 +11,4 @@ public interface OnShareLogEvents {
     void afterGet(int count, String info);
     void onShareFailed(String info);
 }
+

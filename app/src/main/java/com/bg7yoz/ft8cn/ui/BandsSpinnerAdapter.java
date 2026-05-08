@@ -52,3 +52,4 @@ public class BandsSpinnerAdapter extends BaseAdapter {
         return view;
     }
 }
+

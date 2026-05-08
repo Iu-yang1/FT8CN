@@ -374,3 +374,4 @@ public class FT8Package {
 
     public static native int getHash22(String callsign);
 }
+

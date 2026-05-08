@@ -15,3 +15,4 @@ public enum VitaTSF {
     TSF_REALTIME,//Real Time(Picoseconds) Timestamp. 实时（皮秒）时间戳
     TSF_FREERUN,//Free Running Count Timestamp. 自由运行计数时间戳
 }
+

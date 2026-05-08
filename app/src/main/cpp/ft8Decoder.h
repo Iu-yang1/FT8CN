@@ -86,3 +86,4 @@ void decoder_subtract_signal(decoder_t *decoder,
 void recode(int a174[], int a79[]);
 
 #endif
+

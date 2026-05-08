@@ -314,3 +314,4 @@ SessionPlan BuildSessionPlan(const ModeDescriptor &mode,
 }
 
 }  // namespace wsjtx
+

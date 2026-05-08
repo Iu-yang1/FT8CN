@@ -48,3 +48,4 @@ public enum CqRankMethod {
         return displayName;
     }
 }
+

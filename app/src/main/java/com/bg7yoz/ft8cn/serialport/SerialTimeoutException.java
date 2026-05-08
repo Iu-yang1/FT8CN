@@ -13,3 +13,4 @@ public class SerialTimeoutException extends InterruptedIOException {
         super(s);
     }
 }
+

@@ -163,3 +163,4 @@ public class VolumeProgress extends View {
         this.alarmValue = alarmValue;
     }
 }
+

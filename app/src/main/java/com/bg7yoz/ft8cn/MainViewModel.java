@@ -501,6 +501,7 @@ public class MainViewModel extends ViewModel {
                     // Experimental mode is used as a local modem bring-up path,
                     // so decode the exact transmitted waveform directly instead
                     // of relying on acoustic leakage or rig-side monitor audio.
+                    // 这条回环链路只服务实验编解码器，不影响 FT8/FT4 标准发射。
                     float[] loopbackWave = GenerateFTx.generateFtX(
                             new Ft8Message(message),
                             GeneralVariables.getBaseFrequency(),
@@ -1270,3 +1271,4 @@ public class MainViewModel extends ViewModel {
         releaseResources();
     }
 }
+

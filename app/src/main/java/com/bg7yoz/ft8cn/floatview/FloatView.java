@@ -379,3 +379,4 @@ public class FloatView extends ConstraintLayout {
         this.floatBoard = float_board;
     }
 }
+

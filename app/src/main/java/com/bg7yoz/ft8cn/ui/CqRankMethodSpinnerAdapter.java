@@ -48,3 +48,4 @@ public class CqRankMethodSpinnerAdapter extends BaseAdapter {
         return getView(position, convertView, parent);
     }
 }
+

@@ -174,3 +174,4 @@ public class HelpDialog extends Dialog {
     }
 
 }
+

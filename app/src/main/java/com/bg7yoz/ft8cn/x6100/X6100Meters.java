@@ -194,3 +194,4 @@ public class X6100Meters {
         //"信号强度: %.1f dBm\n驻波: %s\nALC: %.1f\n电压: %.1fV\n发射功率: %.1f W\n最大发射功率: %.1f\n发射音量:%d%%"
     }
 }
+

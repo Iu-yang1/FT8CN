@@ -10,6 +10,7 @@ import java.util.List;
  * 使 Android 端与离线扫描保持同步。
  */
 public final class ExperimentalCodecConfig {
+    // 这里的参数只服务 experimental 调制解调器，不参与 FT8 / FT4 协议核心。
     public static final float SYMBOL_RATE = 31.25f;
     public static final float TONE_SPACING_HZ = 80.0f;
     public static final float AMPLITUDE = 0.75f;
@@ -34,10 +35,16 @@ public final class ExperimentalCodecConfig {
     private ExperimentalCodecConfig() {
     }
 
+    /**
+     * experimental 采用固定符号率，因此每个符号的采样点数由输入采样率直接换算。
+     */
     public static int getSamplesPerSymbol(int sampleRate) {
         return Math.max(1, Math.round(sampleRate / SYMBOL_RATE));
     }
 
+    /**
+     * 构造 experimental 的 4 个离散音调，保证都落在奈奎斯特安全范围内。
+     */
     public static float[] buildToneSet(float baseFrequencyHz, int sampleRate) {
         float nyquistSafeMax = sampleRate * 0.45f;
         float low = Math.max(200.0f, Math.min(baseFrequencyHz, nyquistSafeMax - 3.0f * TONE_SPACING_HZ));
@@ -140,3 +147,4 @@ public final class ExperimentalCodecConfig {
         }
     }
 }
+

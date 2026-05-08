@@ -9,3 +9,4 @@ public interface OnAfterQueryConfig {
     void doOnBeforeQueryConfig(String KeyName);
     void doOnAfterQueryConfig(String KeyName,String Value);
 }
+

@@ -63,3 +63,4 @@ public class AutoSessionState {
         bindTarget("CQ", signalFormat, band, AutoSessionType.STANDARD);
     }
 }
+

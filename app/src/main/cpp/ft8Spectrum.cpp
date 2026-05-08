@@ -112,3 +112,4 @@ Java_com_bg7yoz_ft8cn_ui_SpectrumView_getFFTDataRawFloat(JNIEnv *env, jobject th
                                                          jfloatArray data, jintArray fft_data) {
     runFftWithFloatInput(env, data, fft_data, do_fftr_raw);
 }
+

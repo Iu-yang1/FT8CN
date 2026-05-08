@@ -37,3 +37,4 @@ public class FloatViewButton extends ImageButton {
         this.name = name;
     }
 }
+

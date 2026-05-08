@@ -17,3 +17,4 @@ public interface OnDoTransmitted {
     boolean supportTransmitOverCAT();
     void onTransmitOverCAT(Ft8Message message);
 }
+

@@ -69,3 +69,4 @@ public class RigNameSpinnerAdapter extends BaseAdapter {
         return view;
     }
 }
+

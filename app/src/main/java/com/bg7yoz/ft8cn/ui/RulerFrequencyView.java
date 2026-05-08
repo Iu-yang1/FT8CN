@@ -121,3 +121,4 @@ public class RulerFrequencyView extends View {
         this.postInvalidate();
     }
 }
+

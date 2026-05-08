@@ -34,3 +34,4 @@ void ft4_encode(const uint8_t* payload, uint8_t* tones);
 void ftx_encode_174(const uint8_t* message, uint8_t* codeword);
 
 #endif // _INCLUDE_ENCODE_H_
+

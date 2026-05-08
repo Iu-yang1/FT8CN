@@ -24,3 +24,4 @@ public interface OnAudioRecorded {
      */
     void endAudioRecorded(String audioFileName,long dataSize,float duration);
 }
+

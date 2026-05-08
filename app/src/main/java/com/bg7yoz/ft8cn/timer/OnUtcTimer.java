@@ -12,3 +12,4 @@ public interface OnUtcTimer {
     void doHeartBeatTimer(long utc);//心跳回调，在触发器每一个循环时触发，心跳的只处理简单事务，不要过多占用CPU，防止线程叠加
     void doOnSecTimer(long utc);//当指定的时间间隔时触发
 }
+

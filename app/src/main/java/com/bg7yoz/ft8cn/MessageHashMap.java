@@ -53,3 +53,4 @@ public class MessageHashMap extends HashMap<Long,String> {
         return "<...>";
     }
 }
+

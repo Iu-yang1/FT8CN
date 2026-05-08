@@ -290,3 +290,4 @@ public class IcomRig extends BaseRig {
         startMeterTimer();
     }
 }
+

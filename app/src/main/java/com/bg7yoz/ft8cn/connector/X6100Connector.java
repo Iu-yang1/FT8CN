@@ -281,3 +281,4 @@ public class X6100Connector extends BaseRigConnector {
         return xieguRadio;
     }
 }
+

@@ -8,3 +8,4 @@ public enum VitaPacketType {
     IF_CONTEXT,//IF Context packet(see Section 7)
     EXT_CONTEXT//Extension Context packet(see Section 7);
 }
+

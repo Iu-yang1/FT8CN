@@ -10,3 +10,4 @@ import java.util.ArrayList;
 public interface OnQueryQSLRecordCallsign {
      void afterQuery(ArrayList<QSLRecordStr> records);
 }
+

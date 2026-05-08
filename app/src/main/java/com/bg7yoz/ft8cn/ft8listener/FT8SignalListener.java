@@ -1061,3 +1061,4 @@ public class FT8SignalListener {
                                              boolean enableWidebandDxSearch);
     // Native only receives a tiny hint set here; the AP logic still lives in the deep fallback path.
 }
+

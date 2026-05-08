@@ -47,3 +47,4 @@ void monitor_init(monitor_t *me, const monitor_config_t *cfg);
 void monitor_free(monitor_t* me);
 void monitor_process(monitor_t *me, const float *frame);
 void monitor_reset(monitor_t *me);
+

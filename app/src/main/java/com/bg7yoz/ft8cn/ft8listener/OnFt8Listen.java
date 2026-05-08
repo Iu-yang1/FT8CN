@@ -34,3 +34,4 @@ public interface OnFt8Listen {
      */
     void afterDecodeFinished(long utc, long decodeDurationMs);
 }
+

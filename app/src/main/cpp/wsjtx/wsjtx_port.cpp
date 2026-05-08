@@ -1769,3 +1769,4 @@ void wsjtx_port_subtract_signal(decoder_t *decoder,
 
     subtract_ftx_signal(state, payload, sample_rate, frequency, time_sec, mode);
 }
+

@@ -11,3 +11,4 @@ public interface BluetoothSerialListener {
     void onSerialRead         (byte[] data);
     void onSerialIoError      (Exception e);
 }
+

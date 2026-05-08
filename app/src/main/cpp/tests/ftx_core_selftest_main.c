@@ -8,3 +8,4 @@ int main(void) {
     fputs(report, stdout);
     return rc == 0 ? 0 : 1;
 }
+
