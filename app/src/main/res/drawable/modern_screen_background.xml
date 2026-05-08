@@ -1,14 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <padding
-        android:bottom="1dp"
-        android:left="3dp"
-        android:right="3dp"
-        android:top="1dp" />
-
     <gradient
         android:angle="270"
-        android:startColor="@color/welcome_layout_ground_color"
+        android:startColor="#FFF4F7F6"
         android:centerColor="#FFF9FCFB"
         android:endColor="#FFEAF5F2"
         android:type="linear" />
