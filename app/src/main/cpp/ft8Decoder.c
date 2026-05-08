@@ -279,6 +279,18 @@ void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep) {
     }
 
     int iterations = is_deep ? deep_kLDPC_iterations : fast_kLDPC_iterations;
+    decoder_set_ldpc_iterations_value(decoder, iterations);
+}
+
+void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations) {
+    if (decoder == NULL) {
+        return;
+    }
+
+    if (iterations < 1) {
+        iterations = 1;
+    }
+
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         wsjtx_port_set_ldpc_iterations(decoder, iterations);
         return;

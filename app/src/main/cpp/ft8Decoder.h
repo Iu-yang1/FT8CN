@@ -73,6 +73,7 @@ ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder);
 void decoder_ft8_reset(decoder_t *decoder, long utcTime, int num_samples);
 void decoder_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]);
 void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep);
+void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations);
 void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
 void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
 bool decoder_owns_session_flow(decoder_t *decoder);
