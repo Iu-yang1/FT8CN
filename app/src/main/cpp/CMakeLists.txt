@@ -3,13 +3,13 @@ cmake_minimum_required(VERSION 3.18.1)
 project("ft8cn")
 
 add_library(
-        ft8cn
-        SHARED
+        ftx_core
+        STATIC
 
-        generate_ft8.cpp
-        ft8Listener.cpp
-        ft8Spectrum.cpp
-        experimentalCodec.cpp
+        ftx_core/ftx_decoder_api.c
+        ftx_core/ftx_encoder_api.c
+        ftx_core/ftx_selftest.c
+
         wsjtx/session_plan.cpp
         wsjtx/wsjtx_port.cpp
 
@@ -30,7 +30,24 @@ add_library(
         ft8Decoder.c
         ft8Encoder.c
         spectrum_data.c
+)
+
+add_library(
+        radio_experimental
+        STATIC
+
         experimental/experimental_modem.c
+)
+
+add_library(
+        ft8cn
+        SHARED
+
+        generate_ft8.cpp
+        diagnostics/ap_regression.cpp
+        ft8Listener.cpp
+        ft8Spectrum.cpp
+        experimentalCodec.cpp
 )
 
 find_library(
@@ -43,8 +60,29 @@ find_library(
         m
 )
 
+target_include_directories(
+        ftx_core
+        PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/ftx_core/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_include_directories(
+        radio_experimental
+        PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_include_directories(
+        ft8cn
+        PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 target_link_libraries(
         ft8cn
+        ftx_core
+        radio_experimental
         ${log-lib}
         ${m-lib}
 )

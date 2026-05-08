@@ -18,6 +18,8 @@ import com.bg7yoz.ft8cn.auto.AutoSessionState;
 import com.bg7yoz.ft8cn.auto.AutoSessionType;
 import com.bg7yoz.ft8cn.auto.AutoSessionUiPolicy;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
+import com.bg7yoz.ft8cn.cq.CallQueueManager;
+import com.bg7yoz.ft8cn.cq.CqCallEntry;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
 import com.bg7yoz.ft8cn.log.QSLRecord;
@@ -58,6 +60,7 @@ public class FT8TransmitSignal {
     private final Object transmitStateLock = new Object();
     private int lastTransmittedFunctionOrder = -1;
     private Ft8Message lastTransmittedMessage = null;
+    private MultiSlotTransmitPlan lastTransmitPlan = null;
     //防止立即发射时序竞争：记录上次发射尝试的周期索引，避免同一周期重复触发
     private long lastTransmitAttemptSequence = -1;
     // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
@@ -66,6 +69,7 @@ public class FT8TransmitSignal {
     private volatile long lastDecodeMessageUpdateMs = 0L;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
     public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();
+    public MutableLiveData<String> mutableDxpeditionFoxSlotStatus = new MutableLiveData<>();
     private long messageStartTime = 0;
     private long messageEndTime = 0;
     private String toMaidenheadGrid = "";
@@ -78,8 +82,11 @@ public class FT8TransmitSignal {
     private long foxSessionStartTimeMs = 0L;
     private int foxCallAttempts = 0;
     private int foxRr73Attempts = 0;
+    private int lastNoReplySequenceIndex = Integer.MIN_VALUE;
+    private String lastNoReplySessionKey = "";
     private final Object foxCandidateLock = new Object();
     private final ArrayList<DxpeditionFoxCandidate> dxpeditionFoxCandidates = new ArrayList<>();
+    private final DxpeditionFoxSlotScheduler foxSlotScheduler = new DxpeditionFoxSlotScheduler();
     private String lastFoxCompletedCallsign = "";
     private final AutoSessionState autoSession = new AutoSessionState();
     private final OnTransmitSuccess onTransmitSuccess;
@@ -89,6 +96,8 @@ public class FT8TransmitSignal {
     public UtcTimer utcTimer;
     public ArrayList<FunctionOfTransmit> functionList = new ArrayList<>();
     public MutableLiveData<ArrayList<FunctionOfTransmit>> mutableFunctions = new MutableLiveData<>();
+    private final CallQueueManager callQueueManager = new CallQueueManager();
+    public MutableLiveData<ArrayList<CqCallEntry>> mutableCqQueue = new MutableLiveData<>();
     private final OnDoTransmitted onDoTransmitted;
     private final ExecutorService doTransmitThreadPool = Executors.newCachedThreadPool();
     private final Observer<Float> volumePercentObserver = new Observer<Float>() {
@@ -105,6 +114,8 @@ public class FT8TransmitSignal {
         this.onDoTransmitted = doTransmitted;
         this.onTransmitSuccess = onTransmitSuccess;
         this.databaseOpr = databaseOpr;
+        callQueueManager.setDatabaseOpr(databaseOpr);
+        updateCqQueueSettings();
 
         setTransmitting(false);
         setActivated(false);
@@ -114,6 +125,10 @@ public class FT8TransmitSignal {
 
         buildUtcTimer();
         utcTimer.start();
+        foxSlotScheduler.setMaxTxSlots(GeneralVariables.dxpeditionFoxTxSlots);
+        foxSlotScheduler.setSpecialMessageEnabled(GeneralVariables.dxpeditionFoxAutoSpecialMessage);
+        foxSlotScheduler.setCqOnFreeSlotEnabled(GeneralVariables.dxpeditionFoxCqOnFreeSlot);
+        updateDxpeditionFoxSlotStatus();
         syncNoReplyCount();
     }
 
@@ -868,17 +883,83 @@ public class FT8TransmitSignal {
         pendingDxpeditionMacroTemplate = null;
     }
 
-    private void postTransmittingMessage(Ft8Message msg) {
-        mutableTransmittingMessage.postValue(String.format("[%s] (%.0fHz) %s",
-                GeneralVariables.getActiveModeLabel(),
-                GeneralVariables.getBaseFrequency(),
-                msg.getMessageText()));
+    private MultiSlotTransmitPlan buildTransmitPlan(int order) {
+        int currentMode = GeneralVariables.getSignalMode();
+        if (shouldUseFoxSlotScheduler()) {
+            MultiSlotTransmitPlan foxPlan = foxSlotScheduler.buildTransmitPlan(
+                    GeneralVariables.myCallsign,
+                    currentMode
+            );
+            if (!foxPlan.isEmpty()) {
+                return foxPlan;
+            }
+        }
+
+        Ft8Message msg = buildTransmitMessage(order);
+        float frequency = GeneralVariables.getBaseFrequency();
+        if (autoSession.isDxpeditionFox() && order != 6) {
+            frequency = DxpeditionFoxSlotFrequencyConfig.resolveSlotFrequency(0);
+        }
+        return MultiSlotTransmitPlan.single(msg, order, frequency, currentMode);
+    }
+
+    private boolean shouldUseFoxSlotScheduler() {
+        return isManualDxpeditionFoxEnabled()
+                && !transmitFreeText
+                && !hasPendingDxpeditionMacro()
+                && !isExperimentalManualTxMode();
+    }
+
+    private MultiSlotTransmitPlan enforceTransportLimit(MultiSlotTransmitPlan plan) {
+        if (plan == null || plan.size() <= 1) {
+            return plan;
+        }
+        boolean externalWaveTransport = GeneralVariables.connectMode == ConnectMode.NETWORK
+                || (GeneralVariables.controlMode == ControlMode.CAT
+                && onDoTransmitted != null
+                && onDoTransmitted.supportTransmitOverCAT());
+        if (!externalWaveTransport) {
+            return plan;
+        }
+
+        MultiSlotTransmitItem primary = plan.getPrimaryItem();
+        Log.w(TAG, "external wave transport supports single message only, use primary slot");
+        return MultiSlotTransmitPlan.single(
+                primary.message,
+                primary.functionOrder,
+                primary.frequencyHz,
+                plan.getSignalMode());
+    }
+
+    private void postTransmittingMessage(MultiSlotTransmitPlan plan) {
+        if (plan == null || plan.isEmpty()) {
+            return;
+        }
+        mutableTransmittingMessage.postValue(
+                plan.getDisplayText(GeneralVariables.getActiveModeLabel()));
     }
 
     private void rememberTransmitMessage(Ft8Message msg, int order) {
         lastTransmittedMessage = msg;
         lastTransmittedFunctionOrder = order;
+        lastTransmitPlan = MultiSlotTransmitPlan.single(
+                msg,
+                order,
+                GeneralVariables.getBaseFrequency(),
+                GeneralVariables.getSignalMode());
+        rememberTransmitCounters(order);
+    }
 
+    private void rememberTransmitPlan(MultiSlotTransmitPlan plan, int fallbackOrder) {
+        lastTransmitPlan = plan;
+        Ft8Message primaryMessage = plan == null ? null : plan.getPrimaryMessage();
+        int primaryOrder = plan == null ? fallbackOrder : plan.getPrimaryFunctionOrder(fallbackOrder);
+        lastTransmittedMessage = primaryMessage;
+        lastTransmittedFunctionOrder = primaryOrder;
+        rememberTransmitCounters(primaryOrder);
+    }
+
+    private void rememberTransmitCounters(int order) {
         if (autoSession.isDxpeditionHound()) {
             if (order == 3) {
                 houndTx3SentCount++;
@@ -921,9 +1002,24 @@ public class FT8TransmitSignal {
         if (onDoTransmitted == null) {
             return;
         }
+        if (lastTransmitPlan != null && !lastTransmitPlan.isEmpty()) {
+            for (MultiSlotTransmitItem item : lastTransmitPlan.getItems()) {
+                onDoTransmitted.onAfterTransmit(item.message, item.functionOrder);
+            }
+            return;
+        }
         Ft8Message message = getAfterTransmitMessage(order);
         if (message != null) {
             onDoTransmitted.onAfterTransmit(message, order);
+        }
+    }
+
+    private void notifyBeforeTransmit(MultiSlotTransmitPlan plan) {
+        if (onDoTransmitted == null || plan == null || plan.isEmpty()) {
+            return;
+        }
+        for (MultiSlotTransmitItem item : plan.getItems()) {
+            onDoTransmitted.onBeforeTransmit(item.message, item.functionOrder);
         }
     }
 
@@ -971,16 +1067,27 @@ public class FT8TransmitSignal {
         }
     }
 
-    private void playFT8Signal(Ft8Message msg) {
-        final int currentMode = GeneralVariables.getSignalMode();
+    private void playTransmitPlan(MultiSlotTransmitPlan plan) {
+        if (plan == null || plan.isEmpty()) {
+            afterPlayAudio();
+            return;
+        }
+
+        final int currentMode = plan.getSignalMode();
         final int currentSlotMs = FT8Common.getSlotTimeMillisecond(currentMode);
         final int currentSampleRate = GeneralVariables.audioSampleRate;
+        final MultiSlotTransmitItem primaryItem = plan.getPrimaryItem();
+        final Ft8Message primaryMessage = primaryItem.message;
 
         if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
             Log.d(TAG, "playFT8Signal: start network audio transmit");
 
             if (onDoTransmitted != null) {
-                onDoTransmitted.onTransmitByWifi(msg);
+                if (plan.size() > 1) {
+                    Log.w(TAG, "network transmit supports single message only, use primary slot");
+                }
+                setRuntimeBaseFrequency(primaryItem.frequencyHz);
+                onDoTransmitted.onTransmitByWifi(primaryMessage);
             }
 
             waitForTransmitCompletion(currentSlotMs - 200L);
@@ -995,7 +1102,11 @@ public class FT8TransmitSignal {
 
             if (onDoTransmitted != null) {
                 if (onDoTransmitted.supportTransmitOverCAT()) {
-                    onDoTransmitted.onTransmitOverCAT(msg);
+                    if (plan.size() > 1) {
+                        Log.w(TAG, "CAT wave transmit supports single message only, use primary slot");
+                    }
+                    setRuntimeBaseFrequency(primaryItem.frequencyHz);
+                    onDoTransmitted.onTransmitOverCAT(primaryMessage);
 
                     waitForTransmitCompletion(currentSlotMs - 200L);
                     Log.d(TAG, "playFT8Signal: transmitting over CAT is finished.");
@@ -1006,13 +1117,7 @@ public class FT8TransmitSignal {
         }
 
         //进入声卡模式
-        float[] buffer;
-        buffer = GenerateFTx.generateFtX(
-                msg,
-                GeneralVariables.getBaseFrequency(),
-                GeneralVariables.audioSampleRate,
-                GeneralVariables.getSignalMode()
-        );
+        float[] buffer = MultiSlotAudioMixer.build(plan, GeneralVariables.audioSampleRate);
         if (buffer == null) {
             afterPlayAudio();
             return;
@@ -1096,6 +1201,12 @@ public class FT8TransmitSignal {
                 ? lastTransmittedFunctionOrder
                 : functionOrder;
         notifyAfterTransmit(transmittedOrder);
+        ArrayList<DxpeditionFoxSlotScheduler.CompletedContact> completedContacts =
+                foxSlotScheduler.markTransmitted(lastTransmitPlan);
+        for (DxpeditionFoxSlotScheduler.CompletedContact contact : completedContacts) {
+            doCompleteDxpeditionFoxContact(contact);
+        }
+        updateDxpeditionFoxSlotStatus();
         clearPendingDxpeditionMacro();
 
         // 【优化】先释放音频资源再更新状态，确保资源及时回收
@@ -1168,6 +1279,38 @@ public class FT8TransmitSignal {
         }
     }
 
+    private void doCompleteDxpeditionFoxContact(DxpeditionFoxSlotScheduler.CompletedContact contact) {
+        if (contact == null || contact.callsign == null || contact.callsign.length() == 0) {
+            return;
+        }
+
+        lastFoxCompletedCallsign = normalizeCallsignToken(contact.callsign);
+        long startTime = messageStartTime == 0 ? UtcTimer.getSystemTime() : messageStartTime;
+        long endTime = UtcTimer.getSystemTime();
+        String grid = GeneralVariables.getGridByCallsign(contact.callsign, databaseOpr);
+        int received = contact.receivedReport != -100 ? contact.receivedReport : receivedReport;
+
+        if (onTransmitSuccess != null) {
+            onTransmitSuccess.doAfterTransmit(new QSLRecord(
+                    startTime,
+                    endTime,
+                    GeneralVariables.myCallsign,
+                    GeneralVariables.getMyMaidenhead4Grid(),
+                    contact.callsign,
+                    grid,
+                    contact.sentReport,
+                    received,
+                    FT8Common.modeToString(GeneralVariables.getSignalMode()),
+                    GeneralVariables.band,
+                    Math.round(contact.frequencyHz)
+            ));
+            GeneralVariables.addQSLCallsign(contact.callsign);
+            ToastMessage.show(String.format("QSO : %s , at %s",
+                    contact.callsign,
+                    BaseRigOperation.getFrequencyAllInfo(GeneralVariables.band)));
+        }
+    }
+
     public void setCurrentFunctionOrder(int order) {
         order = AutoSessionUiPolicy.sanitizeFunctionOrder(
                 autoSession.getSessionType(),
@@ -1208,10 +1351,15 @@ public class FT8TransmitSignal {
     }
 
     public String getAutoSessionStatusText() {
-        if (autoSession.isDxpeditionFox() && isManualDxpeditionFoxEnabled()) {
-            return GeneralVariables.getStringFromResource(R.string.dxpedition_fox_status);
+        if (isManualDxpeditionFoxEnabled()) {
+            return GeneralVariables.getStringFromResource(R.string.dxpedition_fox_status)
+                    + " / " + foxSlotScheduler.getStatusText();
         }
         if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
+            int cqQueueSize = callQueueManager.size();
+            if (GeneralVariables.cqQueueEnabled && cqQueueSize > 0) {
+                return String.format("CQ队列 %d", cqQueueSize);
+            }
             return "";
         }
         if (autoSession.isDxpeditionHound()) {
@@ -1238,9 +1386,46 @@ public class FT8TransmitSignal {
         return isManualDxpeditionFoxEnabled();
     }
 
+    public int getDxpeditionFoxTxSlots() {
+        return foxSlotScheduler.getMaxTxSlots();
+    }
+
+    public String getDxpeditionFoxSlotFrequencyLabel() {
+        return DxpeditionFoxSlotFrequencyConfig.getModeLabel();
+    }
+
+    public String getDxpeditionFoxSlotFrequencyPreview() {
+        return DxpeditionFoxSlotFrequencyConfig.buildPreview(getDxpeditionFoxTxSlots());
+    }
+
+    public void setDxpeditionFoxTxSlots(int slots) {
+        int sanitized = DxpeditionFoxSlotScheduler.clampTxSlots(slots);
+        GeneralVariables.dxpeditionFoxTxSlots = sanitized;
+        foxSlotScheduler.setMaxTxSlots(sanitized);
+        updateDxpeditionFoxSlotStatus();
+    }
+
+    public void setDxpeditionFoxSlotFrequencyConfig(boolean manual, int startHz, int stepHz) {
+        DxpeditionFoxSlotFrequencyConfig.setManual(manual, startHz, stepHz);
+        updateDxpeditionFoxSlotStatus();
+    }
+
+    public String getDxpeditionFoxSlotStatusText() {
+        if (!isManualDxpeditionFoxEnabled()) {
+            return "";
+        }
+        return foxSlotScheduler.getStatusText();
+    }
+
+    private void updateDxpeditionFoxSlotStatus() {
+        mutableDxpeditionFoxSlotStatus.postValue(getDxpeditionFoxSlotStatusText());
+    }
+
     public void refreshSessionModeByCurrentTarget() {
         if (toCallsign == null) {
             autoSession.resetToCq(GeneralVariables.getSignalMode(), GeneralVariables.band);
+            foxSlotScheduler.clear();
+            updateDxpeditionFoxSlotStatus();
             resetDxpeditionCountersForNewTarget(AutoSessionType.STANDARD, null, 6);
             syncNoReplyCount();
             generateFun();
@@ -1254,6 +1439,10 @@ public class FT8TransmitSignal {
                 GeneralVariables.band,
                 resolveBoundSessionType(toCallsign)
         );
+        if (!autoSession.isDxpeditionFox()) {
+            foxSlotScheduler.clear();
+        }
+        updateDxpeditionFoxSlotStatus();
         resetDxpeditionCountersForNewTarget(autoSession.getSessionType(), toCallsign, functionOrder);
         generateFun();
         mutableFunctionOrder.postValue(functionOrder);
@@ -1407,6 +1596,148 @@ public class FT8TransmitSignal {
                 && !GeneralVariables.checkIsMyCallsign(msg.getAutoReplyCallsignTo());
     }
 
+    public void updateCqQueueSettings() {
+        callQueueManager.configure(
+                GeneralVariables.cqMaxQueueSize,
+                GeneralVariables.cqRankMethod,
+                GeneralVariables.cqDirectedCqPrefixes
+        );
+        publishCqQueue();
+    }
+
+    public int getCqQueueSize() {
+        return callQueueManager.size();
+    }
+
+    public ArrayList<CqCallEntry> getCqQueueSnapshot() {
+        return callQueueManager.snapshot();
+    }
+
+    public void clearCqQueue() {
+        callQueueManager.clear();
+        publishCqQueue();
+    }
+
+    public boolean removeCqQueueEntry(String callsign) {
+        boolean removed = callQueueManager.remove(callsign);
+        publishCqQueue();
+        return removed;
+    }
+
+    public boolean promoteCqQueueEntry(String callsign) {
+        boolean promoted = callQueueManager.promote(callsign);
+        publishCqQueue();
+        return promoted;
+    }
+
+    public boolean startCqQueueEntryNow(String callsign) {
+        updateCqQueueSettings();
+        CqCallEntry entry = callQueueManager.poll(callsign);
+        publishCqQueue();
+        if (!prepareCqQueueEntry(entry)) {
+            return false;
+        }
+        setActivated(true);
+        return true;
+    }
+
+    @SuppressLint("DefaultLocale")
+    public String getCqQueueNowText() {
+        TransmitCallsign target = toCallsign;
+        if (target == null || !target.haveTargetCallsign()) {
+            return "CQ";
+        }
+        String frequency = target.frequency > 0
+                ? String.format(" %.0fHz", target.frequency)
+                : "";
+        return String.format("%s TX%d%s NR%d",
+                target.callsign,
+                functionOrder,
+                frequency,
+                autoSession.getNoReplyCount());
+    }
+
+    private void publishCqQueue() {
+        mutableCqQueue.postValue(callQueueManager.snapshot());
+    }
+
+    private void ingestCqQueue(ArrayList<Ft8Message> messages) {
+        updateCqQueueSettings();
+        if (!GeneralVariables.cqQueueEnabled) {
+            callQueueManager.clear();
+            publishCqQueue();
+            return;
+        }
+        if (messages == null || messages.size() == 0) {
+            return;
+        }
+        if (callQueueManager.addCandidates(messages) > 0) {
+            publishCqQueue();
+        } else {
+            publishCqQueue();
+        }
+    }
+
+    private boolean startNextCqFromQueue() {
+        if (!GeneralVariables.cqQueueEnabled || !GeneralVariables.autoCallFollow) {
+            return false;
+        }
+        updateCqQueueSettings();
+        CqCallEntry entry = null;
+        while (entry == null) {
+            CqCallEntry candidate = callQueueManager.pollNext();
+            if (candidate == null) {
+                publishCqQueue();
+                return false;
+            }
+            if (GeneralVariables.checkIsExcludeCallsign(candidate.callsign)
+                    || GeneralVariables.checkQSLCallsign(candidate.callsign)
+                    || (!GeneralVariables.autoFollowCQ && !candidate.followed && !candidate.directed && !candidate.manual)) {
+                continue;
+            }
+            entry = candidate;
+        }
+        publishCqQueue();
+        return prepareCqQueueEntry(entry);
+    }
+
+    private boolean prepareCqQueueEntry(CqCallEntry entry) {
+        if (entry == null || entry.message == null) {
+            return false;
+        }
+        resetTargetReport();
+        setTransmit(new TransmitCallsign(
+                        entry.message.i3,
+                        entry.message.n3,
+                        entry.callsign,
+                        entry.freqHz,
+                        entry.sequence,
+                        entry.snr),
+                1,
+                entry.message.getAutoReplyExtraInfo());
+        return true;
+    }
+
+    private boolean startImmediateCqFromMessages(ArrayList<Ft8Message> messages) {
+        for (Ft8Message msg : messages) {
+            if (isExcludeMessage(msg)) continue;
+
+            if ((msg.checkIsCQ()
+                    && ((GeneralVariables.autoCallFollow && GeneralVariables.autoFollowCQ)
+                    || GeneralVariables.callsignInFollow(msg.getCallsignFrom()))
+                    && !GeneralVariables.checkQSLCallsign(msg.getCallsignFrom())
+                    && !GeneralVariables.checkIsMyCallsign(msg.callsignFrom))) {
+
+                resetTargetReport();
+                setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
+                        , msg.getSequence(), msg.snr), 1, msg.extraInfo);
+
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean checkCQMeOrFollowCQMessage(ArrayList<Ft8Message> messages) {
 
         for (Ft8Message msg : messages) {
@@ -1452,24 +1783,11 @@ public class FT8TransmitSignal {
             return false;
         }
 
-        for (Ft8Message msg : messages) {
-            if (isExcludeMessage(msg)) continue;
-
-            if ((msg.checkIsCQ()
-                    && ((GeneralVariables.autoCallFollow && GeneralVariables.autoFollowCQ)
-                    || GeneralVariables.callsignInFollow(msg.getCallsignFrom()))
-                    && !GeneralVariables.checkQSLCallsign(msg.getCallsignFrom())
-                    && !GeneralVariables.checkIsMyCallsign(msg.callsignFrom))) {
-
-                resetTargetReport();
-                setTransmit(new TransmitCallsign(msg.i3, msg.n3, msg.getCallsignFrom(), msg.freq_hz
-                        , msg.getSequence(), msg.snr), 1, msg.extraInfo);
-
-                return true;
-            }
+        if (startNextCqFromQueue()) {
+            return true;
         }
 
-        return false;
+        return startImmediateCqFromMessages(messages);
     }
 
     private boolean isDxpeditionFoxInitialCall(Ft8Message msg) {
@@ -1543,6 +1861,35 @@ public class FT8TransmitSignal {
             return;
         }
 
+        foxSlotScheduler.setMaxTxSlots(GeneralVariables.dxpeditionFoxTxSlots);
+        foxSlotScheduler.setSpecialMessageEnabled(GeneralVariables.dxpeditionFoxAutoSpecialMessage);
+        foxSlotScheduler.setCqOnFreeSlotEnabled(GeneralVariables.dxpeditionFoxCqOnFreeSlot);
+        foxSlotScheduler.ingestMessages(messages, GeneralVariables.myCallsign);
+        if (foxSlotScheduler.hasWork()) {
+            TransmitCallsign primary = foxSlotScheduler.getPrimaryTransmitCallsign();
+            if (primary != null) {
+                toCallsign = primary;
+                mutableToCallsign.postValue(toCallsign);
+                sequential = (primary.sequential + 1) % 2;
+                autoSession.bindTarget(
+                        primary.callsign,
+                        GeneralVariables.getSignalMode(),
+                        GeneralVariables.band,
+                        AutoSessionType.FT8_DXPEDITION_FOX
+                );
+                functionOrder = foxSlotScheduler.getPrimaryFunctionOrder();
+                if (foxSessionStartTimeMs == 0L) {
+                    foxSessionStartTimeMs = UtcTimer.getSystemTime();
+                }
+                generateFun();
+                mutableSequential.postValue(sequential);
+                mutableFunctionOrder.postValue(functionOrder);
+                updateDxpeditionFoxSlotStatus();
+            }
+            return;
+        }
+        updateDxpeditionFoxSlotStatus();
+
         Ft8Message targetReply = findFoxTargetReply(messages);
 
         if (toCallsign.haveTargetCallsign() && functionOrder != 6) {
@@ -1573,10 +1920,7 @@ public class FT8TransmitSignal {
                 return;
             }
 
-            if (hasCurrentSessionActivity(messages)) {
-                autoSession.increaseNoReplyCount();
-                syncNoReplyCount();
-            }
+            increaseNoReplyCountForSlot(messages);
 
             boolean timeout = foxCallAttempts >= 3 || foxRr73Attempts >= 3;
             if (foxSessionStartTimeMs > 0
@@ -1672,6 +2016,7 @@ public class FT8TransmitSignal {
         }
         if (msgList == null || msgList.size() == 0) {
             if (isManualDxpeditionFoxEnabled()
+                    && !foxSlotScheduler.hasWork()
                     && functionOrder == 4
                     && lastTransmittedFunctionOrder == 4) {
                 resetToCQ();
@@ -1689,6 +2034,7 @@ public class FT8TransmitSignal {
         ArrayList<Ft8Message> messages = filterAutoMessages(new ArrayList<>(msgList));
         if (messages.size() == 0) {
             if (isManualDxpeditionFoxEnabled()
+                    && !foxSlotScheduler.hasWork()
                     && functionOrder == 4
                     && lastTransmittedFunctionOrder == 4) {
                 resetToCQ();
@@ -1707,6 +2053,8 @@ public class FT8TransmitSignal {
             parseDxpeditionFoxMessages(messages);
             return;
         }
+
+        ingestCqQueue(messages);
 
         int newOrder = checkFunctionOrdFromMessages(messages);
         if (newOrder != -1) {
@@ -1762,10 +2110,7 @@ public class FT8TransmitSignal {
             return;
         }
 
-        if (hasCurrentSessionActivity(messages)) {
-            autoSession.increaseNoReplyCount();
-            syncNoReplyCount();
-        }
+        increaseNoReplyCountForSlot(messages);
 
         if ((autoSession.getNoReplyCount() > GeneralVariables.noReplyLimit) && (GeneralVariables.noReplyLimit > 0)) {
             if (!getNewTargetCallsign(messages)) {
@@ -1823,8 +2168,52 @@ public class FT8TransmitSignal {
         return false;
     }
 
+    private int latestStrongSequenceIndex(ArrayList<Ft8Message> messages) {
+        int result = Integer.MIN_VALUE;
+        if (messages == null) {
+            return result;
+        }
+        for (Ft8Message msg : messages) {
+            if (msg == null || msg.isWeakSignal) {
+                continue;
+            }
+            result = Math.max(result, msg.getFullSequenceIndex());
+        }
+        return result;
+    }
+
+    private void increaseNoReplyCountForSlot(ArrayList<Ft8Message> messages) {
+        if (!hasCurrentSessionActivity(messages)) {
+            return;
+        }
+        int sequenceIndex = latestStrongSequenceIndex(messages);
+        if (sequenceIndex == Integer.MIN_VALUE) {
+            return;
+        }
+        String target = normalizeCallsignToken(autoSession.getTargetCallsign());
+        if (target.length() == 0 || "CQ".equals(target)) {
+            return;
+        }
+        String sessionKey = autoSession.getSessionType()
+                + "|" + autoSession.getSignalFormat()
+                + "|" + autoSession.getBand()
+                + "|" + target;
+        if (sequenceIndex == lastNoReplySequenceIndex
+                && sessionKey.equals(lastNoReplySessionKey)) {
+            return;
+        }
+        lastNoReplySequenceIndex = sequenceIndex;
+        lastNoReplySessionKey = sessionKey;
+        autoSession.increaseNoReplyCount();
+        syncNoReplyCount();
+    }
+
     public boolean getNewTargetCallsign(ArrayList<Ft8Message> messages) {
         if (toCallsign == null) return false;
+        if (!GeneralVariables.autoCallFollow) return false;
+        if (startNextCqFromQueue()) {
+            return true;
+        }
         for (Ft8Message ft8Message : messages) {
             if (!ft8Message.isAutoFlowRelevant()) continue;
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;
@@ -1911,6 +2300,8 @@ public class FT8TransmitSignal {
         lastTransmittedFunctionOrder = -1;
         clearPendingDxpeditionMacro();
         deactivateAfterManualDxpeditionMacro = false;
+        foxSlotScheduler.clear();
+        updateDxpeditionFoxSlotStatus();
         autoSession.resetToCq(GeneralVariables.getSignalMode(), GeneralVariables.band);
         resetDxpeditionCountersForNewTarget(AutoSessionType.STANDARD, null, 6);
         syncNoReplyCount();
@@ -2019,22 +2410,21 @@ public class FT8TransmitSignal {
             }
 
             int transmitOrder = transmitSignal.functionOrder;
-            Ft8Message msg;
+            MultiSlotTransmitPlan plan;
             try {
                 transmitSignal.applyDxpeditionFrequencyPolicyForOrder(transmitOrder);
                 transmitSignal.updateMessageStartTimeForOrder(transmitOrder);
-                msg = transmitSignal.buildTransmitMessage(transmitOrder);
-                transmitSignal.rememberTransmitMessage(msg, transmitOrder);
-                if (transmitSignal.onDoTransmitted != null) {
-                    transmitSignal.onDoTransmitted.onBeforeTransmit(msg, transmitOrder);
-                }
-                transmitSignal.postTransmittingMessage(msg);
+                plan = transmitSignal.buildTransmitPlan(transmitOrder);
+                plan = transmitSignal.enforceTransportLimit(plan);
+                transmitSignal.rememberTransmitPlan(plan, transmitOrder);
+                transmitSignal.notifyBeforeTransmit(plan);
+                transmitSignal.postTransmittingMessage(plan);
             } catch (RuntimeException e) {
                 Log.e(TAG, "DoTransmitRunnable: failed to build final transmit message", e);
                 transmitSignal.afterPlayAudio();
                 return;
             }
-            transmitSignal.playFT8Signal(msg);
+            transmitSignal.playTransmitPlan(plan);
         }
     }
 }

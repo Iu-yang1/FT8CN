@@ -19,8 +19,11 @@ import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.google.android.gms.maps.model.LatLng;
 
 import java.text.SimpleDateFormat;
+import java.util.Locale;
 
 public class Ft8Message {
+    private static final float DECODE_MERGE_FREQUENCY_TOLERANCE_HZ = 20f;
+
     private static final String TAG = "Ft8Message";
 
     public int i3 = 0;
@@ -86,6 +89,7 @@ public class Ft8Message {
     public LatLng toLatLng = null;
 
     public boolean isWeakSignal = false;
+    public boolean isTransmitMessage = false;
 
     @NonNull
     @SuppressLint({"SimpleDateFormat", "DefaultLocale"})
@@ -175,6 +179,7 @@ public class Ft8Message {
             score = message.score;
             band = message.band;
             isWeakSignal = message.isWeakSignal;
+            isTransmitMessage = message.isTransmitMessage;
 
             messageHash = message.messageHash;
 
@@ -266,6 +271,85 @@ public class Ft8Message {
             return "*" + getMessageText();
         } else {
             return getMessageText();
+        }
+    }
+
+    private String normalizeDecodedMessageText() {
+        return getMessageText()
+                .replace("*", "")
+                .trim()
+                .replaceAll("\\s+", " ")
+                .toUpperCase(Locale.US);
+    }
+
+    private String getDecodedMessageTextKey() {
+        return signalFormat + "|" + normalizeDecodedMessageText();
+    }
+
+    private boolean hasDecodeFrequency() {
+        return freq_hz > 0.01f;
+    }
+
+    private boolean isSameDecodedFrequency(Ft8Message other) {
+        if (other == null) {
+            return false;
+        }
+        if (!hasDecodeFrequency() || !other.hasDecodeFrequency()) {
+            return true;
+        }
+        return Math.abs(freq_hz - other.freq_hz) <= DECODE_MERGE_FREQUENCY_TOLERANCE_HZ;
+    }
+
+    public String getDecodedMessageKey() {
+        if (isTransmitMessage) {
+            return signalFormat + "|TX|"
+                    + Math.round(freq_hz) + "|"
+                    + normalizeDecodedMessageText();
+        }
+        return getDecodedMessageTextKey();
+    }
+
+    public String getSlotDecodedMessageKey() {
+        return getFullSequenceIndex() + "|" + getDecodedMessageKey();
+    }
+
+    public boolean isSameDecodedMessage(Ft8Message other) {
+        if (other == null) {
+            return false;
+        }
+        if (isTransmitMessage || other.isTransmitMessage) {
+            return getDecodedMessageKey().equals(other.getDecodedMessageKey());
+        }
+        return getDecodedMessageTextKey().equals(other.getDecodedMessageTextKey())
+                && isSameDecodedFrequency(other);
+    }
+
+    public boolean isSameSlotDecodedMessage(Ft8Message other) {
+        return other != null
+                && getFullSequenceIndex() == other.getFullSequenceIndex()
+                && isSameDecodedMessage(other);
+    }
+
+    public void mergeDecodeQualityFrom(Ft8Message other) {
+        if (other == null) {
+            return;
+        }
+
+        boolean thisHasDecodeMetrics = freq_hz > 0.01f;
+        boolean otherHasDecodeMetrics = other.freq_hz > 0.01f;
+        boolean preferOtherTiming = !other.isWeakSignal || other.score >= score;
+        isWeakSignal = isWeakSignal && other.isWeakSignal;
+        if ((!thisHasDecodeMetrics && otherHasDecodeMetrics) || other.snr > snr) {
+            snr = other.snr;
+        }
+        if (other.score > score) {
+            score = other.score;
+        }
+        if ((!thisHasDecodeMetrics && otherHasDecodeMetrics) || preferOtherTiming) {
+            time_sec = other.time_sec;
+            if (otherHasDecodeMetrics || !thisHasDecodeMetrics) {
+                freq_hz = other.freq_hz;
+            }
         }
     }
 

@@ -784,18 +784,9 @@ static int pack77_euvhf(const char *msg, uint8_t *c77)
 // into a 28-bit integer.
 int32_t pack28(const char* callsign)
 {
-    if (token_equals(callsign, "DE"))
-        return 0;
-    if (token_equals(callsign, "QRZ"))
-        return 1;
-    if (token_equals(callsign, "CQ"))
-        return 2;
-
-    // Check for special tokens first
-    if (starts_with(callsign, "DE "))
-        return 0;
-    if (starts_with(callsign, "QRZ "))
-        return 1;
+    // Check for CQ modifiers before the plain "CQ" token. token_equals()
+    // intentionally compares only the first blank-delimited token, so
+    // pack28("CQ DX") would otherwise be encoded as ordinary CQ and lose DX.
     if (starts_with(callsign, "CQ_") || starts_with(callsign, "CQ "))
     {
         const char* modifier = callsign + 3;
@@ -812,6 +803,18 @@ int32_t pack28(const char* callsign)
             return pack_cq_modifier(token);
         }
     }
+
+    // Check for special tokens.
+    if (token_equals(callsign, "DE"))
+        return 0;
+    if (token_equals(callsign, "QRZ"))
+        return 1;
+    if (token_equals(callsign, "CQ"))
+        return 2;
+    if (starts_with(callsign, "DE "))
+        return 0;
+    if (starts_with(callsign, "QRZ "))
+        return 1;
 
     char bracketed[16];
     if (extract_bracketed_callsign(callsign, bracketed, sizeof(bracketed)))
@@ -841,10 +844,14 @@ int32_t pack28(const char* callsign)
 // Check if a string could be a valid standard callsign or a valid
 // compound callsign.
 // Return base call "bc" and a logical "cok" indicator.
+// This mirrors the gating rules in WSJT-X chkcall.f90: a valid base call
+// must be at most 6 characters, have a digit in position 2 or 3, and have
+// a 1-3 letter suffix after that digit. Ordinary words such as "FREE" and
+// "TEXT" must fail here so that pack77() can fall back to true free text.
 bool chkcall(const char* call, char* bc)
 {
     int length = strlen(call); // n1=len_trim(w)
-    if (length > 11)
+    if (length == 0 || length > 11)
         return false;
     if (0 != strchr(call, '.'))
         return false;
@@ -854,41 +861,73 @@ bool chkcall(const char* call, char* bc)
         return false;
     if (0 != strchr(call, '?'))
         return false;
-
-    char token[16];
-    if (length >= (int)sizeof(token))
+    if (length > 6 && 0 == strchr(call, '/'))
         return false;
-    strcpy(token, call);
 
-    char* save_ptr = 0;
-    char* segment = strtok_r(token, "/", &save_ptr);
-    char best[16] = { 0 };
-    size_t best_len = 0;
+    const char* slash = strchr(call, '/');
+    const char* base_start = call;
+    int base_len = length;
 
-    while (segment != 0)
+    if (slash != 0)
     {
-        if (*segment != '\0')
-        {
-            if (pack_standard_callsign(segment) >= 0)
-            {
-                strcpy(bc, segment);
-                return true;
-            }
+        int before_len = (int)(slash - call);
+        int after_len = length - before_len - 1;
+        if (before_len <= 0 || after_len <= 0)
+            return false;
+        if (before_len > 6 || after_len > 6)
+            return false;
 
-            size_t seg_len = strlen(segment);
-            if (seg_len > best_len)
-            {
-                best_len = seg_len;
-                strcpy(best, segment);
-            }
+        if (before_len <= after_len)
+        {
+            base_start = slash + 1;
+            base_len = after_len;
         }
-        segment = strtok_r(0, "/", &save_ptr);
+        else
+        {
+            base_start = call;
+            base_len = before_len;
+        }
     }
 
-    if (best_len == 0)
+    if (base_len <= 0 || base_len > 6)
         return false;
 
-    strcpy(bc, best);
+    char base[7] = { 0 };
+    memcpy(base, base_start, base_len);
+    base[base_len] = '\0';
+
+    // One of the first two characters must be a letter.
+    if (!is_letter(base[0]) && (base_len < 2 || !is_letter(base[1])))
+        return false;
+
+    // Callsigns do not start with Q in WSJT-X chkcall.f90.
+    if (base[0] == 'Q')
+        return false;
+
+    // Must have a call-area digit in the 2nd or 3rd position.
+    int area_index = -1;
+    if (base_len >= 2 && is_digit(base[1]))
+        area_index = 1;
+    if (base_len >= 3 && is_digit(base[2]))
+        area_index = 2;
+    if (area_index < 0)
+        return false;
+
+    // Callsign must have a suffix of 1-3 letters after the area digit.
+    if (area_index == base_len - 1)
+        return false;
+
+    int suffix_letters = 0;
+    for (int i = area_index + 1; i < base_len; ++i)
+    {
+        if (!is_letter(base[i]))
+            return false;
+        ++suffix_letters;
+    }
+    if (suffix_letters < 1 || suffix_letters > 3)
+        return false;
+
+    strcpy(bc, base);
     return true;
 }
 
@@ -944,7 +983,7 @@ int pack77_1(const char* msg, uint8_t* b77)
 
     if (equals(tokens[0], "CQ") && count >= 3 && is_cq_modifier_token(tokens[1]))
     {
-        snprintf(call1_with_modifier, sizeof(call1_with_modifier), "CQ %s", tokens[1]);
+        snprintf(call1_with_modifier, sizeof(call1_with_modifier), "CQ_%s", tokens[1]);
         call1 = call1_with_modifier;
         call2 = tokens[2];
         if (count == 4)

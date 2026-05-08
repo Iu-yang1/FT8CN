@@ -42,11 +42,11 @@ struct SessionPass {
     PassRole role;
     CandidateSource candidate_source;
     int min_sync_score;
+    int max_candidates;
     int iterations;
     int phase_ticks;
     bool apply_subtract_history;
     bool subtract_after_decode;
-    bool limit_early_dt;
 };
 
 struct DecoderOptions {

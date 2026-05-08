@@ -38,6 +38,7 @@ typedef struct {
     void *backend_state;
 
     message_t decoded[kMax_decoded_messages];
+    float decoded_freq_hz[kMax_decoded_messages];
     message_t *decoded_hashtable[kMax_decoded_messages];
     candidate_t candidate_list[kMax_candidates];
 
@@ -66,11 +67,13 @@ void signalToFFT(decoder_t *decoder, float signal[], int sample_rate);
 void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8);
 void delete_decoder(decoder_t *decoder);
 void decoder_monitor_press(float signal[], decoder_t *decoder);
+void decoder_monitor_press_samples(float signal[], decoder_t *decoder, int sample_count);
 int decoder_ft8_find_sync(decoder_t *decoder);
 ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder);
 void decoder_ft8_reset(decoder_t *decoder, long utcTime, int num_samples);
 void decoder_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]);
 void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep);
+void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations);
 void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
 void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
 bool decoder_owns_session_flow(decoder_t *decoder);

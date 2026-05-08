@@ -40,6 +40,13 @@ public final class DxpeditionFrequencyPolicy {
         return FOX_TX_MIN_HZ + idx * 60f;
     }
 
+    public static float pickFoxSlotFrequency(int slotIndex) {
+        if (slotIndex < 0) {
+            slotIndex = 0;
+        }
+        return clampFoxTxFrequency(FOX_TX_MIN_HZ + slotIndex * 60f);
+    }
+
     public static float resolveHoundRReportFrequency(float foxReplyFrequency, int tx3SentCount) {
         float base = clampFoxTxFrequency(foxReplyFrequency);
         if (tx3SentCount <= 0) {
@@ -66,4 +73,3 @@ public final class DxpeditionFrequencyPolicy {
         return value;
     }
 }
-

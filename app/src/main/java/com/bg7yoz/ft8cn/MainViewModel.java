@@ -119,6 +119,10 @@ public class MainViewModel extends ViewModel {
     public MutableLiveData<Boolean> mutableIsDecoding = new MutableLiveData<>();
     public ArrayList<Ft8Message> currentMessages = null;
 
+    private static class DecodeMergeResult {
+        final ArrayList<Ft8Message> actionableMessages = new ArrayList<>();
+    }
+
     public MutableLiveData<Boolean> mutableIsFlexRadio = new MutableLiveData<>();
     public MutableLiveData<Boolean> mutableIsXieguRadio = new MutableLiveData<>();
 
@@ -222,6 +226,85 @@ public class MainViewModel extends ViewModel {
         return Objects.requireNonNull(ft8Messages.get(position));
     }
 
+    private Ft8Message findSameSlotDecodedMessage(Ft8Message message) {
+        if (message == null) {
+            return null;
+        }
+
+        for (Ft8Message existing : ft8Messages) {
+            if (existing.isSameSlotDecodedMessage(message)) {
+                return existing;
+            }
+        }
+        return null;
+    }
+
+    private DecodeMergeResult mergeDecodedMessages(ArrayList<Ft8Message> messages) {
+        DecodeMergeResult result = new DecodeMergeResult();
+        if (messages == null || messages.size() == 0) {
+            return result;
+        }
+
+        synchronized (ft8Messages) {
+            for (Ft8Message message : messages) {
+                Ft8Message existing = findSameSlotDecodedMessage(message);
+                if (existing == null) {
+                    ft8Messages.add(message);
+                    result.actionableMessages.add(message);
+                } else {
+                    boolean wasWeakSignal = existing.isWeakSignal;
+                    existing.mergeDecodeQualityFrom(message);
+                    if (wasWeakSignal && !existing.isWeakSignal) {
+                        result.actionableMessages.add(existing);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private boolean mergeMessageIntoList(ArrayList<Ft8Message> targetMessages, Ft8Message message) {
+        if (targetMessages == null || message == null) {
+            return false;
+        }
+
+        synchronized (targetMessages) {
+            for (Ft8Message existing : targetMessages) {
+                if (!existing.isSameSlotDecodedMessage(message)) {
+                    continue;
+                }
+                existing.mergeDecodeQualityFrom(message);
+                return true;
+            }
+            targetMessages.add(message);
+            return true;
+        }
+    }
+
+    private void mergeDuplicateMessagesInList(ArrayList<Ft8Message> targetMessages) {
+        if (targetMessages == null || targetMessages.size() < 2) {
+            return;
+        }
+
+        synchronized (targetMessages) {
+            for (int i = targetMessages.size() - 1; i >= 0; i--) {
+                Ft8Message message = targetMessages.get(i);
+                if (message == null) {
+                    targetMessages.remove(i);
+                    continue;
+                }
+                for (int j = 0; j < i; j++) {
+                    Ft8Message existing = targetMessages.get(j);
+                    if (existing != null && existing.isSameSlotDecodedMessage(message)) {
+                        existing.mergeDecodeQualityFrom(message);
+                        targetMessages.remove(i);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     public MainViewModel() {
         databaseOpr = DatabaseOpr.getInstance(GeneralVariables.getMainContext(), "data.db");
 
@@ -287,14 +370,17 @@ public class MainViewModel extends ViewModel {
                     return;
                 }
 
-                synchronized (ft8Messages) {
-                    ft8Messages.addAll(messages);
-                }
+                DecodeMergeResult mergeResult = mergeDecodedMessages(messages);
+                messages = mergeResult.actionableMessages;
                 GeneralVariables.deleteArrayListMore(ft8Messages);
 
                 mutableFt8MessageList.postValue(ft8Messages);
                 mutableTimerOffset.postValue(time_sec);
                 currentMessages = messages;
+
+                if (messages.size() == 0) {
+                    return;
+                }
 
                 if (GeneralVariables.isExperimentalCodecEnabled()) {
                     // Experimental packets are plain-text debug frames, not FT8/FT4
@@ -353,6 +439,11 @@ public class MainViewModel extends ViewModel {
             public void getVoiceData(int duration, boolean afterDoneRemove, OnGetVoiceDataDone getVoiceDataDone) {
                 hamRecorder.getVoiceData(duration, afterDoneRemove, getVoiceDataDone);
             }
+
+            @Override
+            public int getCurrentSampleRate() {
+                return hamRecorder.getCurrentSampleRate();
+            }
         });
 
         ft8SignalListener.startListen();
@@ -385,7 +476,8 @@ public class MainViewModel extends ViewModel {
             @Override
             public void onBeforeTransmit(Ft8Message message, int functionOder) {
                 if (ft8TransmitSignal.isActivated()) {
-                    GeneralVariables.transmitMessages.add(message);
+                    mergeMessageIntoList(GeneralVariables.transmitMessages, message);
+                    mergeDuplicateMessagesInList(GeneralVariables.transmitMessages);
                     GeneralVariables.transmitHistoryMessages.add(message);
                     GeneralVariables.deleteArrayListMore(GeneralVariables.transmitHistoryMessages);
                     mutableTransmitMessagesCount.postValue(1);
@@ -618,10 +710,11 @@ public class MainViewModel extends ViewModel {
                 String excludeCallsign = autoFrom.length() > 0 ? autoFrom : rawFrom;
                 if (!GeneralVariables.checkIsExcludeCallsign(excludeCallsign)) {
                     count++;
-                    GeneralVariables.transmitMessages.add(msg);
+                    mergeMessageIntoList(GeneralVariables.transmitMessages, msg);
                 }
             }
         }
+        mergeDuplicateMessagesInList(GeneralVariables.transmitMessages);
         GeneralVariables.deleteArrayListMore(GeneralVariables.transmitMessages);
         mutableTransmitMessagesCount.postValue(count);
     }
@@ -754,7 +847,7 @@ public class MainViewModel extends ViewModel {
             @Override
             public void OnWaveReceived(int bufferLen, float[] buffer) {
                 Log.i(TAG, "call hamRecorder.doOnWaveDataReceived");
-                hamRecorder.doOnWaveDataReceived(bufferLen, buffer);
+                hamRecorder.doOnWaveDataReceived(bufferLen, buffer, FT8Common.SAMPLE_RATE);
             }
         });
 
@@ -809,7 +902,7 @@ public class MainViewModel extends ViewModel {
         iComWifiConnector.setOnWifiDataReceived(new IComWifiConnector.OnWifiDataReceived() {
             @Override
             public void OnWaveReceived(int bufferLen, float[] buffer) {
-                hamRecorder.doOnWaveDataReceived(bufferLen, buffer);
+                hamRecorder.doOnWaveDataReceived(bufferLen, buffer, FT8Common.SAMPLE_RATE);
             }
 
             @Override
@@ -851,7 +944,7 @@ public class MainViewModel extends ViewModel {
         flexConnector.setOnWaveDataReceived(new FlexConnector.OnWaveDataReceived() {
             @Override
             public void OnDataReceived(int bufferLen, float[] buffer) {
-                hamRecorder.doOnWaveDataReceived(bufferLen, buffer);
+                hamRecorder.doOnWaveDataReceived(bufferLen, buffer, FT8Common.SAMPLE_RATE);
             }
         });
         flexConnector.connect();
@@ -887,7 +980,7 @@ public class MainViewModel extends ViewModel {
         xieguConnector.setOnWaveDataReceived(new X6100Connector.OnWaveDataReceived() {
             @Override
             public void OnDataReceived(int bufferLen, float[] buffer) {
-                hamRecorder.doOnWaveDataReceived(bufferLen, buffer);
+                hamRecorder.doOnWaveDataReceived(bufferLen, buffer, FT8Common.SAMPLE_RATE);
             }
         });
 
@@ -1055,6 +1148,12 @@ public class MainViewModel extends ViewModel {
             audioManager.setBluetoothScoOn(false);
             audioManager.stopBluetoothSco();
             audioManager.setSpeakerphoneOn(true);
+        }
+    }
+
+    public void refreshRecorderSampleRate() {
+        if (hamRecorder != null) {
+            hamRecorder.refreshCurrentAudioSource();
         }
     }
 
