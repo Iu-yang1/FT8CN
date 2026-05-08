@@ -26,6 +26,7 @@ constexpr PassBehavior kApplyAndUpdateSubtractHistory{true, true};
 static SessionPass MakePass(PassRole role,
                             CandidateSource candidate_source,
                             int min_sync_score,
+                            int max_candidates,
                             int iterations,
                             int phase_ticks,
                             PassBehavior behavior) {
@@ -33,6 +34,7 @@ static SessionPass MakePass(PassRole role,
     pass.role = role;
     pass.candidate_source = candidate_source;
     pass.min_sync_score = min_sync_score;
+    pass.max_candidates = max_candidates;
     pass.iterations = iterations;
     pass.phase_ticks = phase_ticks;
     pass.apply_subtract_history = behavior.apply_subtract_history;
@@ -59,6 +61,66 @@ static int SyncBiasFromSensitivity(int sensitivity) {
     }
 }
 
+static int ClampSensitivity(int sensitivity) {
+    return std::max(0, std::min(sensitivity, 2));
+}
+
+static int CandidateBudget(const ModeDescriptor &mode,
+                           PassRole role,
+                           bool deep_mode,
+                           const DecoderOptions &options) {
+    int budget;
+    const int sensitivity = ClampSensitivity(options.decode_sensitivity);
+
+    if (mode.mode_id == ModeId::kFt4) {
+        switch (role) {
+            case PassRole::kEarly:
+                budget = 14;
+                break;
+            case PassRole::kAp:
+                budget = 12;
+                break;
+            case PassRole::kSubtract:
+                budget = 18;
+                break;
+            case PassRole::kLate:
+                budget = 18;
+                break;
+            case PassRole::kBase:
+            default:
+                budget = deep_mode ? 28 : 22;
+                break;
+        }
+    } else {
+        switch (role) {
+            case PassRole::kEarly:
+                budget = 18;
+                break;
+            case PassRole::kAp:
+                budget = 16;
+                break;
+            case PassRole::kSubtract:
+                budget = 24;
+                break;
+            case PassRole::kLate:
+                budget = 24;
+                break;
+            case PassRole::kBase:
+            default:
+                budget = deep_mode ? 40 : 28;
+                break;
+        }
+    }
+
+    if (sensitivity == 0) {
+        budget -= (mode.mode_id == ModeId::kFt4) ? 4 : 6;
+    } else if (sensitivity == 2) {
+        budget += (mode.mode_id == ModeId::kFt4) ? 6 : 10;
+    }
+
+    return std::max(6, std::min(budget, (int) kMax_candidates));
+}
+
 static SessionPlan BuildFt8Plan(const ModeDescriptor &mode,
                                 bool deep_mode,
                                 bool has_ap_hints,
@@ -75,6 +137,7 @@ static SessionPlan BuildFt8Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kBase,
                                        CandidateSource::kWaterfall,
                                        base_sync,
+                                       CandidateBudget(mode, PassRole::kBase, false, options),
                                        fast_kLDPC_iterations,
                                        kFt8PhaseTicksFull,
                                        kPlainPass));
@@ -85,12 +148,14 @@ static SessionPlan BuildFt8Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kEarly,
                                        CandidateSource::kWaterfall,
                                        std::max(base_sync, 12 + sync_bias),
+                                       CandidateBudget(mode, PassRole::kEarly, deep_mode, options),
                                        fast_kLDPC_iterations,
                                        kFt8PhaseTicksEarly,
                                        kPlainPass));
         plan.passes.push_back(MakePass(PassRole::kLate,
                                        CandidateSource::kWaterfall,
                                        std::max(base_sync, 11 + sync_bias),
+                                       CandidateBudget(mode, PassRole::kLate, deep_mode, options),
                                        fast_kLDPC_iterations,
                                        kFt8PhaseTicksLate,
                                        kApplySubtractHistory));
@@ -98,6 +163,7 @@ static SessionPlan BuildFt8Plan(const ModeDescriptor &mode,
     plan.passes.push_back(MakePass(PassRole::kBase,
                                    CandidateSource::kWaterfall,
                                    base_sync,
+                                   CandidateBudget(mode, PassRole::kBase, deep_mode, options),
                                    deep_kLDPC_iterations,
                                    kFt8PhaseTicksFull,
                                    kApplyAndUpdateSubtractHistory));
@@ -106,6 +172,7 @@ static SessionPlan BuildFt8Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kAp,
                                        CandidateSource::kWaterfall,
                                        std::max(7, base_sync - 1),
+                                       CandidateBudget(mode, PassRole::kAp, deep_mode, options),
                                        deep_kLDPC_iterations,
                                        0,
                                        kPlainPass));
@@ -115,6 +182,7 @@ static SessionPlan BuildFt8Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kSubtract,
                                        CandidateSource::kWaterfall,
                                        std::max(7, base_sync - 1),
+                                       CandidateBudget(mode, PassRole::kSubtract, deep_mode, options),
                                        deep_kLDPC_iterations,
                                        0,
                                        kSubtractAfterDecode));
@@ -124,6 +192,7 @@ static SessionPlan BuildFt8Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kAp,
                                        CandidateSource::kWaterfall,
                                        std::max(6, base_sync - 2),
+                                       CandidateBudget(mode, PassRole::kAp, deep_mode, options),
                                        deep_kLDPC_iterations,
                                        0,
                                        kPlainPass));
@@ -148,6 +217,7 @@ static SessionPlan BuildFt4Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kEarly,
                                        CandidateSource::kFt4RawFft,
                                        std::max(base_sync, 10 + sync_bias),
+                                       CandidateBudget(mode, PassRole::kEarly, deep_mode, options),
                                        fast_kLDPC_iterations,
                                        kFt8PhaseTicksEarly,
                                        kPlainPass));
@@ -156,6 +226,7 @@ static SessionPlan BuildFt4Plan(const ModeDescriptor &mode,
     plan.passes.push_back(MakePass(PassRole::kBase,
                                    CandidateSource::kFt4RawFft,
                                    std::max(base_sync, 10 + sync_bias),
+                                   CandidateBudget(mode, PassRole::kBase, deep_mode, options),
                                    fast_kLDPC_iterations,
                                    kFt8PhaseTicksFull,
                                    (deep_mode && round_count >= 2)
@@ -170,6 +241,7 @@ static SessionPlan BuildFt4Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kAp,
                                        CandidateSource::kFt4RawFft,
                                        std::max(8, base_sync - 1),
+                                       CandidateBudget(mode, PassRole::kAp, deep_mode, options),
                                        deep_kLDPC_iterations,
                                        0,
                                        kPlainPass));
@@ -179,6 +251,7 @@ static SessionPlan BuildFt4Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kSubtract,
                                        CandidateSource::kFt4RawFft,
                                        std::max(base_sync, 9 + sync_bias),
+                                       CandidateBudget(mode, PassRole::kSubtract, deep_mode, options),
                                        deep_kLDPC_iterations,
                                        0,
                                        kSubtractAfterDecode));
@@ -188,6 +261,7 @@ static SessionPlan BuildFt4Plan(const ModeDescriptor &mode,
         plan.passes.push_back(MakePass(PassRole::kAp,
                                        CandidateSource::kFt4RawFft,
                                        std::max(6, base_sync + sync_bias),
+                                       CandidateBudget(mode, PassRole::kAp, deep_mode, options),
                                        deep_kLDPC_iterations,
                                        0,
                                        kPlainPass));

@@ -160,6 +160,44 @@ static bool is_duplicate_result(const wsjtx_port_decoder_t *state, const ft8_mes
     return false;
 }
 
+static int find_duplicate_result_index(const wsjtx_port_decoder_t *state, const ft8_message &candidate) {
+    if (state == nullptr) {
+        return -1;
+    }
+
+    for (int idx = 0; idx < (int) state->session_results.size(); ++idx) {
+        const ft8_message &existing = state->session_results[idx];
+        if (!existing.isValid) {
+            continue;
+        }
+        if (existing.message.hash != candidate.message.hash ||
+            0 != std::strcmp(existing.message.text, candidate.message.text)) {
+            continue;
+        }
+        if (existing.freq_hz <= 0.0f || candidate.freq_hz <= 0.0f ||
+            std::fabs(existing.freq_hz - candidate.freq_hz) <= kDecodeDuplicateFrequencyToleranceHz) {
+            return idx;
+        }
+    }
+    return -1;
+}
+
+static bool prefer_decode_result(const ft8_message &candidate, const ft8_message &existing) {
+    if (candidate.candidate.score != existing.candidate.score) {
+        return candidate.candidate.score > existing.candidate.score;
+    }
+    if (candidate.snr != existing.snr) {
+        return candidate.snr > existing.snr;
+    }
+    if (candidate.status.ldpc_errors != existing.status.ldpc_errors) {
+        return candidate.status.ldpc_errors < existing.status.ldpc_errors;
+    }
+    if (candidate.time_sec != existing.time_sec) {
+        return std::fabs(candidate.time_sec) < std::fabs(existing.time_sec);
+    }
+    return candidate.freq_hz < existing.freq_hz;
+}
+
 static bool decode_candidate_with_waterfall(wsjtx_port_decoder_t *state,
                                             waterfall_t *wf,
                                             candidate_t candidate,
@@ -195,10 +233,17 @@ static bool remember_decode(wsjtx_port_decoder_t *state, const ft8_message &deco
     if (state == nullptr || !decoded.isValid) {
         return false;
     }
-    if ((int) state->session_results.size() >= kMax_decoded_messages) {
+
+    const int duplicate_index = find_duplicate_result_index(state, decoded);
+    if (duplicate_index >= 0) {
+        ft8_message &existing = state->session_results[duplicate_index];
+        if (prefer_decode_result(decoded, existing)) {
+            existing = decoded;
+        }
         return false;
     }
-    if (is_duplicate_result(state, decoded)) {
+
+    if ((int) state->session_results.size() >= kMax_decoded_messages) {
         return false;
     }
 
@@ -298,6 +343,25 @@ static void apply_subtract_jobs(wsjtx_port_decoder_t *state,
     }
 }
 
+static int clamp_candidate_count(int count) {
+    if (count < 0) {
+        return 0;
+    }
+    if (count > kMax_candidates) {
+        return kMax_candidates;
+    }
+    return count;
+}
+
+static bool same_candidate_identity(const candidate_t &lhs, const candidate_t &rhs) {
+    return lhs.time_offset == rhs.time_offset &&
+           lhs.time_sub == rhs.time_sub &&
+           lhs.freq_offset == rhs.freq_offset &&
+           lhs.freq_sub == rhs.freq_sub &&
+           lhs.score == rhs.score &&
+           lhs.snr == rhs.snr;
+}
+
 static int sample_count_for_phase(const wsjtx_port_decoder_t *state, int phase_ticks) {
     if (state == nullptr || phase_ticks <= 0 || state->raw_samples.empty()) {
         return 0;
@@ -353,27 +417,38 @@ static int collect_sorted_candidates(wsjtx_port_decoder_t *state,
         return 0;
     }
 
-    int count = ft8_find_sync(&state->mon.wf, kMax_candidates, out, min_score);
+    int count = clamp_candidate_count(ft8_find_sync(&state->mon.wf, kMax_candidates, out, min_score));
     if (count <= 1) {
-        return std::max(count, 0);
+        return count;
     }
 
-    std::sort(out, out + count, [](const candidate_t &lhs, const candidate_t &rhs) {
+    std::stable_sort(out, out + count, [](const candidate_t &lhs, const candidate_t &rhs) {
+        if (lhs.score != rhs.score) {
+            return lhs.score > rhs.score;
+        }
+        if (lhs.snr != rhs.snr) {
+            return lhs.snr > rhs.snr;
+        }
         if (lhs.time_offset != rhs.time_offset) {
             return lhs.time_offset < rhs.time_offset;
         }
         if (lhs.time_sub != rhs.time_sub) {
             return lhs.time_sub < rhs.time_sub;
         }
-        if (lhs.score != rhs.score) {
-            return lhs.score > rhs.score;
-        }
         if (lhs.freq_offset != rhs.freq_offset) {
             return lhs.freq_offset < rhs.freq_offset;
         }
         return lhs.freq_sub < rhs.freq_sub;
     });
-    return count;
+
+    int filtered_count = 1;
+    for (int idx = 1; idx < count; ++idx) {
+        if (same_candidate_identity(out[filtered_count - 1], out[idx])) {
+            continue;
+        }
+        out[filtered_count++] = out[idx];
+    }
+    return filtered_count;
 }
 
 static int decode_candidates(wsjtx_port_decoder_t *state,
@@ -381,6 +456,7 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
                              int candidate_count,
                              int iterations,
                              std::vector<subtract_job_t> *jobs) {
+    candidate_count = clamp_candidate_count(candidate_count);
     if (state == nullptr || candidate_count <= 0) {
         return 0;
     }
@@ -881,6 +957,17 @@ static float ft4_peak_match_hz(const wsjtx_port_decoder_t *state) {
     }
 }
 
+static int ft4_decode_sensitivity(const wsjtx_port_decoder_t *state) {
+    if (state == nullptr) {
+        return 1;
+    }
+    return std::max(0, std::min(state->options.decode_sensitivity, 2));
+}
+
+static bool ft4_is_deep_mode(const wsjtx_port_decoder_t *state) {
+    return state != nullptr && state->ldpc_iterations > fast_kLDPC_iterations;
+}
+
 static void build_ft4_nuttall_window(std::vector<float> *window) {
     if (window == nullptr) {
         return;
@@ -1060,14 +1147,31 @@ static void smooth_ft4_average_spectrum(const std::vector<float> &avg_power, std
     }
 }
 
-static float ft4_sync_ratio_threshold(int min_score) {
+static float ft4_sync_ratio_threshold(const wsjtx_port_decoder_t *state, int min_score) {
+    float threshold;
     if (min_score >= 10) {
-        return 1.20f;
+        threshold = 1.20f;
+    } else if (min_score >= 9) {
+        threshold = 1.15f;
+    } else {
+        threshold = 1.10f;
     }
-    if (min_score >= 9) {
-        return 1.15f;
+
+    switch (ft4_decode_sensitivity(state)) {
+        case 0:
+            threshold += 0.04f;
+            break;
+        case 2:
+            threshold -= 0.04f;
+            break;
+        default:
+            break;
     }
-    return 1.10f;
+
+    if (ft4_is_deep_mode(state)) {
+        threshold -= 0.02f;
+    }
+    return std::max(1.04f, threshold);
 }
 
 static std::vector<ft4_peak_t> find_ft4_peak_frequencies(const wsjtx_port_decoder_t *state, int min_score) {
@@ -1088,7 +1192,7 @@ static std::vector<ft4_peak_t> find_ft4_peak_frequencies(const wsjtx_port_decode
     build_ft4_baseline(avg_power, min_bin, max_bin, &baseline);
 
     std::vector<ft4_peak_t> peaks;
-    const float sync_min = ft4_sync_ratio_threshold(min_score);
+    const float sync_min = ft4_sync_ratio_threshold(state, min_score);
 
     for (int bin = min_bin; bin <= max_bin; ++bin) {
         const float base = std::max(baseline[bin], 1e-6f);
@@ -1117,13 +1221,32 @@ static std::vector<ft4_peak_t> find_ft4_peak_frequencies(const wsjtx_port_decode
         }
     }
 
-    std::sort(peaks.begin(), peaks.end(), [](const ft4_peak_t &lhs, const ft4_peak_t &rhs) {
+    std::stable_sort(peaks.begin(), peaks.end(), [](const ft4_peak_t &lhs, const ft4_peak_t &rhs) {
         if (lhs.strength != rhs.strength) {
             return lhs.strength > rhs.strength;
         }
         return lhs.frequency < rhs.frequency;
     });
-    return peaks;
+
+    std::vector<ft4_peak_t> filtered;
+    filtered.reserve(peaks.size());
+    const float min_peak_spacing_hz = std::max(12.0f, ft4_peak_match_hz(state) * 0.55f);
+    for (const ft4_peak_t &peak : peaks) {
+        bool too_close = false;
+        for (const ft4_peak_t &kept : filtered) {
+            if (abs_diff(peak.frequency, kept.frequency) < min_peak_spacing_hz) {
+                too_close = true;
+                break;
+            }
+        }
+        if (!too_close) {
+            filtered.push_back(peak);
+        }
+        if ((int) filtered.size() >= kMax_candidates) {
+            break;
+        }
+    }
+    return filtered;
 }
 
 static float candidate_ft4_peak_strength(const wsjtx_port_decoder_t *state,
@@ -1133,8 +1256,10 @@ static float candidate_ft4_peak_strength(const wsjtx_port_decoder_t *state,
     const float peak_match_hz = ft4_peak_match_hz(state);
     float best_strength = -1.0f;
     for (const ft4_peak_t &peak : peaks) {
-        if (abs_diff(frequency, peak.frequency) <= peak_match_hz) {
-            best_strength = std::max(best_strength, peak.strength);
+        const float delta = abs_diff(frequency, peak.frequency);
+        if (delta <= peak_match_hz) {
+            const float closeness = 1.0f - (delta / std::max(peak_match_hz, 1.0f));
+            best_strength = std::max(best_strength, peak.strength + 0.12f * closeness);
         }
     }
     return best_strength;
@@ -1158,6 +1283,7 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
         candidate_t candidate;
         float peak_strength;
         bool matched_peak;
+        float metric;
     };
 
     std::vector<ranked_candidate_t> ranked;
@@ -1166,10 +1292,14 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
     for (int idx = 0; idx < generic_count; ++idx) {
         const float peak_strength = candidate_ft4_peak_strength(state, generic_candidates[idx], peaks);
         const bool matched_peak = peak_strength > 0.0f;
-        if (!matched_peak && generic_candidates[idx].score < min_score + 3) {
+        const int score_margin = (ft4_decode_sensitivity(state) == 2) ? 2 : 3;
+        if (!matched_peak && generic_candidates[idx].score < min_score + score_margin) {
             continue;
         }
-        ranked.push_back({generic_candidates[idx], peak_strength, matched_peak});
+        const float metric = peak_strength
+                             + 0.035f * (float) generic_candidates[idx].score
+                             + 0.010f * (float) generic_candidates[idx].snr;
+        ranked.push_back({generic_candidates[idx], peak_strength, matched_peak, metric});
     }
 
     if (ranked.empty()) {
@@ -1183,11 +1313,17 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
                          if (lhs.matched_peak != rhs.matched_peak) {
                              return lhs.matched_peak > rhs.matched_peak;
                          }
+                         if (lhs.metric != rhs.metric) {
+                             return lhs.metric > rhs.metric;
+                         }
                          if (lhs.peak_strength != rhs.peak_strength) {
                              return lhs.peak_strength > rhs.peak_strength;
                          }
                          if (lhs.candidate.score != rhs.candidate.score) {
                              return lhs.candidate.score > rhs.candidate.score;
+                         }
+                         if (lhs.candidate.snr != rhs.candidate.snr) {
+                             return lhs.candidate.snr > rhs.candidate.snr;
                          }
                          if (lhs.candidate.time_offset != rhs.candidate.time_offset) {
                              return lhs.candidate.time_offset < rhs.candidate.time_offset;
@@ -1209,13 +1345,23 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
 static int collect_candidates_for_pass(wsjtx_port_decoder_t *state,
                                        const wsjtx::SessionPass &pass,
                                        candidate_t out[kMax_candidates]) {
+    int count;
+
     switch (pass.candidate_source) {
         case wsjtx::CandidateSource::kFt4RawFft:
-            return collect_ft4_candidates(state, pass.min_sync_score, out);
+            count = collect_ft4_candidates(state, pass.min_sync_score, out);
+            break;
         case wsjtx::CandidateSource::kWaterfall:
         default:
-            return collect_sorted_candidates(state, pass.min_sync_score, out);
+            count = collect_sorted_candidates(state, pass.min_sync_score, out);
+            break;
     }
+
+    count = clamp_candidate_count(count);
+    if (pass.max_candidates > 0 && count > pass.max_candidates) {
+        count = pass.max_candidates;
+    }
+    return count;
 }
 
 static void append_subtract_history(std::vector<subtract_job_t> *history,
@@ -1287,6 +1433,7 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
     }
 
     std::vector<subtract_job_t> subtract_history;
+    subtract_history.reserve((size_t) std::max(4, state->options.multi_decode_round_count * 8));
 
     for (const wsjtx::SessionPass &pass : plan.passes) {
         if (!rebuild_for_pass(state, pass)) {
@@ -1305,6 +1452,7 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
         }
 
         std::vector<subtract_job_t> pass_jobs;
+        pass_jobs.reserve((size_t) std::max(4, pass.max_candidates));
         const int new_results = decode_candidates(state,
                                                   state->candidate_list,
                                                   candidate_count,
@@ -1363,6 +1511,7 @@ bool wsjtx_port_init_decoder(decoder_t *decoder,
     state->options = wsjtx::DefaultDecoderOptions();
     monitor_init(&state->mon, &state->mon_cfg);
     state->raw_samples.reserve(std::max(num_samples, 0));
+    state->session_results.reserve(kMax_decoded_messages);
     decoder->backend_state = state;
     return true;
 }
