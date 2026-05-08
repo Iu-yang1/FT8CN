@@ -46,7 +46,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="无线电、解码与会话策略集中设置"
+                    android:text=""
                     android:textColor="#D9F8FAFC"
                     android:textSize="12sp"
                     app:layout_constraintEnd_toEndOf="parent"
