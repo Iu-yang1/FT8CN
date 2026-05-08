@@ -18,17 +18,19 @@ extern "C" {
 namespace {
 
 constexpr int kFt8PhaseTicksFull = 50;
-constexpr float kFt8EarlySubtractDtSec = 0.40f;
 constexpr int64_t kFt8SlotMilliseconds = 15000;
 constexpr int64_t kFt4SlotMilliseconds = 7500;
 constexpr int kFt8FollowupMinSyncScore = 6;
 constexpr int kFt4FollowupMinSyncScore = 7;
 constexpr int kFt8FollowupMaxEntries = 16;
-constexpr int kFt8FollowupMaxCandidatesPerEntry = 2;
+constexpr int kFt8FollowupMaxCandidatesPerEntry = 4;
+constexpr int kApPassMaxTexts = 96;
+constexpr int kApPassHistoryEntries = 6;
+constexpr int kSubtractHistoryBudget = 48;
 constexpr int kFollowupModeCount = 2;
-constexpr int kFollowupParityCount = 2;
 constexpr float kFt8FollowupHistoryMatchHz = 3.0f;
-constexpr float kFt8FollowupTimeWindowSec = 0.30f;
+constexpr float kFt8FollowupHistoryMatchTimeSec = 0.30f;
+constexpr float kDecodeDuplicateFrequencyToleranceHz = 20.0f;
 
 constexpr int kFt4CoarseFftSize = 2304;
 constexpr int kFt4CoarseHopSize = 576;
@@ -56,8 +58,15 @@ struct ft8_followup_entry_t {
     float time_sec;
 };
 
+struct followup_search_policy_t {
+    float freq_window_hz;
+    float time_window_sec;
+    int max_candidates;
+};
+
 struct wsjtx_port_decoder_t {
     int64_t utc_time;
+    int slot_samples;
     int num_samples;
     int num_candidates;
     int num_decoded;
@@ -75,12 +84,9 @@ struct wsjtx_port_decoder_t {
 };
 
 std::mutex g_ft8_followup_mutex;
-std::array<std::array<std::vector<ft8_followup_entry_t>, kFollowupParityCount>, kFollowupModeCount> g_ft8_followup_current;
-std::array<std::array<std::vector<ft8_followup_entry_t>, kFollowupParityCount>, kFollowupModeCount> g_ft8_followup_previous;
-std::array<std::array<int64_t, kFollowupParityCount>, kFollowupModeCount> g_ft8_followup_slot_ids = {{
-        {{-1, -1}},
-        {{-1, -1}},
-}};
+std::array<std::vector<ft8_followup_entry_t>, kFollowupModeCount> g_ft8_followup_current_slot;
+std::array<std::vector<ft8_followup_entry_t>, kFollowupModeCount> g_ft8_followup_previous_slot;
+std::array<int64_t, kFollowupModeCount> g_ft8_followup_slot_ids = {{-1, -1}};
 
 static wsjtx::DecoderOptions convert_decoder_options(const wsjtx_decoder_options_t *options) {
     wsjtx::DecoderOptions converted = wsjtx::DefaultDecoderOptions();
@@ -145,13 +151,62 @@ static bool is_duplicate_result(const wsjtx_port_decoder_t *state, const ft8_mes
         if (!existing.isValid) {
             continue;
         }
-        if (existing.message.hash == candidate.message.hash &&
-            0 == std::strcmp(existing.message.text, candidate.message.text)) {
+        if (existing.message.hash != candidate.message.hash ||
+            0 != std::strcmp(existing.message.text, candidate.message.text)) {
+            continue;
+        }
+        if (existing.freq_hz <= 0.0f || candidate.freq_hz <= 0.0f ||
+            std::fabs(existing.freq_hz - candidate.freq_hz) <= kDecodeDuplicateFrequencyToleranceHz) {
             return true;
         }
     }
     return false;
 }
+
+static int find_duplicate_result_index(const wsjtx_port_decoder_t *state, const ft8_message &candidate) {
+    if (state == nullptr) {
+        return -1;
+    }
+
+    for (int idx = 0; idx < (int) state->session_results.size(); ++idx) {
+        const ft8_message &existing = state->session_results[idx];
+        if (!existing.isValid) {
+            continue;
+        }
+        if (existing.message.hash != candidate.message.hash ||
+            0 != std::strcmp(existing.message.text, candidate.message.text)) {
+            continue;
+        }
+        if (existing.freq_hz <= 0.0f || candidate.freq_hz <= 0.0f ||
+            std::fabs(existing.freq_hz - candidate.freq_hz) <= kDecodeDuplicateFrequencyToleranceHz) {
+            return idx;
+        }
+    }
+    return -1;
+}
+
+static bool prefer_decode_result(const ft8_message &candidate, const ft8_message &existing) {
+    if (candidate.candidate.score != existing.candidate.score) {
+        return candidate.candidate.score > existing.candidate.score;
+    }
+    if (candidate.snr != existing.snr) {
+        return candidate.snr > existing.snr;
+    }
+    if (candidate.status.ldpc_errors != existing.status.ldpc_errors) {
+        return candidate.status.ldpc_errors < existing.status.ldpc_errors;
+    }
+    if (candidate.time_sec != existing.time_sec) {
+        return std::fabs(candidate.time_sec) < std::fabs(existing.time_sec);
+    }
+    return candidate.freq_hz < existing.freq_hz;
+}
+
+static bool decode_candidate_with_ap_texts(wsjtx_port_decoder_t *state,
+                                           waterfall_t *wf,
+                                           candidate_t candidate,
+                                           const std::vector<std::string> &texts,
+                                           int iterations,
+                                           ft8_message *out);
 
 static bool decode_candidate_with_waterfall(wsjtx_port_decoder_t *state,
                                             waterfall_t *wf,
@@ -188,10 +243,17 @@ static bool remember_decode(wsjtx_port_decoder_t *state, const ft8_message &deco
     if (state == nullptr || !decoded.isValid) {
         return false;
     }
-    if ((int) state->session_results.size() >= kMax_decoded_messages) {
+
+    const int duplicate_index = find_duplicate_result_index(state, decoded);
+    if (duplicate_index >= 0) {
+        ft8_message &existing = state->session_results[duplicate_index];
+        if (prefer_decode_result(decoded, existing)) {
+            existing = decoded;
+        }
         return false;
     }
-    if (is_duplicate_result(state, decoded)) {
+
+    if ((int) state->session_results.size() >= kMax_decoded_messages) {
         return false;
     }
 
@@ -291,21 +353,53 @@ static void apply_subtract_jobs(wsjtx_port_decoder_t *state,
     }
 }
 
+static int clamp_candidate_count(int count) {
+    if (count < 0) {
+        return 0;
+    }
+    if (count > kMax_candidates) {
+        return kMax_candidates;
+    }
+    return count;
+}
+
+static bool same_candidate_identity(const candidate_t &lhs, const candidate_t &rhs) {
+    return lhs.time_offset == rhs.time_offset &&
+           lhs.time_sub == rhs.time_sub &&
+           lhs.freq_offset == rhs.freq_offset &&
+           lhs.freq_sub == rhs.freq_sub &&
+           lhs.score == rhs.score &&
+           lhs.snr == rhs.snr;
+}
+
 static int sample_count_for_phase(const wsjtx_port_decoder_t *state, int phase_ticks) {
     if (state == nullptr || phase_ticks <= 0 || state->raw_samples.empty()) {
         return 0;
     }
 
-    const int total_samples = (int) state->raw_samples.size();
+    const int available_samples = (int) state->raw_samples.size();
+    const int slot_samples = (state->slot_samples > 0) ? state->slot_samples : available_samples;
+    int sample_count = 0;
     if (phase_ticks >= kFt8PhaseTicksFull) {
-        return total_samples;
+        sample_count = slot_samples;
+    } else {
+        sample_count = (slot_samples * phase_ticks) / kFt8PhaseTicksFull;
     }
-
-    int sample_count = (total_samples * phase_ticks) / kFt8PhaseTicksFull;
-    if (sample_count < state->mon.block_size) {
+    if (sample_count < state->mon.block_size || available_samples < sample_count) {
         return 0;
     }
     return sample_count;
+}
+
+static bool has_full_slot_samples(const wsjtx_port_decoder_t *state) {
+    if (state == nullptr) {
+        return false;
+    }
+
+    const int slot_samples = (state->slot_samples > 0)
+                             ? state->slot_samples
+                             : (int) state->raw_samples.size();
+    return slot_samples > 0 && (int) state->raw_samples.size() >= slot_samples;
 }
 
 static void rebuild_waterfall(wsjtx_port_decoder_t *state, int sample_count) {
@@ -333,35 +427,47 @@ static int collect_sorted_candidates(wsjtx_port_decoder_t *state,
         return 0;
     }
 
-    int count = ft8_find_sync(&state->mon.wf, kMax_candidates, out, min_score);
+    int count = clamp_candidate_count(ft8_find_sync(&state->mon.wf, kMax_candidates, out, min_score));
     if (count <= 1) {
-        return std::max(count, 0);
+        return count;
     }
 
-    std::sort(out, out + count, [](const candidate_t &lhs, const candidate_t &rhs) {
+    std::stable_sort(out, out + count, [](const candidate_t &lhs, const candidate_t &rhs) {
+        if (lhs.score != rhs.score) {
+            return lhs.score > rhs.score;
+        }
+        if (lhs.snr != rhs.snr) {
+            return lhs.snr > rhs.snr;
+        }
         if (lhs.time_offset != rhs.time_offset) {
             return lhs.time_offset < rhs.time_offset;
         }
         if (lhs.time_sub != rhs.time_sub) {
             return lhs.time_sub < rhs.time_sub;
         }
-        if (lhs.score != rhs.score) {
-            return lhs.score > rhs.score;
-        }
         if (lhs.freq_offset != rhs.freq_offset) {
             return lhs.freq_offset < rhs.freq_offset;
         }
         return lhs.freq_sub < rhs.freq_sub;
     });
-    return count;
+
+    int filtered_count = 1;
+    for (int idx = 1; idx < count; ++idx) {
+        if (same_candidate_identity(out[filtered_count - 1], out[idx])) {
+            continue;
+        }
+        out[filtered_count++] = out[idx];
+    }
+    return filtered_count;
 }
 
 static int decode_candidates(wsjtx_port_decoder_t *state,
                              candidate_t candidates[kMax_candidates],
                              int candidate_count,
                              int iterations,
-                             float max_time_sec,
+                             const std::vector<std::string> *ap_texts,
                              std::vector<subtract_job_t> *jobs) {
+    candidate_count = clamp_candidate_count(candidate_count);
     if (state == nullptr || candidate_count <= 0) {
         return 0;
     }
@@ -369,15 +475,25 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
     int new_results = 0;
     for (int idx = 0; idx < candidate_count; ++idx) {
         ft8_message decoded;
-        if (!decode_candidate_with_waterfall(state,
-                                             &state->mon.wf,
-                                             candidates[idx],
-                                             iterations,
-                                             &decoded)) {
-            continue;
+        bool decoded_ok = false;
+        if (ap_texts != nullptr && !ap_texts->empty()) {
+            decoded_ok = decode_candidate_with_ap_texts(state,
+                                                        &state->mon.wf,
+                                                        candidates[idx],
+                                                        *ap_texts,
+                                                        iterations,
+                                                        &decoded);
         }
 
-        if (max_time_sec >= 0.0f && decoded.time_sec > max_time_sec) {
+        if (!decoded_ok) {
+            decoded_ok = decode_candidate_with_waterfall(state,
+                                                         &state->mon.wf,
+                                                         candidates[idx],
+                                                         iterations,
+                                                         &decoded);
+        }
+
+        if (!decoded_ok) {
             continue;
         }
 
@@ -398,9 +514,8 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
                                   candidate_t out[kMax_candidates]);
 static int ft8_followup_mode_index(const wsjtx_port_decoder_t *state);
 static int64_t ft8_slot_id(const wsjtx_port_decoder_t *state);
-static int ft8_slot_parity(const wsjtx_port_decoder_t *state);
 static int ft8_followup_min_sync_score(const wsjtx_port_decoder_t *state);
-static float ft8_followup_freq_window_hz(const wsjtx_port_decoder_t *state);
+static followup_search_policy_t ft8_followup_search_policy(const wsjtx_port_decoder_t *state);
 static bool is_plain_grid4(const char *grid);
 static bool is_cq_call_token(const char *call);
 static bool is_contest_cq_call(const char *call);
@@ -414,9 +529,12 @@ static std::vector<ft8_followup_entry_t> prepare_ft8_followup_history(const wsjt
 static bool ft8_followup_entry_is_covered(const wsjtx_port_decoder_t *state,
                                           const ft8_followup_entry_t &entry);
 static void commit_ft8_followup_history(const wsjtx_port_decoder_t *state);
+static void build_ap_pass_texts(const wsjtx_port_decoder_t *state,
+                                const std::vector<ft8_followup_entry_t> &history_entries,
+                                std::vector<std::string> *texts);
 
 static void append_ft8_followup_text(std::vector<std::string> *texts, const std::string &text) {
-    if (texts == nullptr || text.empty()) {
+    if (texts == nullptr || text.empty() || (int) texts->size() >= kApPassMaxTexts) {
         return;
     }
 
@@ -536,50 +654,47 @@ static int select_ft8_followup_candidates(const wsjtx_port_decoder_t *state,
         float metric;
     };
 
-    std::array<ranked_candidate_t, kFt8FollowupMaxCandidatesPerEntry> best{};
-    int best_count = 0;
-    const float freq_window = ft8_followup_freq_window_hz(state);
+    const followup_search_policy_t policy = ft8_followup_search_policy(state);
+    std::vector<ranked_candidate_t> ranked;
+    ranked.reserve(candidate_count);
 
     for (int idx = 0; idx < candidate_count; ++idx) {
         const float freq_delta = abs_diff(candidate_freq_hz(state, candidates[idx]), entry.frequency);
-        if (freq_delta > freq_window) {
+        if (freq_delta > policy.freq_window_hz) {
             continue;
         }
 
         const float time_delta = abs_diff(candidate_time_sec(state, candidates[idx]), entry.time_sec);
-        if (time_delta > kFt8FollowupTimeWindowSec) {
+        if (time_delta > policy.time_window_sec) {
             continue;
         }
 
-        ranked_candidate_t ranked{candidates[idx], (freq_delta / std::max(freq_window, 1.0f))
-                                                   + (time_delta / kFt8FollowupTimeWindowSec)};
-
-        if (best_count < kFt8FollowupMaxCandidatesPerEntry) {
-            best[best_count++] = ranked;
-        } else {
-            const ranked_candidate_t &tail = best[best_count - 1];
-            if (ranked.metric > tail.metric ||
-                (ranked.metric == tail.metric && ranked.candidate.score <= tail.candidate.score)) {
-                continue;
-            }
-            best[best_count - 1] = ranked;
-        }
-
-        for (int pos = best_count - 1; pos > 0; --pos) {
-            const ranked_candidate_t &lhs = best[pos - 1];
-            const ranked_candidate_t &rhs = best[pos];
-            if (lhs.metric < rhs.metric ||
-                (lhs.metric == rhs.metric && lhs.candidate.score >= rhs.candidate.score)) {
-                break;
-            }
-            std::swap(best[pos - 1], best[pos]);
-        }
+        const float freq_term = freq_delta / std::max(policy.freq_window_hz, 1.0f);
+        const float time_term = time_delta / std::max(policy.time_window_sec, 0.1f);
+        const float score_bonus = (float) candidates[idx].score * 0.025f;
+        ranked.push_back({candidates[idx], freq_term + time_term - score_bonus});
     }
 
-    for (int idx = 0; idx < best_count; ++idx) {
-        out[idx] = best[idx].candidate;
+    std::stable_sort(ranked.begin(), ranked.end(),
+                     [](const ranked_candidate_t &lhs, const ranked_candidate_t &rhs) {
+                         if (lhs.metric != rhs.metric) {
+                             return lhs.metric < rhs.metric;
+                         }
+                         if (lhs.candidate.score != rhs.candidate.score) {
+                             return lhs.candidate.score > rhs.candidate.score;
+                         }
+                         if (lhs.candidate.time_offset != rhs.candidate.time_offset) {
+                             return lhs.candidate.time_offset < rhs.candidate.time_offset;
+                         }
+                         return lhs.candidate.freq_offset < rhs.candidate.freq_offset;
+                     });
+
+    const int selected_count = std::min((int) ranked.size(),
+                                        std::min(policy.max_candidates, kFt8FollowupMaxCandidatesPerEntry));
+    for (int idx = 0; idx < selected_count; ++idx) {
+        out[idx] = ranked[idx].candidate;
     }
-    return best_count;
+    return selected_count;
 }
 
 static void run_ft8_followup_pass(wsjtx_port_decoder_t *state,
@@ -674,26 +789,23 @@ static int64_t ft8_slot_id(const wsjtx_port_decoder_t *state) {
     return (utc_time - (slot_milliseconds - 1)) / slot_milliseconds;
 }
 
-static int ft8_slot_parity(const wsjtx_port_decoder_t *state) {
-    return (int) (ft8_slot_id(state) & 1LL);
-}
-
 static int ft8_followup_min_sync_score(const wsjtx_port_decoder_t *state) {
     return (state != nullptr && state_is_ft4(state)) ? kFt4FollowupMinSyncScore : kFt8FollowupMinSyncScore;
 }
 
-static float ft8_followup_freq_window_hz(const wsjtx_port_decoder_t *state) {
-    if (state == nullptr) {
-        return 6.0f;
-    }
+static followup_search_policy_t ft8_followup_search_policy(const wsjtx_port_decoder_t *state) {
+    const float rx_span_hz = (state == nullptr)
+                             ? 2900.0f
+                             : std::max(1000.0f, state->mon_cfg.f_max - state->mon_cfg.f_min);
+    const int sensitivity = (state == nullptr) ? 1 : state->options.qso_freq_sensitivity;
 
-    switch (state->options.qso_freq_sensitivity) {
+    switch (sensitivity) {
         case 0:
-            return 4.0f;
+            return {80.0f, 0.60f, 2};
         case 2:
-            return 8.0f;
+            return {rx_span_hz, 1.20f, kFt8FollowupMaxCandidatesPerEntry};
         default:
-            return 6.0f;
+            return {rx_span_hz, 0.90f, 3};
     }
 }
 
@@ -766,7 +878,7 @@ static bool same_ft8_followup_entry(const ft8_followup_entry_t &lhs, const ft8_f
            0 == std::strcmp(lhs.call_2, rhs.call_2) &&
            0 == std::strcmp(lhs.grid4, rhs.grid4) &&
            abs_diff(lhs.frequency, rhs.frequency) <= kFt8FollowupHistoryMatchHz &&
-           abs_diff(lhs.time_sec, rhs.time_sec) <= kFt8FollowupTimeWindowSec;
+           abs_diff(lhs.time_sec, rhs.time_sec) <= kFt8FollowupHistoryMatchTimeSec;
 }
 
 static void append_ft8_followup_entry_unique(std::vector<ft8_followup_entry_t> *entries,
@@ -789,16 +901,15 @@ static std::vector<ft8_followup_entry_t> prepare_ft8_followup_history(const wsjt
     }
 
     const int mode_index = ft8_followup_mode_index(state);
-    const int parity = ft8_slot_parity(state);
     const int64_t slot = ft8_slot_id(state);
 
     std::lock_guard<std::mutex> lock(g_ft8_followup_mutex);
-    if (g_ft8_followup_slot_ids[mode_index][parity] != slot) {
-        g_ft8_followup_previous[mode_index][parity] = g_ft8_followup_current[mode_index][parity];
-        g_ft8_followup_current[mode_index][parity].clear();
-        g_ft8_followup_slot_ids[mode_index][parity] = slot;
+    if (g_ft8_followup_slot_ids[mode_index] != slot) {
+        g_ft8_followup_previous_slot[mode_index] = g_ft8_followup_current_slot[mode_index];
+        g_ft8_followup_current_slot[mode_index].clear();
+        g_ft8_followup_slot_ids[mode_index] = slot;
     }
-    return g_ft8_followup_previous[mode_index][parity];
+    return g_ft8_followup_previous_slot[mode_index];
 }
 
 static bool ft8_followup_entry_is_covered(const wsjtx_port_decoder_t *state,
@@ -809,9 +920,6 @@ static bool ft8_followup_entry_is_covered(const wsjtx_port_decoder_t *state,
 
     for (const ft8_message &decoded : state->session_results) {
         if (!decoded.isValid) {
-            continue;
-        }
-        if (abs_diff(decoded.freq_hz, entry.frequency) > kFt8FollowupHistoryMatchHz) {
             continue;
         }
         if (is_cq_call_token(entry.call_1)) {
@@ -848,18 +956,17 @@ static void commit_ft8_followup_history(const wsjtx_port_decoder_t *state) {
     }
 
     const int mode_index = ft8_followup_mode_index(state);
-    const int parity = ft8_slot_parity(state);
     const int64_t slot = ft8_slot_id(state);
 
     std::lock_guard<std::mutex> lock(g_ft8_followup_mutex);
-    if (g_ft8_followup_slot_ids[mode_index][parity] != slot) {
-        g_ft8_followup_previous[mode_index][parity] = g_ft8_followup_current[mode_index][parity];
-        g_ft8_followup_current[mode_index][parity].clear();
-        g_ft8_followup_slot_ids[mode_index][parity] = slot;
+    if (g_ft8_followup_slot_ids[mode_index] != slot) {
+        g_ft8_followup_previous_slot[mode_index] = g_ft8_followup_current_slot[mode_index];
+        g_ft8_followup_current_slot[mode_index].clear();
+        g_ft8_followup_slot_ids[mode_index] = slot;
     }
 
     for (const ft8_followup_entry_t &entry : additions) {
-        append_ft8_followup_entry_unique(&g_ft8_followup_current[mode_index][parity], entry);
+        append_ft8_followup_entry_unique(&g_ft8_followup_current_slot[mode_index], entry);
     }
 }
 
@@ -876,6 +983,79 @@ static float ft4_peak_match_hz(const wsjtx_port_decoder_t *state) {
         default:
             return 35.0f;
     }
+}
+
+static void append_manual_ap_hint_texts(const wsjtx_port_decoder_t *state,
+                                        std::vector<std::string> *texts) {
+    if (state == nullptr || texts == nullptr) {
+        return;
+    }
+
+    const char *my_call = state->ap_hints.my_call;
+    const bool has_my_call = my_call[0] != '\0' && !has_followup_forbidden_char(my_call);
+    for (int idx = 0; idx < state->ap_hints.hint_call_count && idx < FTX_AP_MAX_HINT_CALLS; ++idx) {
+        const char *hint_call = state->ap_hints.hint_calls[idx];
+        const char *hint_grid = state->ap_hints.hint_grids[idx];
+        if (hint_call[0] == '\0' || has_followup_forbidden_char(hint_call)) {
+            continue;
+        }
+
+        if (is_plain_grid4(hint_grid)) {
+            append_ft8_followup_text(texts, std::string("CQ ") + hint_call + " " + hint_grid);
+        }
+        append_ft8_followup_text(texts, std::string("CQ ") + hint_call);
+
+        if (has_my_call && 0 != std::strcmp(my_call, hint_call)) {
+            const std::string my_to_dx = std::string(my_call) + " " + hint_call;
+            const std::string dx_to_my = std::string(hint_call) + " " + my_call;
+            append_ft8_followup_exchange_texts(texts, my_to_dx, hint_grid);
+            append_ft8_followup_exchange_texts(texts, dx_to_my, nullptr);
+        }
+    }
+}
+
+static void build_ap_pass_texts(const wsjtx_port_decoder_t *state,
+                                const std::vector<ft8_followup_entry_t> &history_entries,
+                                std::vector<std::string> *texts) {
+    if (state == nullptr || texts == nullptr) {
+        return;
+    }
+
+    texts->clear();
+    append_manual_ap_hint_texts(state, texts);
+
+    int used_history = 0;
+    for (const ft8_followup_entry_t &entry : history_entries) {
+        if (used_history >= kApPassHistoryEntries || (int) texts->size() >= kApPassMaxTexts) {
+            break;
+        }
+        build_ft8_followup_texts(state, entry, texts);
+        ++used_history;
+    }
+
+    int used_session = 0;
+    for (const ft8_message &decoded : state->session_results) {
+        if (used_session >= kApPassHistoryEntries || (int) texts->size() >= kApPassMaxTexts) {
+            break;
+        }
+        ft8_followup_entry_t entry{};
+        if (!build_ft8_followup_entry(decoded, &entry)) {
+            continue;
+        }
+        build_ft8_followup_texts(state, entry, texts);
+        ++used_session;
+    }
+}
+
+static int ft4_decode_sensitivity(const wsjtx_port_decoder_t *state) {
+    if (state == nullptr) {
+        return 1;
+    }
+    return std::max(0, std::min(state->options.decode_sensitivity, 2));
+}
+
+static bool ft4_is_deep_mode(const wsjtx_port_decoder_t *state) {
+    return state != nullptr && state->ldpc_iterations > fast_kLDPC_iterations;
 }
 
 static void build_ft4_nuttall_window(std::vector<float> *window) {
@@ -1057,14 +1237,31 @@ static void smooth_ft4_average_spectrum(const std::vector<float> &avg_power, std
     }
 }
 
-static float ft4_sync_ratio_threshold(int min_score) {
+static float ft4_sync_ratio_threshold(const wsjtx_port_decoder_t *state, int min_score) {
+    float threshold;
     if (min_score >= 10) {
-        return 1.20f;
+        threshold = 1.20f;
+    } else if (min_score >= 9) {
+        threshold = 1.15f;
+    } else {
+        threshold = 1.10f;
     }
-    if (min_score >= 9) {
-        return 1.15f;
+
+    switch (ft4_decode_sensitivity(state)) {
+        case 0:
+            threshold += 0.04f;
+            break;
+        case 2:
+            threshold -= 0.04f;
+            break;
+        default:
+            break;
     }
-    return 1.10f;
+
+    if (ft4_is_deep_mode(state)) {
+        threshold -= 0.02f;
+    }
+    return std::max(1.04f, threshold);
 }
 
 static std::vector<ft4_peak_t> find_ft4_peak_frequencies(const wsjtx_port_decoder_t *state, int min_score) {
@@ -1085,7 +1282,7 @@ static std::vector<ft4_peak_t> find_ft4_peak_frequencies(const wsjtx_port_decode
     build_ft4_baseline(avg_power, min_bin, max_bin, &baseline);
 
     std::vector<ft4_peak_t> peaks;
-    const float sync_min = ft4_sync_ratio_threshold(min_score);
+    const float sync_min = ft4_sync_ratio_threshold(state, min_score);
 
     for (int bin = min_bin; bin <= max_bin; ++bin) {
         const float base = std::max(baseline[bin], 1e-6f);
@@ -1114,13 +1311,32 @@ static std::vector<ft4_peak_t> find_ft4_peak_frequencies(const wsjtx_port_decode
         }
     }
 
-    std::sort(peaks.begin(), peaks.end(), [](const ft4_peak_t &lhs, const ft4_peak_t &rhs) {
+    std::stable_sort(peaks.begin(), peaks.end(), [](const ft4_peak_t &lhs, const ft4_peak_t &rhs) {
         if (lhs.strength != rhs.strength) {
             return lhs.strength > rhs.strength;
         }
         return lhs.frequency < rhs.frequency;
     });
-    return peaks;
+
+    std::vector<ft4_peak_t> filtered;
+    filtered.reserve(peaks.size());
+    const float min_peak_spacing_hz = std::max(12.0f, ft4_peak_match_hz(state) * 0.55f);
+    for (const ft4_peak_t &peak : peaks) {
+        bool too_close = false;
+        for (const ft4_peak_t &kept : filtered) {
+            if (abs_diff(peak.frequency, kept.frequency) < min_peak_spacing_hz) {
+                too_close = true;
+                break;
+            }
+        }
+        if (!too_close) {
+            filtered.push_back(peak);
+        }
+        if ((int) filtered.size() >= kMax_candidates) {
+            break;
+        }
+    }
+    return filtered;
 }
 
 static float candidate_ft4_peak_strength(const wsjtx_port_decoder_t *state,
@@ -1130,8 +1346,10 @@ static float candidate_ft4_peak_strength(const wsjtx_port_decoder_t *state,
     const float peak_match_hz = ft4_peak_match_hz(state);
     float best_strength = -1.0f;
     for (const ft4_peak_t &peak : peaks) {
-        if (abs_diff(frequency, peak.frequency) <= peak_match_hz) {
-            best_strength = std::max(best_strength, peak.strength);
+        const float delta = abs_diff(frequency, peak.frequency);
+        if (delta <= peak_match_hz) {
+            const float closeness = 1.0f - (delta / std::max(peak_match_hz, 1.0f));
+            best_strength = std::max(best_strength, peak.strength + 0.12f * closeness);
         }
     }
     return best_strength;
@@ -1155,6 +1373,7 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
         candidate_t candidate;
         float peak_strength;
         bool matched_peak;
+        float metric;
     };
 
     std::vector<ranked_candidate_t> ranked;
@@ -1163,10 +1382,14 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
     for (int idx = 0; idx < generic_count; ++idx) {
         const float peak_strength = candidate_ft4_peak_strength(state, generic_candidates[idx], peaks);
         const bool matched_peak = peak_strength > 0.0f;
-        if (!matched_peak && generic_candidates[idx].score < min_score + 3) {
+        const int score_margin = (ft4_decode_sensitivity(state) == 2) ? 2 : 3;
+        if (!matched_peak && generic_candidates[idx].score < min_score + score_margin) {
             continue;
         }
-        ranked.push_back({generic_candidates[idx], peak_strength, matched_peak});
+        const float metric = peak_strength
+                             + 0.035f * (float) generic_candidates[idx].score
+                             + 0.010f * (float) generic_candidates[idx].snr;
+        ranked.push_back({generic_candidates[idx], peak_strength, matched_peak, metric});
     }
 
     if (ranked.empty()) {
@@ -1180,11 +1403,17 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
                          if (lhs.matched_peak != rhs.matched_peak) {
                              return lhs.matched_peak > rhs.matched_peak;
                          }
+                         if (lhs.metric != rhs.metric) {
+                             return lhs.metric > rhs.metric;
+                         }
                          if (lhs.peak_strength != rhs.peak_strength) {
                              return lhs.peak_strength > rhs.peak_strength;
                          }
                          if (lhs.candidate.score != rhs.candidate.score) {
                              return lhs.candidate.score > rhs.candidate.score;
+                         }
+                         if (lhs.candidate.snr != rhs.candidate.snr) {
+                             return lhs.candidate.snr > rhs.candidate.snr;
                          }
                          if (lhs.candidate.time_offset != rhs.candidate.time_offset) {
                              return lhs.candidate.time_offset < rhs.candidate.time_offset;
@@ -1206,13 +1435,23 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
 static int collect_candidates_for_pass(wsjtx_port_decoder_t *state,
                                        const wsjtx::SessionPass &pass,
                                        candidate_t out[kMax_candidates]) {
+    int count;
+
     switch (pass.candidate_source) {
         case wsjtx::CandidateSource::kFt4RawFft:
-            return collect_ft4_candidates(state, pass.min_sync_score, out);
+            count = collect_ft4_candidates(state, pass.min_sync_score, out);
+            break;
         case wsjtx::CandidateSource::kWaterfall:
         default:
-            return collect_sorted_candidates(state, pass.min_sync_score, out);
+            count = collect_sorted_candidates(state, pass.min_sync_score, out);
+            break;
     }
+
+    count = clamp_candidate_count(count);
+    if (pass.max_candidates > 0 && count > pass.max_candidates) {
+        count = pass.max_candidates;
+    }
+    return count;
 }
 
 static void append_subtract_history(std::vector<subtract_job_t> *history,
@@ -1221,22 +1460,36 @@ static void append_subtract_history(std::vector<subtract_job_t> *history,
         return;
     }
     history->insert(history->end(), pass_jobs.begin(), pass_jobs.end());
+    if ((int) history->size() > kSubtractHistoryBudget) {
+        history->erase(history->begin(),
+                       history->begin() + ((int) history->size() - kSubtractHistoryBudget));
+    }
 }
 
-static void rebuild_for_pass(wsjtx_port_decoder_t *state, const wsjtx::SessionPass &pass) {
+static bool rebuild_for_pass(wsjtx_port_decoder_t *state, const wsjtx::SessionPass &pass) {
     if (state == nullptr) {
-        return;
+        return false;
     }
 
     if (pass.phase_ticks <= 0) {
-        return;
+        return has_full_slot_samples(state);
     }
 
     if (pass.phase_ticks >= kFt8PhaseTicksFull) {
-        rebuild_fullslot_waterfall(state);
-        return;
+        const int sample_count = sample_count_for_phase(state, pass.phase_ticks);
+        if (sample_count <= 0) {
+            return false;
+        }
+        rebuild_waterfall(state, sample_count);
+        return true;
     }
-    rebuild_waterfall(state, sample_count_for_phase(state, pass.phase_ticks));
+
+    const int sample_count = sample_count_for_phase(state, pass.phase_ticks);
+    if (sample_count <= 0) {
+        return false;
+    }
+    rebuild_waterfall(state, sample_count);
+    return true;
 }
 
 static bool should_continue_after_empty_pass(const wsjtx::SessionPass &pass) {
@@ -1274,9 +1527,12 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
     }
 
     std::vector<subtract_job_t> subtract_history;
+    subtract_history.reserve((size_t) std::max(4, state->options.multi_decode_round_count * 8));
 
     for (const wsjtx::SessionPass &pass : plan.passes) {
-        rebuild_for_pass(state, pass);
+        if (!rebuild_for_pass(state, pass)) {
+            continue;
+        }
         if (pass.apply_subtract_history && !subtract_history.empty()) {
             apply_subtract_jobs(state, subtract_history, plan.mode.subtract_mode);
         }
@@ -1290,11 +1546,20 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
         }
 
         std::vector<subtract_job_t> pass_jobs;
+        pass_jobs.reserve((size_t) std::max(4, pass.max_candidates));
+        std::vector<std::string> ap_pass_texts;
+        const std::vector<std::string> *ap_texts = nullptr;
+        if (pass.role == wsjtx::PassRole::kAp) {
+            build_ap_pass_texts(state, followup_history, &ap_pass_texts);
+            if (!ap_pass_texts.empty()) {
+                ap_texts = &ap_pass_texts;
+            }
+        }
         const int new_results = decode_candidates(state,
                                                   state->candidate_list,
                                                   candidate_count,
                                                   pass.iterations,
-                                                  pass.limit_early_dt ? kFt8EarlySubtractDtSec : -1.0f,
+                                                  ap_texts,
                                                   &pass_jobs);
         if (new_results == 0) {
             if (should_continue_after_empty_pass(pass)) {
@@ -1309,7 +1574,7 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
         }
     }
 
-    if (enable_ft8_followup && !followup_history.empty()) {
+    if (enable_ft8_followup && has_full_slot_samples(state) && !followup_history.empty()) {
         run_ft8_followup_pass(state, subtract_history, followup_history);
     }
 
@@ -1337,6 +1602,7 @@ bool wsjtx_port_init_decoder(decoder_t *decoder,
     }
 
     state->utc_time = utcTime;
+    state->slot_samples = num_samples;
     state->num_samples = num_samples;
     state->ldpc_iterations = fast_kLDPC_iterations;
     state->mon_cfg.f_min = 100;
@@ -1348,6 +1614,7 @@ bool wsjtx_port_init_decoder(decoder_t *decoder,
     state->options = wsjtx::DefaultDecoderOptions();
     monitor_init(&state->mon, &state->mon_cfg);
     state->raw_samples.reserve(std::max(num_samples, 0));
+    state->session_results.reserve(kMax_decoded_messages);
     decoder->backend_state = state;
     return true;
 }
@@ -1434,6 +1701,7 @@ void wsjtx_port_reset(decoder_t *decoder, long utcTime, int num_samples) {
     }
 
     state->utc_time = utcTime;
+    state->slot_samples = num_samples;
     state->num_samples = num_samples;
     state->num_candidates = 0;
     state->raw_samples.clear();

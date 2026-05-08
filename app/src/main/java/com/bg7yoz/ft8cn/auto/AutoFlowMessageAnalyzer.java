@@ -131,7 +131,7 @@ public final class AutoFlowMessageAnalyzer {
                                                    int signalFormat,
                                                    long band,
                                                    boolean allowDxpeditionHound) {
-        if (message == null || !message.isAutoFlowRelevant() || message.isWeakSignal) {
+        if (message == null || !message.isAutoFlowRelevant()) {
             return false;
         }
 

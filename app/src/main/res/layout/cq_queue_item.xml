@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        xmlns:app="http://schemas.android.com/apk/res-auto"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:layout_width="match_parent"
+        android:layout_height="46dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginEnd="2dp"
+        android:layout_marginBottom="1dp"
+        android:background="@drawable/calling_list_cell_style">
+
+    <TextView
+            android:id="@+id/cqQueueRankTextView"
+            android:layout_width="26dp"
+            android:layout_height="0dp"
+            android:gravity="center"
+            android:textColor="@color/text_view_color"
+            android:textSize="11sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="01" />
+
+    <TextView
+            android:id="@+id/cqQueueCallsignTextView"
+            android:layout_width="86dp"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/text_view_color"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            app:layout_constraintStart_toEndOf="@+id/cqQueueRankTextView"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="BG7YOZ" />
+
+    <TextView
+            android:id="@+id/cqQueueBadgeTextView"
+            android:layout_width="86dp"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/text_view_color"
+            android:textSize="9sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toEndOf="@+id/cqQueueRankTextView"
+            app:layout_constraintTop_toBottomOf="@+id/cqQueueCallsignTextView"
+            tools:text="DIR NEW" />
+
+    <TextView
+            android:id="@+id/cqQueueMetaTextView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/text_view_color"
+            android:textSize="11sp"
+            app:layout_constraintEnd_toStartOf="@+id/cqQueuePromoteButton"
+            app:layout_constraintStart_toEndOf="@+id/cqQueueCallsignTextView"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="1400Hz -08dB OL50 800km x2" />
+
+    <TextView
+            android:id="@+id/cqQueueMessageTextView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/text_view_color"
+            android:textSize="10sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@+id/cqQueuePromoteButton"
+            app:layout_constraintStart_toEndOf="@+id/cqQueueCallsignTextView"
+            app:layout_constraintTop_toBottomOf="@+id/cqQueueMetaTextView"
+            tools:text="CQ DX BG7YOZ OL50" />
+
+    <Button
+            android:id="@+id/cqQueuePromoteButton"
+            android:layout_width="34dp"
+            android:layout_height="30dp"
+            android:layout_marginEnd="2dp"
+            android:background="@drawable/imagebutton_style"
+            android:minHeight="0dp"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="@string/cq_queue_promote"
+            android:textColor="@color/text_view_color"
+            android:textSize="9sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@+id/cqQueueNowButton"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:ignore="TouchTargetSizeCheck" />
+
+    <Button
+            android:id="@+id/cqQueueNowButton"
+            android:layout_width="38dp"
+            android:layout_height="30dp"
+            android:layout_marginEnd="2dp"
+            android:background="@drawable/imagebutton_style"
+            android:minHeight="0dp"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="@string/cq_queue_now"
+            android:textColor="@color/text_view_color"
+            android:textSize="9sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@+id/cqQueueRemoveButton"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:ignore="TouchTargetSizeCheck" />
+
+    <Button
+            android:id="@+id/cqQueueRemoveButton"
+            android:layout_width="32dp"
+            android:layout_height="30dp"
+            android:layout_marginEnd="2dp"
+            android:background="@drawable/imagebutton_style"
+            android:minHeight="0dp"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="@string/cq_queue_remove"
+            android:textColor="@color/text_view_color"
+            android:textSize="9sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:ignore="TouchTargetSizeCheck" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -213,7 +213,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderMonitorPressFloat(JNI
     int arr_len = env->GetArrayLength(buffer);
     auto *c_array = (jfloat *) malloc(arr_len * sizeof(jfloat));
     env->GetFloatArrayRegion(buffer, 0, arr_len, c_array);
-    decoder_monitor_press(c_array, dd);
+    decoder_monitor_press_samples(c_array, dd, arr_len);
     free(c_array);
 }
 

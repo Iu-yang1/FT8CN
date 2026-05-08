@@ -291,7 +291,7 @@ public class CallingListAdapter extends RecyclerView.Adapter<CallingListAdapter.
 //            setQueryHolderCallsign(holder);//查询呼号归属地
 //        }
 
-        if (holder.ft8Message.freq_hz <= 0.01f) {//这是发射界面
+        if (holder.ft8Message.isTransmitMessage || holder.ft8Message.freq_hz <= 0.01f) {//这是发射界面
             holder.callingListIdBTextView.setVisibility(View.GONE);
             holder.callListDtTextView.setVisibility(View.GONE);
             holder.callingListFreqTextView.setText("TX");

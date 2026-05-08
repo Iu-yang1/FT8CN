@@ -29,6 +29,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
+import com.bg7yoz.ft8cn.cq.CqRankMethod;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.OperationBand;
 import com.bg7yoz.ft8cn.database.RigNameList;
@@ -58,6 +59,7 @@ public class ConfigFragment extends Fragment {
     private LaunchSupervisionSpinnerAdapter launchSupervisionSpinnerAdapter;
     private PttDelaySpinnerAdapter pttDelaySpinnerAdapter;
     private NoReplyLimitSpinnerAdapter noReplyLimitSpinnerAdapter;
+    private CqRankMethodSpinnerAdapter cqRankMethodSpinnerAdapter;
     //private SerialPortSpinnerAdapter serialPortSpinnerAdapter;
 
     public ConfigFragment() {
@@ -261,6 +263,27 @@ public class ConfigFragment extends Fragment {
     };
 
     //修饰符
+    private final TextWatcher onCqDirectedPrefixesChanged = new TextWatcher() {
+        @Override
+        public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+
+        }
+
+        @Override
+        public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+
+        }
+
+        @Override
+        public void afterTextChanged(Editable editable) {
+            GeneralVariables.cqDirectedCqPrefixes = editable.toString().toUpperCase().trim();
+            writeConfig("cqDirectedCqPrefixes", GeneralVariables.cqDirectedCqPrefixes);
+            if (mainViewModel != null && mainViewModel.ft8TransmitSignal != null) {
+                mainViewModel.ft8TransmitSignal.updateCqQueueSettings();
+            }
+        }
+    };
+
     private final TextWatcher onModifierEditorChanged = new TextWatcher() {
         @Override
         public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
@@ -394,6 +417,7 @@ public class ConfigFragment extends Fragment {
 
         //设置无回应次数中断
         setNoReplyLimitSpinner();
+        setCqQueue();
 
         //设置各个spinner的OnItemSelected事件
         setSpinnerOnItemSelected();
@@ -918,6 +942,14 @@ public class ConfigFragment extends Fragment {
         }
     }
 
+    private void setCqQueueSwitchText() {
+        if (binding.cqQueueEnabledSwitch.isChecked()) {
+            binding.cqQueueEnabledSwitch.setText(getString(R.string.cq_queue_enabled));
+        } else {
+            binding.cqQueueEnabledSwitch.setText(getString(R.string.cq_queue_disabled));
+        }
+    }
+
     /**
      * 设置swr告警开关文本
      */
@@ -1138,6 +1170,75 @@ public class ConfigFragment extends Fragment {
 
     }
 
+
+    private void setCqQueue() {
+        binding.cqQueueEnabledSwitch.setOnCheckedChangeListener(null);
+        binding.cqQueueEnabledSwitch.setChecked(GeneralVariables.cqQueueEnabled);
+        setCqQueueSwitchText();
+        binding.cqQueueEnabledSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+                GeneralVariables.cqQueueEnabled = checked;
+                writeConfig("cqQueueEnabled", checked ? "1" : "0");
+                setCqQueueSwitchText();
+                if (mainViewModel != null && mainViewModel.ft8TransmitSignal != null) {
+                    mainViewModel.ft8TransmitSignal.updateCqQueueSettings();
+                }
+            }
+        });
+
+        cqRankMethodSpinnerAdapter = new CqRankMethodSpinnerAdapter(requireContext());
+        binding.cqRankMethodSpinner.setAdapter(cqRankMethodSpinnerAdapter);
+        binding.cqRankMethodSpinner.setSelection(CqRankMethod.positionOf(GeneralVariables.cqRankMethod));
+        binding.cqRankMethodSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
+                GeneralVariables.cqRankMethod = (int) cqRankMethodSpinnerAdapter.getItemId(i);
+                writeConfig("cqRankMethod", String.valueOf(GeneralVariables.cqRankMethod));
+                if (mainViewModel != null && mainViewModel.ft8TransmitSignal != null) {
+                    mainViewModel.ft8TransmitSignal.updateCqQueueSettings();
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> adapterView) {
+
+            }
+        });
+
+        final String[] maxQueueSizes = {"5", "10", "20", "50"};
+        android.widget.ArrayAdapter<String> maxQueueAdapter = new android.widget.ArrayAdapter<>(
+                requireContext(), android.R.layout.simple_spinner_item, maxQueueSizes);
+        maxQueueAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        binding.cqMaxQueueSpinner.setAdapter(maxQueueAdapter);
+        int maxQueuePosition = 2;
+        for (int i = 0; i < maxQueueSizes.length; i++) {
+            if (Integer.parseInt(maxQueueSizes[i]) == GeneralVariables.cqMaxQueueSize) {
+                maxQueuePosition = i;
+                break;
+            }
+        }
+        binding.cqMaxQueueSpinner.setSelection(maxQueuePosition);
+        binding.cqMaxQueueSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
+                GeneralVariables.cqMaxQueueSize = Integer.parseInt(maxQueueSizes[i]);
+                writeConfig("cqMaxQueueSize", maxQueueSizes[i]);
+                if (mainViewModel != null && mainViewModel.ft8TransmitSignal != null) {
+                    mainViewModel.ft8TransmitSignal.updateCqQueueSettings();
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> adapterView) {
+
+            }
+        });
+
+        binding.cqDirectedCqEdit.removeTextChangedListener(onCqDirectedPrefixesChanged);
+        binding.cqDirectedCqEdit.setText(GeneralVariables.cqDirectedCqPrefixes);
+        binding.cqDirectedCqEdit.addTextChangedListener(onCqDirectedPrefixesChanged);
+    }
 
     private void setDecodeMode() {
         binding.decodeModeRadioGroup.clearCheck();
@@ -1410,6 +1511,7 @@ public class ConfigFragment extends Fragment {
                 if (binding.audio24kRadioButton.isChecked()) GeneralVariables.audioSampleRate=24000;
                 if (binding.audio48kRadioButton.isChecked()) GeneralVariables.audioSampleRate=48000;
                 writeConfig("audioRate", String.valueOf(GeneralVariables.audioSampleRate));
+                mainViewModel.refreshRecorderSampleRate();
             }
         };
 

@@ -11,13 +11,19 @@
             android:id="@+id/configFrameLayout"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:background="@drawable/modern_screen_background"
             tools:context=".ui.ConfigFragment">
 
         <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/config_fragment_bar"
                 android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:background="@color/purple_500"
+                android:layout_height="88dp"
+                android:background="@drawable/modern_header_panel"
+                android:elevation="8dp"
+                android:paddingStart="20dp"
+                android:paddingTop="16dp"
+                android:paddingEnd="20dp"
+                android:paddingBottom="14dp"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -30,11 +36,22 @@
                     android:layout_height="wrap_content"
                     android:text="@string/nav_menu_title_config"
                     android:textColor="@color/bar_text_view_color"
-                    android:textSize="20sp"
-                    app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintEnd_toEndOf="parent"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
+
+            <TextView
+                    android:id="@+id/configSubtitleTextView"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text=""
+                    android:textColor="#D9F8FAFC"
+                    android:textSize="12sp"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="@+id/textView7"
+                    app:layout_constraintTop_toBottomOf="@+id/textView7" />
         </androidx.constraintlayout.widget.ConstraintLayout>
 
         <ImageView
@@ -53,7 +70,12 @@
                 android:id="@+id/scrollView3"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_marginTop="2dp"
+                android:layout_marginTop="10dp"
+                android:clipToPadding="false"
+                android:paddingStart="10dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="10dp"
                 app:layout_constraintBottom_toTopOf="@+id/aboutButton"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
@@ -2460,7 +2482,7 @@
 
 
                     <androidx.constraintlayout.widget.ConstraintLayout
-                            android:id="@+id/swlOprLayout"
+                            android:id="@+id/cqQueueLayout"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
@@ -2468,6 +2490,120 @@
                             app:layout_constraintEnd_toEndOf="parent"
                             app:layout_constraintStart_toStartOf="parent"
                             app:layout_constraintTop_toBottomOf="@+id/excludedLayout">
+
+                        <Switch
+                                android:id="@+id/cqQueueEnabledSwitch"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:checked="true"
+                                android:text="@string/cq_queue_enabled"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                android:thumbTint="?attr/colorPrimary"
+                                android:thumbTintMode="multiply"
+                                android:trackTint="@color/button_start_color"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toTopOf="parent"
+                                tools:ignore="TouchTargetSizeCheck,UseSwitchCompatOrMaterialXml" />
+
+                        <TextView
+                                android:id="@+id/cqRankMethodText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/cq_rank_method"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/cqQueueEnabledSwitch" />
+
+                        <Spinner
+                                android:id="@+id/cqRankMethodSpinner"
+                                android:layout_width="0dp"
+                                android:layout_height="32dp"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="4dp"
+                                android:layout_marginEnd="8dp"
+                                android:background="@drawable/editor_style"
+                                android:dropDownWidth="match_parent"
+                                android:popupBackground="@drawable/spinner_style"
+                                android:spinnerMode="dropdown"
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintStart_toEndOf="@+id/cqRankMethodText"
+                                app:layout_constraintTop_toBottomOf="@+id/cqQueueEnabledSwitch"
+                                tools:ignore="TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+                        <TextView
+                                android:id="@+id/cqMaxQueueText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/cq_max_queue"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/cqRankMethodSpinner" />
+
+                        <Spinner
+                                android:id="@+id/cqMaxQueueSpinner"
+                                android:layout_width="80dp"
+                                android:layout_height="32dp"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="4dp"
+                                android:background="@drawable/editor_style"
+                                android:popupBackground="@drawable/spinner_style"
+                                android:spinnerMode="dropdown"
+                                app:layout_constraintStart_toEndOf="@+id/cqMaxQueueText"
+                                app:layout_constraintTop_toBottomOf="@+id/cqRankMethodSpinner"
+                                tools:ignore="TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+                        <TextView
+                                android:id="@+id/cqDirectedCqText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/cq_directed_prefixes"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/cqMaxQueueSpinner" />
+
+                        <EditText
+                                android:id="@+id/cqDirectedCqEdit"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_marginTop="4dp"
+                                android:layout_marginEnd="8dp"
+                                android:layout_marginBottom="6dp"
+                                android:background="@drawable/editor_style"
+                                android:hint="@string/cq_directed_prefixes_hint"
+                                android:inputType="textCapCharacters"
+                                android:minHeight="32dp"
+                                android:textColor="@color/text_view_color"
+                                android:textSize="14sp"
+                                app:layout_constraintBottom_toBottomOf="parent"
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/cqDirectedCqText"
+                                tools:ignore="TextContrastCheck,TouchTargetSizeCheck" />
+
+                    </androidx.constraintlayout.widget.ConstraintLayout>
+
+
+                    <androidx.constraintlayout.widget.ConstraintLayout
+                            android:id="@+id/swlOprLayout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:background="@drawable/editor_layout_style"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@+id/cqQueueLayout">
 
                         <Switch
                                 android:id="@+id/saveSWLSwitch"
@@ -2628,7 +2764,12 @@
                 android:id="@+id/aboutButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/imagebutton_style"
+                android:elevation="6dp"
                 android:text="@string/about_me"
+                android:textColor="@color/bar_text_view_color"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toStartOf="@+id/faqButton"
                 app:layout_constraintHorizontal_bias="0.5"
@@ -2638,8 +2779,12 @@
                 android:id="@+id/faqButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
                 android:layout_marginTop="3dp"
+                android:background="@drawable/imagebutton_style"
+                android:elevation="6dp"
                 android:text="@string/FAQ"
+                android:textColor="@color/bar_text_view_color"
                 app:layout_constraintBottom_toBottomOf="@+id/aboutButton"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintHorizontal_bias="0.5"

@@ -310,10 +310,20 @@ public class GeneralVariables {
 
     public static boolean autoFollowCQ = true;
     public static boolean autoCallFollow = true;
+    public static boolean cqQueueEnabled = true;
+    public static int cqMaxQueueSize = 20;
+    public static int cqRankMethod = 3;
+    public static String cqDirectedCqPrefixes = "";
     public static boolean autoDxpeditionHound = true;
     public static boolean manualDxpeditionHoundMode = false;
     public static boolean manualDxpeditionFoxMode = false;
     public static boolean dxpeditionFoxHoldFrequency = true;
+    public static int dxpeditionFoxTxSlots = 1;
+    public static boolean dxpeditionFoxManualSlotFrequency = false;
+    public static int dxpeditionFoxSlotStartHz = 1300;
+    public static int dxpeditionFoxSlotStepHz = 60;
+    public static boolean dxpeditionFoxAutoSpecialMessage = true;
+    public static boolean dxpeditionFoxCqOnFreeSlot = true;
     public static String manualDxpeditionMacroCustom1 = "{DXCALL} RR73";
     public static String manualDxpeditionMacroCustom2 = "{DXCALL} {MYCALL} {RPT}";
     public static ArrayList<String> QSL_Callsign_list = new ArrayList<>();

@@ -22,6 +22,7 @@ import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
+import com.bg7yoz.ft8cn.ft8transmit.DxpeditionFoxSlotFrequencyConfig;
 import com.bg7yoz.ft8cn.ft8signal.FT8Package;
 import com.bg7yoz.ft8cn.log.OnQueryQSLCallsign;
 import com.bg7yoz.ft8cn.log.OnQueryQSLRecordCallsign;
@@ -2144,6 +2145,27 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("autoCallFollow")) {
                     GeneralVariables.autoCallFollow = (result.equals("") || result.equals("1"));
                 }
+                if (name.equalsIgnoreCase("cqQueueEnabled")) {
+                    GeneralVariables.cqQueueEnabled = (result.equals("") || result.equals("1"));
+                }
+                if (name.equalsIgnoreCase("cqMaxQueueSize")) {
+                    try {
+                        int value = result.equals("") ? 20 : Integer.parseInt(result);
+                        GeneralVariables.cqMaxQueueSize = Math.max(1, Math.min(value, 100));
+                    } catch (Exception e) {
+                        GeneralVariables.cqMaxQueueSize = 20;
+                    }
+                }
+                if (name.equalsIgnoreCase("cqRankMethod")) {
+                    try {
+                        GeneralVariables.cqRankMethod = result.equals("") ? 3 : Integer.parseInt(result);
+                    } catch (Exception e) {
+                        GeneralVariables.cqRankMethod = 3;
+                    }
+                }
+                if (name.equalsIgnoreCase("cqDirectedCqPrefixes")) {
+                    GeneralVariables.cqDirectedCqPrefixes = result == null ? "" : result.toUpperCase();
+                }
                 if (name.equalsIgnoreCase("autoDxpeditionHound")) {
                     GeneralVariables.autoDxpeditionHound = (result.equals("") || result.equals("1"));
                 }
@@ -2155,6 +2177,39 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 }
                 if (name.equalsIgnoreCase("dxpeditionFoxHoldFrequency")) {
                     GeneralVariables.dxpeditionFoxHoldFrequency = (result.equals("") || result.equals("1"));
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxTxSlots")) {
+                    try {
+                        int value = result.equals("") ? 1 : Integer.parseInt(result);
+                        GeneralVariables.dxpeditionFoxTxSlots = Math.max(1, Math.min(value, 5));
+                    } catch (Exception e) {
+                        GeneralVariables.dxpeditionFoxTxSlots = 1;
+                    }
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxManualSlotFrequency")) {
+                    GeneralVariables.dxpeditionFoxManualSlotFrequency = result.equals("1");
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxSlotStartHz")) {
+                    try {
+                        int value = result.equals("") ? DxpeditionFoxSlotFrequencyConfig.MANUAL_START_HZ : Integer.parseInt(result);
+                        GeneralVariables.dxpeditionFoxSlotStartHz = DxpeditionFoxSlotFrequencyConfig.clampManualFrequency(value);
+                    } catch (Exception e) {
+                        GeneralVariables.dxpeditionFoxSlotStartHz = DxpeditionFoxSlotFrequencyConfig.MANUAL_START_HZ;
+                    }
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxSlotStepHz")) {
+                    try {
+                        int value = result.equals("") ? DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ : Integer.parseInt(result);
+                        GeneralVariables.dxpeditionFoxSlotStepHz = DxpeditionFoxSlotFrequencyConfig.clampStep(value);
+                    } catch (Exception e) {
+                        GeneralVariables.dxpeditionFoxSlotStepHz = DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ;
+                    }
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxAutoSpecialMessage")) {
+                    GeneralVariables.dxpeditionFoxAutoSpecialMessage = (result.equals("") || result.equals("1"));
+                }
+                if (name.equalsIgnoreCase("dxpeditionFoxCqOnFreeSlot")) {
+                    GeneralVariables.dxpeditionFoxCqOnFreeSlot = (result.equals("") || result.equals("1"));
                 }
                 if (name.equalsIgnoreCase("manualDxpeditionMacroCustom1")) {
                     GeneralVariables.manualDxpeditionMacroCustom1 = result.equals("")

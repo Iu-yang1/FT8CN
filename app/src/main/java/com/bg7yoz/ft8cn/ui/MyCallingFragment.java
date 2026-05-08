@@ -16,6 +16,7 @@ import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputFilter;
+import android.text.InputType;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -25,6 +26,7 @@ import android.view.ViewGroup;
 import android.view.animation.AnimationUtils;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
@@ -47,7 +49,9 @@ import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
+import com.bg7yoz.ft8cn.cq.CqCallEntry;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
+import com.bg7yoz.ft8cn.ft8transmit.DxpeditionFoxSlotFrequencyConfig;
 import com.bg7yoz.ft8cn.ft8transmit.DxpeditionMacroSupport;
 import com.bg7yoz.ft8cn.ft8transmit.FunctionOfTransmit;
 import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
@@ -63,6 +67,7 @@ public class MyCallingFragment extends Fragment {
 
     private RecyclerView transmitRecycleView;
     private CallingListAdapter transmitCallListAdapter;
+    private CqQueueAdapter cqQueueAdapter;
     private FunctionOrderSpinnerAdapter functionOrderSpinnerAdapter;
     private boolean updatingDxpeditionModeUi = false;
 
@@ -83,12 +88,168 @@ public class MyCallingFragment extends Fragment {
                 && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE;
         binding.dxpeditionManualCheckBox.setEnabled(enabled);
         binding.dxpeditionFoxCheckBox.setEnabled(enabled);
+        boolean foxSlotsEnabled = enabled && binding.dxpeditionFoxCheckBox.isChecked();
+        binding.dxpeditionTxSlotsButton.setVisibility(foxSlotsEnabled ? View.VISIBLE : View.GONE);
+        binding.dxpeditionTxSlotsButton.setEnabled(foxSlotsEnabled);
+        binding.dxpeditionTxSlotsButton.setAlpha(foxSlotsEnabled ? 1.0f : 0.45f);
+        if (mainViewModel != null && mainViewModel.ft8TransmitSignal != null) {
+            String slotsText = getString(
+                    R.string.dxpedition_tx_slots_button,
+                    mainViewModel.ft8TransmitSignal.getDxpeditionFoxTxSlots());
+            if (GeneralVariables.dxpeditionFoxManualSlotFrequency) {
+                slotsText += "*";
+            }
+            binding.dxpeditionTxSlotsButton.setText(slotsText);
+        }
         if (!enabled && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
             applyManualDxpeditionMode(false, false, true);
         }
         binding.dxpeditionManualCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
         binding.dxpeditionFoxCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
         updateDxpeditionMacroUi();
+    }
+
+    private void showDxpeditionTxSlotsPicker() {
+        showDxpeditionFoxTransmitSettingsDialog();
+    }
+
+    private void showDxpeditionTxFrequencyDialog() {
+        showDxpeditionFoxTransmitSettingsDialog();
+    }
+
+    private int parseTxFrequencyInput(EditText input, int fallback) {
+        if (input == null || input.getText() == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(input.getText().toString().trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private void showDxpeditionFoxTransmitSettingsDialog() {
+        if (binding == null || mainViewModel == null || mainViewModel.ft8TransmitSignal == null) {
+            return;
+        }
+
+        LinearLayout root = new LinearLayout(requireContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        int padding = (int) (16 * requireContext().getResources().getDisplayMetrics().density);
+        root.setPadding(padding, padding, padding, 0);
+
+        TextView slotsLabel = new TextView(requireContext());
+        slotsLabel.setText(R.string.dxpedition_tx_slots_title);
+        root.addView(slotsLabel);
+
+        Spinner slotsSpinner = new Spinner(requireContext());
+        String[] slotItems = new String[5];
+        for (int i = 0; i < slotItems.length; i++) {
+            slotItems[i] = getString(R.string.dxpedition_tx_slots_item, i + 1);
+        }
+        ArrayAdapter<String> slotAdapter = new ArrayAdapter<>(
+                requireContext(),
+                android.R.layout.simple_spinner_item,
+                slotItems
+        );
+        slotAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        slotsSpinner.setAdapter(slotAdapter);
+        slotsSpinner.setSelection(mainViewModel.ft8TransmitSignal.getDxpeditionFoxTxSlots() - 1);
+        root.addView(slotsSpinner);
+
+        CheckBox manualCheckBox = new CheckBox(requireContext());
+        manualCheckBox.setText(R.string.dxpedition_tx_frequency_manual);
+        manualCheckBox.setChecked(GeneralVariables.dxpeditionFoxManualSlotFrequency);
+        root.addView(manualCheckBox);
+
+        TextView standardView = new TextView(requireContext());
+        standardView.setText(R.string.dxpedition_tx_frequency_standard_item);
+        root.addView(standardView);
+
+        EditText startInput = new EditText(requireContext());
+        startInput.setSingleLine(true);
+        startInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        startInput.setHint(R.string.dxpedition_tx_frequency_start_hint);
+        startInput.setText(String.valueOf(DxpeditionFoxSlotFrequencyConfig.getStartHz()));
+        root.addView(startInput);
+
+        EditText stepInput = new EditText(requireContext());
+        stepInput.setSingleLine(true);
+        stepInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        stepInput.setHint(R.string.dxpedition_tx_frequency_step_hint);
+        stepInput.setText(String.valueOf(DxpeditionFoxSlotFrequencyConfig.getStepHz()));
+        root.addView(stepInput);
+
+        TextView previewView = new TextView(requireContext());
+        root.addView(previewView);
+
+        Runnable refreshPreview = () -> {
+            boolean manual = manualCheckBox.isChecked();
+            int slots = slotsSpinner.getSelectedItemPosition() + 1;
+            int start = DxpeditionFoxSlotFrequencyConfig.clampManualFrequency(
+                    parseTxFrequencyInput(startInput, DxpeditionFoxSlotFrequencyConfig.MANUAL_START_HZ));
+            int step = DxpeditionFoxSlotFrequencyConfig.clampStep(
+                    parseTxFrequencyInput(stepInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ));
+            previewView.setText(getString(
+                    R.string.dxpedition_tx_frequency_preview,
+                    DxpeditionFoxSlotFrequencyConfig.buildPreview(
+                            slots,
+                            manual,
+                            start,
+                            step)));
+        };
+
+        slotsSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        manualCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> refreshPreview.run());
+        TextWatcher watcher = new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                refreshPreview.run();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        };
+        startInput.addTextChangedListener(watcher);
+        stepInput.addTextChangedListener(watcher);
+        refreshPreview.run();
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.dxpedition_tx_settings_title)
+                .setView(root)
+                .setPositiveButton(R.string.ok_confirmed, (dialogInterface, which) -> {
+                    int slots = slotsSpinner.getSelectedItemPosition() + 1;
+                    boolean manual = manualCheckBox.isChecked();
+                    int start = DxpeditionFoxSlotFrequencyConfig.clampManualFrequency(
+                            parseTxFrequencyInput(startInput, DxpeditionFoxSlotFrequencyConfig.MANUAL_START_HZ));
+                    int step = DxpeditionFoxSlotFrequencyConfig.clampStep(
+                            parseTxFrequencyInput(stepInput, DxpeditionFoxSlotFrequencyConfig.STANDARD_STEP_HZ));
+                    mainViewModel.ft8TransmitSignal.setDxpeditionFoxTxSlots(slots);
+                    mainViewModel.databaseOpr.writeConfig("dxpeditionFoxTxSlots", String.valueOf(slots), null);
+                    mainViewModel.ft8TransmitSignal.setDxpeditionFoxSlotFrequencyConfig(manual, start, step);
+                    mainViewModel.databaseOpr.writeConfig("dxpeditionFoxManualSlotFrequency", manual ? "1" : "0", null);
+                    mainViewModel.databaseOpr.writeConfig("dxpeditionFoxSlotStartHz", String.valueOf(start), null);
+                    mainViewModel.databaseOpr.writeConfig("dxpeditionFoxSlotStepHz", String.valueOf(step), null);
+                    updateDxpeditionManualUi();
+                    updateAutoSessionStatus();
+                    ToastMessage.show(getString(R.string.dxpedition_tx_frequency_saved));
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
     }
 
     private boolean canUseDxpeditionMacroUi() {
@@ -405,6 +566,63 @@ public class MyCallingFragment extends Fragment {
         binding.autoSessionTextView.setText(mainViewModel.ft8TransmitSignal.getAutoSessionStatusText());
     }
 
+    private void initCqQueuePanel() {
+        cqQueueAdapter = new CqQueueAdapter(requireContext(), new CqQueueAdapter.OnQueueAction() {
+            @Override
+            public void onPromote(CqCallEntry entry) {
+                if (entry == null) {
+                    return;
+                }
+                mainViewModel.ft8TransmitSignal.promoteCqQueueEntry(entry.callsign);
+                updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+            }
+
+            @Override
+            public void onStartNow(CqCallEntry entry) {
+                if (entry == null) {
+                    return;
+                }
+                if (mainViewModel.ft8TransmitSignal.startCqQueueEntryNow(entry.callsign)) {
+                    GeneralVariables.resetLaunchSupervision();
+                    updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+                    updateAutoSessionStatus();
+                }
+            }
+
+            @Override
+            public void onRemove(CqCallEntry entry) {
+                if (entry == null) {
+                    return;
+                }
+                mainViewModel.ft8TransmitSignal.removeCqQueueEntry(entry.callsign);
+                updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+            }
+        });
+        binding.cqQueueRecyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
+        binding.cqQueueRecyclerView.setAdapter(cqQueueAdapter);
+        updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+    }
+
+    private void updateCqQueuePanel(ArrayList<CqCallEntry> entries) {
+        if (binding == null || cqQueueAdapter == null || mainViewModel == null
+                || mainViewModel.ft8TransmitSignal == null) {
+            return;
+        }
+        int count = entries == null ? 0 : entries.size();
+        boolean visible = GeneralVariables.cqQueueEnabled || count > 0;
+        binding.cqQueuePanelLayout.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (!visible) {
+            return;
+        }
+        binding.cqQueueStatusTextView.setText(String.format(
+                getString(R.string.cq_queue_panel_status),
+                mainViewModel.ft8TransmitSignal.getCqQueueNowText(),
+                count
+        ));
+        cqQueueAdapter.submitList(entries);
+        binding.cqQueueRecyclerView.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+    }
+
     static {
         System.loadLibrary("ft8cn");
     }
@@ -601,6 +819,7 @@ public class MyCallingFragment extends Fragment {
         transmitRecycleView.setLayoutManager(new LinearLayoutManager(requireContext()));
         transmitRecycleView.setAdapter(transmitCallListAdapter);
         transmitCallListAdapter.notifyDataSetChanged();
+        initCqQueuePanel();
 
         // 设置消息列表滑动，用于快速呼叫
         initRecyclerViewAction();
@@ -636,6 +855,11 @@ public class MyCallingFragment extends Fragment {
                 return;
             }
             applyManualDxpeditionMode(false, isChecked, true);
+        });
+        binding.dxpeditionTxSlotsButton.setOnClickListener(view -> showDxpeditionTxSlotsPicker());
+        binding.dxpeditionTxSlotsButton.setOnLongClickListener(view -> {
+            showDxpeditionTxFrequencyDialog();
+            return true;
         });
         binding.dxpeditionHelpButton.setOnClickListener(view -> showDxpeditionGuideDialog());
         binding.dxpeditionManualCheckBox.setOnLongClickListener(view -> {
@@ -747,17 +971,35 @@ public class MyCallingFragment extends Fragment {
                 });
 
         // 观察指令序号的变化
+        mainViewModel.ft8TransmitSignal.mutableDxpeditionFoxSlotStatus.observe(getViewLifecycleOwner(),
+                new Observer<String>() {
+                    @Override
+                    public void onChanged(String s) {
+                        updateDxpeditionManualUi();
+                        updateAutoSessionStatus();
+                    }
+                });
+
         mainViewModel.ft8TransmitSignal.mutableFunctionOrder.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @Override
             public void onChanged(Integer integer) {
                 binding.functionOrderSpinner.setSelection(
                         mainViewModel.ft8TransmitSignal.getFunctionSelectionIndex(integer)
                 );
+                updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
                 updateAutoSessionStatus();
             }
         });
 
         // 设置当指令序号被选择的事件
+        mainViewModel.ft8TransmitSignal.mutableCqQueue.observe(getViewLifecycleOwner(), new Observer<ArrayList<CqCallEntry>>() {
+            @Override
+            public void onChanged(ArrayList<CqCallEntry> cqCallEntries) {
+                updateCqQueuePanel(cqCallEntries);
+                updateAutoSessionStatus();
+            }
+        });
+
         binding.functionOrderSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
@@ -781,6 +1023,7 @@ public class MyCallingFragment extends Fragment {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
                             "[" + getCurrentModeLabel() + "]"));
+                    updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
                     updateAutoSessionStatus();
                     return;
                 }
@@ -795,6 +1038,7 @@ public class MyCallingFragment extends Fragment {
                             "[" + getCurrentModeLabel() + "] "
                                     + transmitCallsign.callsign));
                 }
+                updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
                 updateAutoSessionStatus();
             }
         });

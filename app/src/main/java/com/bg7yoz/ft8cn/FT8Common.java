@@ -29,6 +29,10 @@ public final class FT8Common {
     public static final int FT8_TRANSMIT_DELAY = 500;            // 默认发射延迟时长，毫秒
     public static final long DEEP_DECODE_TIMEOUT = 7 * 1000L;    // 深度解码的最长时间范围
     public static final int DECODE_MAX_ITERATIONS = 1;           // 迭代次数
+    public static final int EARLY_DECODE_PHASE_TICKS = 41;
+    public static final int FULL_DECODE_PHASE_TICKS = 50;
+    public static final long EARLY_DECODE_TIMEOUT = 1800L;
+    public static final long FT4_EARLY_DECODE_TIMEOUT = 900L;
 
     // ===== 发射/解码模式参数 =====
     public static final int FT8_NN = 79;
@@ -87,6 +91,18 @@ public final class FT8Common {
      */
     public static int getSamplesPerSlot(int mode) {
         return (int) (getSlotTimeSecond(mode) * SAMPLE_RATE);
+    }
+
+    public static int getEarlyDecodeDurationMs(int mode) {
+        return getSlotTimeMillisecond(mode) * EARLY_DECODE_PHASE_TICKS / FULL_DECODE_PHASE_TICKS;
+    }
+
+    public static long getEarlyDecodeTimeoutMs(int mode) {
+        return mode == FT4_MODE ? FT4_EARLY_DECODE_TIMEOUT : EARLY_DECODE_TIMEOUT;
+    }
+
+    public static boolean supportsEarlyDecodeStage(int mode) {
+        return mode == FT8_MODE || mode == FT4_MODE;
     }
 
     /**
