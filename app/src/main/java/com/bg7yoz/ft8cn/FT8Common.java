@@ -177,3 +177,4 @@ public final class FT8Common {
         return mode == FT4_MODE;
     }
 }
+

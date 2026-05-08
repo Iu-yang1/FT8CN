@@ -12,3 +12,4 @@ public interface OnRigStateChanged {
     void onFreqChanged(long freq);
     void onRunError(String message);
 }
+

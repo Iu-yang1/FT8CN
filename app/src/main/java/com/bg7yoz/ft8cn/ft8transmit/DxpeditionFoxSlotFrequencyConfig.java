@@ -115,3 +115,4 @@ public final class DxpeditionFoxSlotFrequencyConfig {
         return value;
     }
 }
+

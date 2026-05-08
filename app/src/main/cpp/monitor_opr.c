@@ -258,3 +258,4 @@ void monitor_reset(monitor_t *me) {
     me->wf.num_blocks = 0;
     me->max_mag = -120.0f;
 }
+

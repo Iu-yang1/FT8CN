@@ -97,3 +97,4 @@ bool ft8_decode_with_ap_texts(waterfall_t *power, candidate_t *cand,
 // AP hints are only consumed by the final deep-decode fallback and do not change the first-pass API.
 
 #endif // _INCLUDE_DECODE_H_
+

@@ -92,3 +92,4 @@ public class WifiConnector extends BaseRigConnector{
     }
 
 }
+

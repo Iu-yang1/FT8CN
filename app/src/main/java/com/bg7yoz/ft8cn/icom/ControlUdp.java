@@ -242,3 +242,4 @@ public class ControlUdp extends IcomUdpBase {
         civUdp.sendOpenClose(false);
     }
 }
+

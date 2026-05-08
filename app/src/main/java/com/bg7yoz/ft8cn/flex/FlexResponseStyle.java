@@ -14,3 +14,4 @@ public enum FlexResponseStyle {
     COMMAND,//发送命令，C+序列号|命令
     UNKNOW//未知的回复类型
 }
+

@@ -8,3 +8,4 @@ package com.bg7yoz.ft8cn.flex;
 public enum FlexMeterType {
     dBm,swr,Temperature,volt,other
 }
+

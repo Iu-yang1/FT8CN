@@ -9,3 +9,4 @@ package com.bg7yoz.ft8cn.wave;
 public class WaveAccess {
 	public static final String VERSION = "1.1";
 }
+

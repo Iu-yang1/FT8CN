@@ -64,3 +64,4 @@ public class DxpeditionMacroSupportTest {
         assertTrue(DxpeditionMacroSupport.requiresTarget("{DXCALL} {MYCALL} {RPT}"));
     }
 }
+

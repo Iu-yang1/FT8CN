@@ -62,3 +62,4 @@ public class SerialStopBitsSpinnerAdapter extends BaseAdapter {
         return stopBits[position];
     }
 }
+

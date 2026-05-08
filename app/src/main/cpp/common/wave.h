@@ -8,3 +8,4 @@ void save_wav(const float* signal, int num_samples, int sample_rate, const char*
 int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path);
 
 #endif // _INCLUDE_WAVE_H_
+

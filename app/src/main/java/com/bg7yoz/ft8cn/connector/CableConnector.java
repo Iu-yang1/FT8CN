@@ -116,3 +116,4 @@ public class CableConnector extends BaseRigConnector {
         cableSerialPort.disconnect();
     }
 }
+

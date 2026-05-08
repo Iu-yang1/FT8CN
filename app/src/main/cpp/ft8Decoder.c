@@ -287,6 +287,7 @@ void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations) {
         return;
     }
 
+    // 这是给新 core API 用的精确入口，旧的 setDecodeMode 仍然保留深/浅两档兼容行为。
     if (iterations < 1) {
         iterations = 1;
     }
@@ -303,6 +304,7 @@ void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints) {
         return;
     }
 
+    // AP 提示只用于辅助候选，不应该依赖外部临时指针，所以这里统一复制到 decoder 状态里。
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         wsjtx_port_set_ap_hints(decoder, ap_hints);
         return;
@@ -320,6 +322,7 @@ void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t
         return;
     }
 
+    // WSJT-X 风格的会话参数只在 WSJTX backend 生效，legacy backend 保持原有行为。
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         wsjtx_port_set_options(decoder, options);
     }
@@ -346,6 +349,7 @@ void decoder_subtract_signal(decoder_t *decoder,
         return;
     }
 
+    // 已解码信号回写到 waterfall，用于下一轮 subtract / 重解。
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         wsjtx_port_subtract_signal(decoder, payload, sample_rate, frequency, time_sec, mode);
         return;
@@ -428,3 +432,4 @@ void recode(int a174[], int a79[]) {
         }
     }
 }
+

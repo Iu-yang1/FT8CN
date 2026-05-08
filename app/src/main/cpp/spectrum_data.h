@@ -19,3 +19,4 @@
  */
 void do_fftr(float* voiceData, int dataSize, int* fftData);
 void do_fftr_raw(float *voiceData, int dataSize, int *fftData);
+

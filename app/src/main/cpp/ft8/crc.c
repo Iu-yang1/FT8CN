@@ -61,3 +61,4 @@ void ftx_add_crc(const uint8_t payload[], uint8_t a91[])
     a91[10] = (uint8_t)(checksum >> 3);
     a91[11] = (uint8_t)(checksum << 5);
 }
+

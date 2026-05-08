@@ -280,3 +280,4 @@ Java_com_bg7yoz_ft8cn_ft8signal_FT8Package_getHash22(JNIEnv *env, jclass clazz, 
     free(str);
     return hash;
 }
+

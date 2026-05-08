@@ -155,3 +155,4 @@ public class Yaesu2Rig extends BaseRig {
     }
 
 }
+

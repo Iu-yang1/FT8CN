@@ -263,3 +263,4 @@ public class GenerateFT8 {
                                           float symbol_bt, float symbol_period,
                                           int signal_rate, float[] signal, int offset);
 }
+

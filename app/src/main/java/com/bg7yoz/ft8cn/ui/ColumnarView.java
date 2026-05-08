@@ -162,3 +162,4 @@ public class ColumnarView extends View {
         return freq_hz;
     }
 }
+

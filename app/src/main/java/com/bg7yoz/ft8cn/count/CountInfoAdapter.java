@@ -258,3 +258,4 @@ public class CountInfoAdapter extends RecyclerView.Adapter<CountInfoAdapter.Coun
         }
     }
 }
+

@@ -12,3 +12,4 @@ int pack77_1(const char* msg, uint8_t* c77);
 void packtext77(const char* text, uint8_t* b77);
 
 #endif // _INCLUDE_PACK_H_
+

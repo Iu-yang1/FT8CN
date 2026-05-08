@@ -239,3 +239,4 @@ public class LogQSLAdapter extends RecyclerView.Adapter<LogQSLAdapter.LogQSLItem
         }
     }
 }
+

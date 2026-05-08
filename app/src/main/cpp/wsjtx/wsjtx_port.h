@@ -34,3 +34,4 @@ void wsjtx_port_subtract_signal(decoder_t *decoder,
 #endif
 
 #endif
+

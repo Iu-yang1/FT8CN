@@ -17,3 +17,4 @@ int unpack77(const uint8_t* a77, char* message);
 int unpackToMessage_t(const uint8_t* a77, message_t* message);
 
 #endif // _INCLUDE_UNPACK_H_
+

@@ -322,3 +322,4 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeApRegression_runSyntheticSuite(JNIEnv *e
     const std::string result = run_synthetic_suite();
     return env->NewStringUTF(result.c_str());
 }
+

@@ -182,3 +182,4 @@ public class BluetoothRigConnector extends BaseRigConnector implements ServiceCo
         socketDisconnect();
     }
 }
+

@@ -151,3 +151,4 @@ public class CqQueueAdapter extends RecyclerView.Adapter<CqQueueAdapter.CqQueueI
         }
     }
 }
+

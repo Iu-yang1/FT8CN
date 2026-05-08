@@ -181,3 +181,4 @@ public class SpectrumFragment extends Fragment {
     public native void getFFTDataRaw(int[] data, int fftData[]);
     public native void getFFTDataRawFloat(float[] data, int fftData[]);
 }
+

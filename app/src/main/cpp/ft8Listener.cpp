@@ -361,3 +361,4 @@ Java_com_bg7yoz_ft8cn_ft8listener_ReBuildSignal_doSubtractSignal(JNIEnv *env, jc
                             mode);
     free(c_array);
 }
+

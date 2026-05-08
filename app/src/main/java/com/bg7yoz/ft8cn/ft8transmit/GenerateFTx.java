@@ -41,6 +41,7 @@ public final class GenerateFTx {
         msg.signalFormat = mode;
 
         if (GeneralVariables.isExperimentalCodecEnabled()) {
+            // experimental 模式下，发射链直接切到实验调制器，避免混用 FT8/FT4 标准波形。
             Log.d(TAG, String.format(
                     "EXP TX active: codecMode=%d, txMode=%s, sampleRate=%d, f=%.1f",
                     GeneralVariables.experimentalCodecMode,
@@ -77,3 +78,4 @@ public final class GenerateFTx {
      */
     private static native float[] generateFtXNative(Ft8Message msg, float frequency, int sampleRate, int mode);
 }
+

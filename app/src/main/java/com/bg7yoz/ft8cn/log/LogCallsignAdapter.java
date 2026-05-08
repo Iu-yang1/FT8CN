@@ -197,3 +197,4 @@ public class LogCallsignAdapter extends RecyclerView.Adapter<LogCallsignAdapter.
         }
     }
 }
+

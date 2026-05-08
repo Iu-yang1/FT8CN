@@ -42,3 +42,4 @@ public final class AutoSessionUiPolicy {
         return allowed[0];
     }
 }
+

@@ -87,3 +87,4 @@ public class GridRecordInfoWindow extends InfoWindow {
 
     }
 }
+

@@ -260,3 +260,4 @@ static float fast_atanh(float x)
     float b = (945.0f + x2 * (-1050.0f + x2 * 225.0f));
     return a / b;
 }
+

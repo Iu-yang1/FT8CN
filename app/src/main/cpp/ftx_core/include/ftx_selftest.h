@@ -12,3 +12,4 @@ int ftx_core_run_selftests(char *report, int report_capacity);
 #endif
 
 #endif
+

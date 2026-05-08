@@ -1471,3 +1471,4 @@ static void pack_bits(const uint8_t bit_array[], int num_bits, uint8_t packed[])
         }
     }
 }
+

@@ -333,3 +333,4 @@ public class Cp21xxSerialDriver implements UsbSerialDriver {
     }
 
 }
+

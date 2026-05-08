@@ -31,3 +31,4 @@ public interface UsbSerialDriver {
      */
     List<UsbSerialPort> getPorts();
 }
+

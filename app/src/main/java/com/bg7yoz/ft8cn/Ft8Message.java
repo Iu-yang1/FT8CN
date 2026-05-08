@@ -95,6 +95,7 @@ public class Ft8Message {
     @SuppressLint({"SimpleDateFormat", "DefaultLocale"})
     @Override
     public String toString() {
+        // 日志和列表会直接复用这里的字符串，所以尽量保留最有用的解码摘要。
         return String.format("%s %d %+4.2f %4.0f [%s] ~ %s Hash : %#06X",
                 new SimpleDateFormat("HHmmss").format(utcTime),
                 snr,
@@ -374,6 +375,7 @@ public class Ft8Message {
      */
     @SuppressLint("DefaultLocale")
     public String getMessageText() {
+        // txRawText 只在自由文本或实验回环时生效；否则按 FT8/FT4 字段拼装。
         if (useTxRawText) {
             return normalizeTxRawText();
         }
@@ -451,6 +453,7 @@ public class Ft8Message {
     }
 
     public void setTransmitRawText(String text) {
+        // 显式指定原始文本时，不再让结构化字段覆盖它。
         txRawText = text;
         useTxRawText = true;
     }
@@ -861,3 +864,4 @@ public class Ft8Message {
         this.signalFormat = signalFormat;
     }
 }
+

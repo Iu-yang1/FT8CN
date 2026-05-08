@@ -198,3 +198,4 @@ public final class AutoFlowMessageAnalyzer {
         return callsign.substring(bestStart, bestStart + bestLen);
     }
 }
+
