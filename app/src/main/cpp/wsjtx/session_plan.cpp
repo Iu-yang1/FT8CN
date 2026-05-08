@@ -227,7 +227,9 @@ static SessionPlan BuildFt4Plan(const ModeDescriptor &mode,
                                    CandidateSource::kFt4RawFft,
                                    std::max(base_sync, 10 + sync_bias),
                                    CandidateBudget(mode, PassRole::kBase, deep_mode, options),
-                                   fast_kLDPC_iterations,
+                                   // FT4 深度解码必须让 base pass 也切到 deep iterations，
+                                   // 否则表面进入 deep 流程，实际核心轮仍然是 fast 行为。
+                                   deep_mode ? deep_kLDPC_iterations : fast_kLDPC_iterations,
                                    kFt8PhaseTicksFull,
                                    (deep_mode && round_count >= 2)
                                    ? kSubtractAfterDecode

@@ -291,6 +291,55 @@ public class FT8SignalListener {
                 && !GeneralVariables.isExperimentalCodecEnabled();
     }
 
+    /**
+     * experimental 路径单独固定到稳定的 12k 输入。
+     * 这样不会把 FT8/FT4 多采样率接入时的副作用扩散到实验调制解调器。
+     */
+    private float[] prepareExperimentalInput(float[] voiceData, int sampleRate, int decodeMode, String sourceTag) {
+        if (voiceData == null) {
+            return null;
+        }
+        final int normalizedRate = normalizeInputSampleRate(sampleRate);
+        if (normalizedRate == FT8Common.SAMPLE_RATE) {
+            Log.d(TAG, String.format(
+                    "EXP input keep native rate: src=%s, mode=%s, sr=%d, len=%d",
+                    sourceTag,
+                    FT8Common.modeToString(decodeMode),
+                    normalizedRate,
+                    voiceData.length
+            ));
+            return voiceData;
+        }
+
+        float[] resampled = FT8Resample.resampleFloatToFloatSafe(
+                voiceData,
+                normalizedRate,
+                FT8Common.SAMPLE_RATE,
+                1
+        );
+        if (resampled == null || resampled.length == 0) {
+            Log.w(TAG, String.format(
+                    "EXP input resample failed, fallback raw: src=%s, mode=%s, sr=%d, len=%d",
+                    sourceTag,
+                    FT8Common.modeToString(decodeMode),
+                    normalizedRate,
+                    voiceData.length
+            ));
+            return voiceData;
+        }
+
+        Log.d(TAG, String.format(
+                "EXP input resampled: src=%s, mode=%s, sr=%d->%d, len=%d->%d",
+                sourceTag,
+                FT8Common.modeToString(decodeMode),
+                normalizedRate,
+                FT8Common.SAMPLE_RATE,
+                voiceData.length,
+                resampled.length
+        ));
+        return resampled;
+    }
+
     private void resetSlotDedupe(long utc, int decodeMode) {
         synchronized (slotDedupeLock) {
             slotDedupeUtc = utc;
@@ -690,12 +739,21 @@ public class FT8SignalListener {
             public void run() {
                 long time = System.currentTimeMillis();
                 final int slotTimeM = FT8Common.getSlotTimeM(decodeMode);
+                final float[] decodeInput = prepareExperimentalInput(voiceData, sampleRate, decodeMode, sourceTag);
+                final int decodeSampleRate = (decodeInput == voiceData)
+                        ? normalizeInputSampleRate(sampleRate)
+                        : FT8Common.SAMPLE_RATE;
 
                 if (onFt8Listen != null) {
                     onFt8Listen.beforeListen(utc);
                 }
 
-                ArrayList<Ft8Message> messages = runExperimentalDecode(utc, voiceData, sampleRate, decodeMode);
+                ArrayList<Ft8Message> messages = runExperimentalDecode(
+                        utc,
+                        decodeInput,
+                        decodeSampleRate,
+                        decodeMode
+                );
 
                 timeSec = System.currentTimeMillis() - time;
                 if (onFt8Listen != null) {
@@ -711,11 +769,13 @@ public class FT8SignalListener {
 
                 decodeTimeSec.postValue(timeSec);
                 Log.d(TAG, String.format(
-                        "EXP decode source=%s time=%dms mode=%s count=%d",
+                        "EXP decode source=%s time=%dms mode=%s count=%d sr=%d len=%d",
                         sourceTag,
                         timeSec,
                         GeneralVariables.getActiveModeLabel(),
-                        messages.size()
+                        messages.size(),
+                        decodeSampleRate,
+                        decodeInput == null ? 0 : decodeInput.length
                 ));
             }
         }).start();
@@ -744,6 +804,13 @@ public class FT8SignalListener {
         setDecodeMode(ft8Decoder, isDeep);
 
         int num_candidates = DecoderFt8FindSync(ft8Decoder);
+        Log.d(TAG, String.format(
+                "解码轮开始: mode=%s deep=%s candidates=%d deadline=%d",
+                FT8Common.modeToString(decodeMode),
+                isDeep ? "Y" : "N",
+                num_candidates,
+                deadlineMs
+        ));
 
         for (int idx = 0; idx < num_candidates; ++idx) {
             if (isDeep && deadlineMs > 0L && System.currentTimeMillis() >= deadlineMs) {
@@ -826,13 +893,21 @@ public class FT8SignalListener {
                                                         int decodeMode) {
         ArrayList<Ft8Message> messages = new ArrayList<>();
         try {
+            if (voiceData == null || voiceData.length == 0) {
+                Log.w(TAG, "EXP decode skipped: empty input");
+                return messages;
+            }
             float baseFreq = GeneralVariables.getBaseFrequency();
             int codecMode = GeneralVariables.experimentalCodecMode;
+            int probeSymbolSamples = Math.max(
+                    ExperimentalCodecBridge.PROBE_SYMBOL_SAMPLES,
+                    Math.round(sampleRate / 31.25f)
+            );
 
             float[] probe = ExperimentalCodecBridge.analyzeFirstSymbolEnergies(
                     voiceData,
                     sampleRate,
-                    ExperimentalCodecBridge.PROBE_SYMBOL_SAMPLES,
+                    probeSymbolSamples,
                     ExperimentalCodecBridge.PROBE_TONES_HZ
             );
             if (probe != null && probe.length >= 5) {
@@ -845,6 +920,13 @@ public class FT8SignalListener {
                         probe[2],
                         probe[3],
                         ExperimentalCodecBridge.getNativeVersion()
+                ));
+            } else {
+                Log.d(TAG, String.format(
+                        "EXP probe empty sr=%d len=%d mode=%s",
+                        sampleRate,
+                        voiceData.length,
+                        GeneralVariables.getExperimentalCodecModeString()
                 ));
             }
 
@@ -871,7 +953,7 @@ public class FT8SignalListener {
                 }
             }
         } catch (Throwable t) {
-            Log.w(TAG, "EXP probe failed: " + t.getMessage());
+            Log.w(TAG, "EXP decode failed: " + t.getMessage());
         }
         return messages;
     }

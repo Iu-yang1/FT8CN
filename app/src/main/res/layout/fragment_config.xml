@@ -1763,10 +1763,10 @@
 
                         <TextView
                                 android:id="@+id/wsjtxDecodePassCountLabel"
-                                android:layout_width="120dp"
+                                android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:layout_marginTop="8dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="12dp"
                                 android:text="@string/wsjtx_decode_pass_count"
                                 android:textColor="@color/text_view_color"
                                 android:textSize="13sp"
@@ -1777,12 +1777,13 @@
                                 android:id="@+id/wsjtxDecodePassCountRadioGroup"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="4dp"
+                                android:layout_marginEnd="12dp"
                                 android:orientation="horizontal"
-                                app:layout_constraintBottom_toBottomOf="@+id/wsjtxDecodePassCountLabel"
-                                app:layout_constraintEnd_toStartOf="@+id/wsjtxDecodeOptionsHelpButton"
-                                app:layout_constraintStart_toEndOf="@+id/wsjtxDecodePassCountLabel"
-                                app:layout_constraintTop_toTopOf="@+id/wsjtxDecodePassCountLabel">
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxDecodePassCountLabel">
 
                             <RadioButton
                                     android:id="@+id/wsjtxDecodePass1RadioButton"
@@ -1815,10 +1816,10 @@
 
                         <TextView
                                 android:id="@+id/wsjtxMultiDecodeRoundsLabel"
-                                android:layout_width="120dp"
+                                android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:layout_marginTop="6dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="10dp"
                                 android:text="@string/wsjtx_multi_decode_rounds"
                                 android:textColor="@color/text_view_color"
                                 android:textSize="13sp"
@@ -1829,12 +1830,13 @@
                                 android:id="@+id/wsjtxMultiDecodeRoundsRadioGroup"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="4dp"
+                                android:layout_marginEnd="12dp"
                                 android:orientation="horizontal"
-                                app:layout_constraintBottom_toBottomOf="@+id/wsjtxMultiDecodeRoundsLabel"
-                                app:layout_constraintEnd_toStartOf="@+id/wsjtxDecodeOptionsHelpButton"
-                                app:layout_constraintStart_toEndOf="@+id/wsjtxMultiDecodeRoundsLabel"
-                                app:layout_constraintTop_toTopOf="@+id/wsjtxMultiDecodeRoundsLabel">
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxMultiDecodeRoundsLabel">
 
                             <RadioButton
                                     android:id="@+id/wsjtxDecodeRound1RadioButton"
@@ -1867,10 +1869,10 @@
 
                         <TextView
                                 android:id="@+id/wsjtxQsoFreqSensitivityLabel"
-                                android:layout_width="120dp"
+                                android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:layout_marginTop="6dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="10dp"
                                 android:text="@string/wsjtx_qso_freq_sensitivity"
                                 android:textColor="@color/text_view_color"
                                 android:textSize="13sp"
@@ -1881,12 +1883,13 @@
                                 android:id="@+id/wsjtxQsoFreqSensitivityRadioGroup"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="4dp"
+                                android:layout_marginEnd="12dp"
                                 android:orientation="horizontal"
-                                app:layout_constraintBottom_toBottomOf="@+id/wsjtxQsoFreqSensitivityLabel"
-                                app:layout_constraintEnd_toStartOf="@+id/wsjtxDecodeOptionsHelpButton"
-                                app:layout_constraintStart_toEndOf="@+id/wsjtxQsoFreqSensitivityLabel"
-                                app:layout_constraintTop_toTopOf="@+id/wsjtxQsoFreqSensitivityLabel">
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxQsoFreqSensitivityLabel">
 
                             <RadioButton
                                     android:id="@+id/wsjtxQsoFreqSensitivityNarrowRadioButton"
@@ -1919,10 +1922,10 @@
 
                         <TextView
                                 android:id="@+id/wsjtxDecodeSensitivityLabel"
-                                android:layout_width="120dp"
+                                android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:layout_marginTop="6dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="10dp"
                                 android:text="@string/wsjtx_decode_sensitivity"
                                 android:textColor="@color/text_view_color"
                                 android:textSize="13sp"
@@ -1933,12 +1936,13 @@
                                 android:id="@+id/wsjtxDecodeSensitivityRadioGroup"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="4dp"
+                                android:layout_marginEnd="12dp"
                                 android:orientation="horizontal"
-                                app:layout_constraintBottom_toBottomOf="@+id/wsjtxDecodeSensitivityLabel"
-                                app:layout_constraintEnd_toStartOf="@+id/wsjtxDecodeOptionsHelpButton"
-                                app:layout_constraintStart_toEndOf="@+id/wsjtxDecodeSensitivityLabel"
-                                app:layout_constraintTop_toTopOf="@+id/wsjtxDecodeSensitivityLabel">
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/wsjtxDecodeSensitivityLabel">
 
                             <RadioButton
                                     android:id="@+id/wsjtxDecodeSensitivityConservativeRadioButton"
@@ -1973,8 +1977,8 @@
                                 android:id="@+id/wsjtxEarlyDecodeSwitch"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:layout_marginTop="6dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="10dp"
                                 android:text="@string/wsjtx_enable_early_decode"
                                 android:textColor="@color/text_view_color"
                                 android:textSize="13sp"
@@ -1989,9 +1993,9 @@
                                 android:id="@+id/wsjtxWidebandDxSwitch"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:layout_marginTop="2dp"
-                                android:layout_marginBottom="6dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="6dp"
+                                android:layout_marginBottom="10dp"
                                 android:text="@string/wsjtx_enable_wideband_dx_search"
                                 android:textColor="@color/text_view_color"
                                 android:textSize="13sp"
@@ -2032,7 +2036,8 @@
                                 android:id="@+id/experimentalCodecSwitch"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="8dp"
                                 android:checked="false"
                                 android:text="@string/experimental_codec_off"
                                 android:textColor="@color/text_view_color"
@@ -2040,9 +2045,8 @@
                                 android:thumbTint="?attr/colorPrimary"
                                 android:thumbTintMode="multiply"
                                 android:trackTint="@color/button_start_color"
-                                app:layout_constraintEnd_toStartOf="@+id/experimentalCodecHelpButton"
-                                app:layout_constraintStart_toEndOf="@+id/experimentalCodecText"
-                                app:layout_constraintTop_toTopOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/experimentalCodecText"
                                 tools:ignore="TouchTargetSizeCheck,UseSwitchCompatOrMaterialXml" />
 
                         <ImageButton
@@ -2061,12 +2065,11 @@
                                 android:id="@+id/experimentalCodecModeText"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:layout_marginBottom="6dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="8dp"
                                 android:text="@string/experimental_codec_modulation"
                                 android:textColor="@color/text_view_color"
                                 android:textSize="14sp"
-                                app:layout_constraintBottom_toBottomOf="parent"
                                 app:layout_constraintStart_toStartOf="parent"
                                 app:layout_constraintTop_toBottomOf="@+id/experimentalCodecSwitch" />
 
@@ -2074,14 +2077,15 @@
                                 android:id="@+id/experimentalCodecModeRadioGroup"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:layout_marginEnd="8dp"
-                                android:layout_marginBottom="6dp"
+                                android:layout_marginStart="12dp"
+                                android:layout_marginTop="4dp"
+                                android:layout_marginEnd="12dp"
+                                android:layout_marginBottom="10dp"
                                 android:orientation="horizontal"
                                 app:layout_constraintBottom_toBottomOf="parent"
-                                app:layout_constraintEnd_toStartOf="@+id/experimentalCodecHelpButton"
-                                app:layout_constraintStart_toEndOf="@+id/experimentalCodecModeText"
-                                app:layout_constraintTop_toBottomOf="@+id/experimentalCodecSwitch">
+                                app:layout_constraintEnd_toEndOf="parent"
+                                app:layout_constraintStart_toStartOf="parent"
+                                app:layout_constraintTop_toBottomOf="@+id/experimentalCodecModeText">
 
                             <RadioButton
                                     android:id="@+id/experimentalCodec4fskRadioButton"
