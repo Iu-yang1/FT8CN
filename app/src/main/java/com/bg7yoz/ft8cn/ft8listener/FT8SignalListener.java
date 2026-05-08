@@ -22,6 +22,7 @@ import com.bg7yoz.ft8cn.experimental.ExperimentalCodecBridge;
 import com.bg7yoz.ft8cn.experimental.ExperimentalCodecEngine;
 import com.bg7yoz.ft8cn.timer.OnUtcTimer;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
+import com.bg7yoz.ft8cn.wave.FT8Resample;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 
 import java.util.ArrayList;
@@ -54,6 +55,8 @@ public class FT8SignalListener {
 
     public interface OnWaveDataListener {
         void getVoiceData(int duration, boolean afterDoneRemove, OnGetVoiceDataDone getVoiceDataDone);
+
+        int getCurrentSampleRate();
     }
 
     private static class SlotFilterResult {
@@ -154,6 +157,7 @@ public class FT8SignalListener {
             final int recordMode = GeneralVariables.getSignalMode();
             final int duration = FT8Common.getSlotTimeMillisecond(recordMode);
             final int expectedSamples = FT8Common.getSamplesPerSlot(recordMode);
+            final int sourceSampleRate = normalizeInputSampleRate(onWaveDataListener.getCurrentSampleRate());
 
             resetSlotDedupe(utc, recordMode);
             if (onFt8Listen != null) {
@@ -174,6 +178,7 @@ public class FT8SignalListener {
                                 decodeFt8(
                                         utc,
                                         data,
+                                        sourceSampleRate,
                                         recordMode,
                                         DECODE_STAGE_EARLY,
                                         expectedSamples,
@@ -196,6 +201,7 @@ public class FT8SignalListener {
                             decodeFt8(
                                     utc,
                                     data,
+                                    sourceSampleRate,
                                     recordMode,
                                     DECODE_STAGE_FULL,
                                     expectedSamples,
@@ -211,7 +217,70 @@ public class FT8SignalListener {
      * 兼容旧调用：如果外部还有旧入口，仍按当前模式跑
      */
     public void decodeFt8(long utc, float[] voiceData) {
-        decodeFt8(utc, voiceData, GeneralVariables.getSignalMode());
+        decodeFt8(utc, voiceData, FT8Common.SAMPLE_RATE, GeneralVariables.getSignalMode());
+    }
+
+    public void decodeFt8(long utc, float[] voiceData, int sourceSampleRate, int decodeMode) {
+        decodeFt8(
+                utc,
+                voiceData,
+                sourceSampleRate,
+                decodeMode,
+                DECODE_STAGE_FULL,
+                FT8Common.getSamplesPerSlot(decodeMode),
+                true,
+                true
+        );
+    }
+
+    private int normalizeInputSampleRate(int sampleRate) {
+        if (sampleRate == 12000 || sampleRate == 24000 || sampleRate == 48000) {
+            return sampleRate;
+        }
+        return FT8Common.SAMPLE_RATE;
+    }
+
+    private float[] resampleForDecoder(float[] voiceData,
+                                       int sourceSampleRate,
+                                       int decodeMode,
+                                       int decodeStage) {
+        if (voiceData == null) {
+            return null;
+        }
+
+        final int normalizedSourceRate = normalizeInputSampleRate(sourceSampleRate);
+        if (normalizedSourceRate == FT8Common.SAMPLE_RATE) {
+            return voiceData;
+        }
+
+        float[] resampled = FT8Resample.resampleFloatToFloatSafe(
+                voiceData,
+                normalizedSourceRate,
+                FT8Common.SAMPLE_RATE,
+                1
+        );
+        if (resampled == null || resampled.length == 0) {
+            Log.w(TAG, String.format(
+                    "重采样失败，回退原始数据: src=%d,target=%d,mode=%s,stage=%d,len=%d",
+                    normalizedSourceRate,
+                    FT8Common.SAMPLE_RATE,
+                    FT8Common.modeToString(decodeMode),
+                    decodeStage,
+                    voiceData.length
+            ));
+            return voiceData;
+        }
+
+        Log.d(TAG, String.format(
+                "解码前重采样: src=%d,target=%d,mode=%s,stage=%d,len=%d->%d",
+                normalizedSourceRate,
+                FT8Common.SAMPLE_RATE,
+                FT8Common.modeToString(decodeMode),
+                decodeStage,
+                voiceData.length,
+                resampled.length
+        ));
+        return resampled;
     }
 
     private boolean shouldRunEarlyDecodeStage(int decodeMode) {
@@ -402,19 +471,12 @@ public class FT8SignalListener {
      * @param decodeMode 本轮固定模式，避免线程运行过程中模式切换导致同一轮解码混用 FT8 / FT4
      */
     public void decodeFt8(long utc, float[] voiceData, int decodeMode) {
-        decodeFt8(
-                utc,
-                voiceData,
-                decodeMode,
-                DECODE_STAGE_FULL,
-                FT8Common.getSamplesPerSlot(decodeMode),
-                true,
-                true
-        );
+        decodeFt8(utc, voiceData, FT8Common.SAMPLE_RATE, decodeMode);
     }
 
     private void decodeFt8(long utc,
                            float[] voiceData,
+                           int sourceSampleRate,
                            int decodeMode,
                            int decodeStage,
                            int expectedSamples,
@@ -426,7 +488,13 @@ public class FT8SignalListener {
             }
             // Experimental modem bypasses the FT8/FT4 native decoder but still
             // feeds results through the same UI callback path.
-            decodeExperimentalAsync(utc, voiceData, FT8Common.SAMPLE_RATE, decodeMode, "rx");
+            decodeExperimentalAsync(
+                    utc,
+                    voiceData,
+                    normalizeInputSampleRate(sourceSampleRate),
+                    decodeMode,
+                    "rx"
+            );
             return;
         }
 
@@ -441,6 +509,21 @@ public class FT8SignalListener {
                 }
 
                 boolean isFt8 = (decodeMode == FT8Common.FT8_MODE);
+                final float[] decoderInput = resampleForDecoder(
+                        voiceData,
+                        sourceSampleRate,
+                        decodeMode,
+                        decodeStage
+                );
+                if (decoderInput == null || decoderInput.length == 0) {
+                    Log.w(TAG, String.format(
+                            "跳过空音频解码: mode=%s, stage=%d, srcRate=%d",
+                            FT8Common.modeToString(decodeMode),
+                            decodeStage,
+                            sourceSampleRate
+                    ));
+                    return;
+                }
 
                 // 初始化解码器，按本轮固定模式选择 FT8 / FT4
                 long ft8Decoder = InitDecoder(
@@ -468,7 +551,7 @@ public class FT8SignalListener {
                         GeneralVariables.wsjtxWidebandDxSearch
                 );
                 // AP-lite only receives my-call plus a few follow-call/grid hints before decode starts.
-                DecoderMonitorPressFloat(voiceData, ft8Decoder);
+                DecoderMonitorPressFloat(decoderInput, ft8Decoder);
                 boolean nativeOwnsSessionFlow = DecoderOwnsSessionFlow(ft8Decoder);
 
                 ArrayList<Ft8Message> allMsg = new ArrayList<>();

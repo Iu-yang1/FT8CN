@@ -1511,6 +1511,7 @@ public class ConfigFragment extends Fragment {
                 if (binding.audio24kRadioButton.isChecked()) GeneralVariables.audioSampleRate=24000;
                 if (binding.audio48kRadioButton.isChecked()) GeneralVariables.audioSampleRate=48000;
                 writeConfig("audioRate", String.valueOf(GeneralVariables.audioSampleRate));
+                mainViewModel.refreshRecorderSampleRate();
             }
         };
 

@@ -519,6 +519,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void doOnAfterQueryConfig(String KeyName, String Value) {
                 mainViewModel.configIsLoaded = true;
+                mainViewModel.refreshRecorderSampleRate();
                 String grid = MaidenheadGrid.getMyMaidenheadGrid(getApplicationContext());
                 if (!grid.equals("")) {
                     GeneralVariables.setMyMaidenheadGrid(grid);

@@ -439,6 +439,11 @@ public class MainViewModel extends ViewModel {
             public void getVoiceData(int duration, boolean afterDoneRemove, OnGetVoiceDataDone getVoiceDataDone) {
                 hamRecorder.getVoiceData(duration, afterDoneRemove, getVoiceDataDone);
             }
+
+            @Override
+            public int getCurrentSampleRate() {
+                return hamRecorder.getCurrentSampleRate();
+            }
         });
 
         ft8SignalListener.startListen();
@@ -842,7 +847,7 @@ public class MainViewModel extends ViewModel {
             @Override
             public void OnWaveReceived(int bufferLen, float[] buffer) {
                 Log.i(TAG, "call hamRecorder.doOnWaveDataReceived");
-                hamRecorder.doOnWaveDataReceived(bufferLen, buffer);
+                hamRecorder.doOnWaveDataReceived(bufferLen, buffer, FT8Common.SAMPLE_RATE);
             }
         });
 
@@ -897,7 +902,7 @@ public class MainViewModel extends ViewModel {
         iComWifiConnector.setOnWifiDataReceived(new IComWifiConnector.OnWifiDataReceived() {
             @Override
             public void OnWaveReceived(int bufferLen, float[] buffer) {
-                hamRecorder.doOnWaveDataReceived(bufferLen, buffer);
+                hamRecorder.doOnWaveDataReceived(bufferLen, buffer, FT8Common.SAMPLE_RATE);
             }
 
             @Override
@@ -939,7 +944,7 @@ public class MainViewModel extends ViewModel {
         flexConnector.setOnWaveDataReceived(new FlexConnector.OnWaveDataReceived() {
             @Override
             public void OnDataReceived(int bufferLen, float[] buffer) {
-                hamRecorder.doOnWaveDataReceived(bufferLen, buffer);
+                hamRecorder.doOnWaveDataReceived(bufferLen, buffer, FT8Common.SAMPLE_RATE);
             }
         });
         flexConnector.connect();
@@ -975,7 +980,7 @@ public class MainViewModel extends ViewModel {
         xieguConnector.setOnWaveDataReceived(new X6100Connector.OnWaveDataReceived() {
             @Override
             public void OnDataReceived(int bufferLen, float[] buffer) {
-                hamRecorder.doOnWaveDataReceived(bufferLen, buffer);
+                hamRecorder.doOnWaveDataReceived(bufferLen, buffer, FT8Common.SAMPLE_RATE);
             }
         });
 
@@ -1143,6 +1148,12 @@ public class MainViewModel extends ViewModel {
             audioManager.setBluetoothScoOn(false);
             audioManager.stopBluetoothSco();
             audioManager.setSpeakerphoneOn(true);
+        }
+    }
+
+    public void refreshRecorderSampleRate() {
+        if (hamRecorder != null) {
+            hamRecorder.refreshCurrentAudioSource();
         }
     }
 
