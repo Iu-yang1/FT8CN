@@ -24,6 +24,9 @@ constexpr int kFt8FollowupMinSyncScore = 6;
 constexpr int kFt4FollowupMinSyncScore = 7;
 constexpr int kFt8FollowupMaxEntries = 16;
 constexpr int kFt8FollowupMaxCandidatesPerEntry = 4;
+constexpr int kApPassMaxTexts = 96;
+constexpr int kApPassHistoryEntries = 6;
+constexpr int kSubtractHistoryBudget = 48;
 constexpr int kFollowupModeCount = 2;
 constexpr float kFt8FollowupHistoryMatchHz = 3.0f;
 constexpr float kFt8FollowupHistoryMatchTimeSec = 0.30f;
@@ -197,6 +200,13 @@ static bool prefer_decode_result(const ft8_message &candidate, const ft8_message
     }
     return candidate.freq_hz < existing.freq_hz;
 }
+
+static bool decode_candidate_with_ap_texts(wsjtx_port_decoder_t *state,
+                                           waterfall_t *wf,
+                                           candidate_t candidate,
+                                           const std::vector<std::string> &texts,
+                                           int iterations,
+                                           ft8_message *out);
 
 static bool decode_candidate_with_waterfall(wsjtx_port_decoder_t *state,
                                             waterfall_t *wf,
@@ -455,6 +465,7 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
                              candidate_t candidates[kMax_candidates],
                              int candidate_count,
                              int iterations,
+                             const std::vector<std::string> *ap_texts,
                              std::vector<subtract_job_t> *jobs) {
     candidate_count = clamp_candidate_count(candidate_count);
     if (state == nullptr || candidate_count <= 0) {
@@ -464,11 +475,25 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
     int new_results = 0;
     for (int idx = 0; idx < candidate_count; ++idx) {
         ft8_message decoded;
-        if (!decode_candidate_with_waterfall(state,
-                                             &state->mon.wf,
-                                             candidates[idx],
-                                             iterations,
-                                             &decoded)) {
+        bool decoded_ok = false;
+        if (ap_texts != nullptr && !ap_texts->empty()) {
+            decoded_ok = decode_candidate_with_ap_texts(state,
+                                                        &state->mon.wf,
+                                                        candidates[idx],
+                                                        *ap_texts,
+                                                        iterations,
+                                                        &decoded);
+        }
+
+        if (!decoded_ok) {
+            decoded_ok = decode_candidate_with_waterfall(state,
+                                                         &state->mon.wf,
+                                                         candidates[idx],
+                                                         iterations,
+                                                         &decoded);
+        }
+
+        if (!decoded_ok) {
             continue;
         }
 
@@ -504,9 +529,12 @@ static std::vector<ft8_followup_entry_t> prepare_ft8_followup_history(const wsjt
 static bool ft8_followup_entry_is_covered(const wsjtx_port_decoder_t *state,
                                           const ft8_followup_entry_t &entry);
 static void commit_ft8_followup_history(const wsjtx_port_decoder_t *state);
+static void build_ap_pass_texts(const wsjtx_port_decoder_t *state,
+                                const std::vector<ft8_followup_entry_t> &history_entries,
+                                std::vector<std::string> *texts);
 
 static void append_ft8_followup_text(std::vector<std::string> *texts, const std::string &text) {
-    if (texts == nullptr || text.empty()) {
+    if (texts == nullptr || text.empty() || (int) texts->size() >= kApPassMaxTexts) {
         return;
     }
 
@@ -957,6 +985,68 @@ static float ft4_peak_match_hz(const wsjtx_port_decoder_t *state) {
     }
 }
 
+static void append_manual_ap_hint_texts(const wsjtx_port_decoder_t *state,
+                                        std::vector<std::string> *texts) {
+    if (state == nullptr || texts == nullptr) {
+        return;
+    }
+
+    const char *my_call = state->ap_hints.my_call;
+    const bool has_my_call = my_call[0] != '\0' && !has_followup_forbidden_char(my_call);
+    for (int idx = 0; idx < state->ap_hints.hint_call_count && idx < FTX_AP_MAX_HINT_CALLS; ++idx) {
+        const char *hint_call = state->ap_hints.hint_calls[idx];
+        const char *hint_grid = state->ap_hints.hint_grids[idx];
+        if (hint_call[0] == '\0' || has_followup_forbidden_char(hint_call)) {
+            continue;
+        }
+
+        if (is_plain_grid4(hint_grid)) {
+            append_ft8_followup_text(texts, std::string("CQ ") + hint_call + " " + hint_grid);
+        }
+        append_ft8_followup_text(texts, std::string("CQ ") + hint_call);
+
+        if (has_my_call && 0 != std::strcmp(my_call, hint_call)) {
+            const std::string my_to_dx = std::string(my_call) + " " + hint_call;
+            const std::string dx_to_my = std::string(hint_call) + " " + my_call;
+            append_ft8_followup_exchange_texts(texts, my_to_dx, hint_grid);
+            append_ft8_followup_exchange_texts(texts, dx_to_my, nullptr);
+        }
+    }
+}
+
+static void build_ap_pass_texts(const wsjtx_port_decoder_t *state,
+                                const std::vector<ft8_followup_entry_t> &history_entries,
+                                std::vector<std::string> *texts) {
+    if (state == nullptr || texts == nullptr) {
+        return;
+    }
+
+    texts->clear();
+    append_manual_ap_hint_texts(state, texts);
+
+    int used_history = 0;
+    for (const ft8_followup_entry_t &entry : history_entries) {
+        if (used_history >= kApPassHistoryEntries || (int) texts->size() >= kApPassMaxTexts) {
+            break;
+        }
+        build_ft8_followup_texts(state, entry, texts);
+        ++used_history;
+    }
+
+    int used_session = 0;
+    for (const ft8_message &decoded : state->session_results) {
+        if (used_session >= kApPassHistoryEntries || (int) texts->size() >= kApPassMaxTexts) {
+            break;
+        }
+        ft8_followup_entry_t entry{};
+        if (!build_ft8_followup_entry(decoded, &entry)) {
+            continue;
+        }
+        build_ft8_followup_texts(state, entry, texts);
+        ++used_session;
+    }
+}
+
 static int ft4_decode_sensitivity(const wsjtx_port_decoder_t *state) {
     if (state == nullptr) {
         return 1;
@@ -1370,6 +1460,10 @@ static void append_subtract_history(std::vector<subtract_job_t> *history,
         return;
     }
     history->insert(history->end(), pass_jobs.begin(), pass_jobs.end());
+    if ((int) history->size() > kSubtractHistoryBudget) {
+        history->erase(history->begin(),
+                       history->begin() + ((int) history->size() - kSubtractHistoryBudget));
+    }
 }
 
 static bool rebuild_for_pass(wsjtx_port_decoder_t *state, const wsjtx::SessionPass &pass) {
@@ -1453,10 +1547,19 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
 
         std::vector<subtract_job_t> pass_jobs;
         pass_jobs.reserve((size_t) std::max(4, pass.max_candidates));
+        std::vector<std::string> ap_pass_texts;
+        const std::vector<std::string> *ap_texts = nullptr;
+        if (pass.role == wsjtx::PassRole::kAp) {
+            build_ap_pass_texts(state, followup_history, &ap_pass_texts);
+            if (!ap_pass_texts.empty()) {
+                ap_texts = &ap_pass_texts;
+            }
+        }
         const int new_results = decode_candidates(state,
                                                   state->candidate_list,
                                                   candidate_count,
                                                   pass.iterations,
+                                                  ap_texts,
                                                   &pass_jobs);
         if (new_results == 0) {
             if (should_continue_after_empty_pass(pass)) {
