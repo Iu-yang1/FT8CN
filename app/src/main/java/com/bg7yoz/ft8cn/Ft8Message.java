@@ -264,7 +264,17 @@ public class Ft8Message {
      */
     @SuppressLint("DefaultLocale")
     public String getFreq_hz() {
-        return String.format("%04.0f", freq_hz);
+        return String.format("%04.0f", getDisplayAudioFrequencyHz());
+    }
+
+    public float getDisplayAudioFrequencyHz() {
+        if (freq_hz <= 0.01f) {
+            return 0f;
+        }
+        if (freq_hz > 3000f) {
+            return 3000f;
+        }
+        return freq_hz;
     }
 
     public String getMessageText(boolean showWeekSignal) {

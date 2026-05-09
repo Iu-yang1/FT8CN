@@ -1,15 +1,11 @@
 package com.bg7yoz.ft8cn.ui;
-/**
- * 包含瀑布图、频率柱状图、标尺的自定义控件。
- * @author BGY70Z
- * @date 2023-03-20
- */
 
 import static android.view.MotionEvent.ACTION_UP;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.CompoundButton;
@@ -24,9 +20,12 @@ import androidx.lifecycle.Observer;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
+import com.bg7yoz.ft8cn.spectrum.SpectrumListener;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
 public class SpectrumView extends ConstraintLayout {
+    private static final String TAG = "SpectrumView";
+
     private MainViewModel mainViewModel;
     private ColumnarView columnarView;
     private Switch controlDeNoiseSwitch;
@@ -35,14 +34,16 @@ public class SpectrumView extends ConstraintLayout {
     private RulerFrequencyView rulerFrequencyView;
     private Fragment fragment;
 
-
-    private int frequencyLineTimeOut = 0;//画频率线的时间量
+    private int frequencyLineTimeOut = 0; // 频率线显示倒计时
+    private int[] fftBuffer;
+    private int[] renderBuffer;
+    private int lastLoggedSourceRate = -1;
+    private int lastLoggedInputLen = -1;
+    private int lastLoggedRenderBins = -1;
 
     static {
         System.loadLibrary("ft8cn");
     }
-
-
 
     public SpectrumView(@NonNull Context context) {
         super(context);
@@ -50,93 +51,86 @@ public class SpectrumView extends ConstraintLayout {
 
     public SpectrumView(@NonNull Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
-        View view = (View) View.inflate(context, R.layout.spectrum_layout,this);
+        View.inflate(context, R.layout.spectrum_layout, this);
     }
 
-
     @SuppressLint("ClickableViewAccessibility")
-    public void run(MainViewModel mainViewModel , Fragment fragment){
+    public void run(MainViewModel mainViewModel, Fragment fragment) {
         this.mainViewModel = mainViewModel;
-        this.fragment=fragment;
-        columnarView=findViewById(R.id.controlColumnarView);
-        controlDeNoiseSwitch=findViewById(R.id.controlDeNoiseSwitch);
-        waterfallView=findViewById(R.id.controlWaterfallView);
-        rulerFrequencyView=findViewById(R.id.controlRulerFrequencyView);
-        controlShowMessageSwitch=findViewById(R.id.controlShowMessageSwitch);
-
+        this.fragment = fragment;
+        columnarView = findViewById(R.id.controlColumnarView);
+        controlDeNoiseSwitch = findViewById(R.id.controlDeNoiseSwitch);
+        waterfallView = findViewById(R.id.controlWaterfallView);
+        rulerFrequencyView = findViewById(R.id.controlRulerFrequencyView);
+        controlShowMessageSwitch = findViewById(R.id.controlShowMessageSwitch);
 
         setDeNoiseSwitchState();
         setMarkMessageSwitchState();
 
         rulerFrequencyView.setFreq(Math.round(GeneralVariables.getBaseFrequency()));
-        mainViewModel.currentMessages=null;
+        mainViewModel.currentMessages = null;
 
-
-        //原始频谱开关
         controlDeNoiseSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
-            public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
-                mainViewModel.deNoise = b;
+            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+                mainViewModel.deNoise = checked;
                 setDeNoiseSwitchState();
-                mainViewModel.currentMessages=null;
+                mainViewModel.currentMessages = null;
             }
         });
-        //标记消息开关
+
         controlShowMessageSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
-            public void onCheckedChanged(CompoundButton compoundButton, boolean b) {
-                mainViewModel.markMessage = b;
+            public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+                mainViewModel.markMessage = checked;
                 setMarkMessageSwitchState();
             }
         });
 
-        //当声音变化，画频谱
-        mainViewModel.spectrumListener.mutableDataBuffer.observe(fragment.getViewLifecycleOwner(), new Observer<float[]>() {
+        mainViewModel.spectrumListener.mutableDataBuffer.observe(fragment.getViewLifecycleOwner(), new Observer<SpectrumListener.SpectrumFrame>() {
             @Override
-            public void onChanged(float[] ints) {
-                drawSpectrum(ints);
+            public void onChanged(SpectrumListener.SpectrumFrame frame) {
+                drawSpectrum(frame);
             }
         });
 
-
-        //观察解码的变化
         mainViewModel.mutableIsDecoding.observe(fragment.getViewLifecycleOwner(), new Observer<Boolean>() {
             @Override
-            public void onChanged(Boolean aBoolean) {
-                waterfallView.setDrawMessage(!aBoolean);//aBoolean==false说明解码完毕
+            public void onChanged(Boolean decoding) {
+                waterfallView.setDrawMessage(!decoding);
             }
         });
 
-        //触摸频谱时的动作
         View.OnTouchListener touchListener = new View.OnTouchListener() {
-            @SuppressLint("DefaultLocale")
             @Override
             public boolean onTouch(View view, MotionEvent motionEvent) {
-
-                frequencyLineTimeOut = 60;//显示频率线的时长：60*0.16
-
+                frequencyLineTimeOut = 60;
                 waterfallView.setTouch_x(Math.round(motionEvent.getX()));
                 columnarView.setTouch_x(Math.round(motionEvent.getX()));
 
-
                 if (!mainViewModel.ft8TransmitSignal.isSynFrequency()
-                        && (waterfallView.getFreq_hz() > 0)
-                        && (motionEvent.getAction() == ACTION_UP)
-                ) {//如果时异频发射
-                    mainViewModel.databaseOpr.writeConfig("freq",
+                        && waterfallView.getFreq_hz() > 0
+                        && motionEvent.getAction() == ACTION_UP) {
+                    mainViewModel.databaseOpr.writeConfig(
+                            "freq",
                             String.valueOf(waterfallView.getFreq_hz()),
-                            null);
+                            null
+                    );
                     mainViewModel.ft8TransmitSignal.setBaseFrequency(
-                            (float) waterfallView.getFreq_hz());
-
+                            (float) waterfallView.getFreq_hz()
+                    );
                     rulerFrequencyView.setFreq(waterfallView.getFreq_hz());
 
                     fragment.requireActivity().runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            ToastMessage.show(String.format(
-                                    GeneralVariables.getStringFromResource(R.string.sound_frequency_is_set_to)
-                                    , waterfallView.getFreq_hz()),true);
+                            ToastMessage.show(
+                                    String.format(
+                                            GeneralVariables.getStringFromResource(R.string.sound_frequency_is_set_to),
+                                            waterfallView.getFreq_hz()
+                                    ),
+                                    true
+                            );
                         }
                     });
                 }
@@ -146,11 +140,12 @@ public class SpectrumView extends ConstraintLayout {
 
         waterfallView.setOnTouchListener(touchListener);
         columnarView.setOnTouchListener(touchListener);
-
-
     }
+
     private void setDeNoiseSwitchState() {
-        if (mainViewModel==null) return;
+        if (mainViewModel == null) {
+            return;
+        }
         controlDeNoiseSwitch.setChecked(mainViewModel.deNoise);
         if (mainViewModel.deNoise) {
             controlDeNoiseSwitch.setText(GeneralVariables.getStringFromResource(R.string.de_noise));
@@ -158,7 +153,8 @@ public class SpectrumView extends ConstraintLayout {
             controlDeNoiseSwitch.setText(GeneralVariables.getStringFromResource(R.string.raw_spectrum_data));
         }
     }
-    private void setMarkMessageSwitchState(){
+
+    private void setMarkMessageSwitchState() {
         if (mainViewModel.markMessage) {
             controlShowMessageSwitch.setText(GeneralVariables.getStringFromResource(R.string.markMessage));
         } else {
@@ -166,43 +162,71 @@ public class SpectrumView extends ConstraintLayout {
         }
     }
 
-
-
-
-    public void drawSpectrum(float[] buffer) {
-        if (buffer.length <= 0) {
+    public void drawSpectrum(SpectrumListener.SpectrumFrame frame) {
+        if (frame == null || frame.samples == null || frame.samples.length <= 0) {
             return;
         }
-        int[] fft = new int[buffer.length / 2];
-        if (mainViewModel.deNoise) {
-            getFFTDataFloat(buffer, fft);
-        } else {
-            getFFTDataRawFloat(buffer, fft);
+
+        float[] buffer = frame.samples;
+        int sourceRate = frame.sampleRate;
+        int requiredSize = buffer.length / 2;
+        if (fftBuffer == null || fftBuffer.length != requiredSize) {
+            fftBuffer = new int[requiredSize];
         }
+
+        if (mainViewModel.deNoise) {
+            getFFTDataFloat(buffer, fftBuffer);
+        } else {
+            getFFTDataRawFloat(buffer, fftBuffer);
+        }
+
+        int renderBinCount = SpectrumListener.resolveRenderBinCount(
+                sourceRate,
+                buffer.length,
+                fftBuffer.length
+        );
+        renderBuffer = SpectrumListener.normalizeDisplayBins(fftBuffer, renderBinCount);
+
+        if (lastLoggedSourceRate != sourceRate
+                || lastLoggedInputLen != buffer.length
+                || lastLoggedRenderBins != renderBuffer.length) {
+            double binHz = (double) sourceRate / (double) buffer.length;
+            Log.d(TAG, String.format(
+                    "Spectrum display sourceRate=%d inputLen=%d fftSize=%d binHz=%.2f maxBin=%d renderRange=0-%dHz",
+                    sourceRate,
+                    buffer.length,
+                    buffer.length,
+                    binHz,
+                    Math.max(0, renderBinCount - 1),
+                    SpectrumListener.DISPLAY_MAX_FREQUENCY_HZ
+            ));
+            lastLoggedSourceRate = sourceRate;
+            lastLoggedInputLen = buffer.length;
+            lastLoggedRenderBins = renderBuffer.length;
+        }
+
         frequencyLineTimeOut--;
         if (frequencyLineTimeOut < 0) {
             frequencyLineTimeOut = 0;
         }
-        //达到显示的时长，就取取消掉频率线
         if (frequencyLineTimeOut == 0) {
             waterfallView.setTouch_x(-1);
             columnarView.setTouch_x(-1);
         }
-        columnarView.setWaveData(fft);
-        if (mainViewModel.markMessage) {//是否标记消息
-            waterfallView.setWaveData(fft, UtcTimer.getNowSequential(), mainViewModel.currentMessages);
+
+        columnarView.setWaveData(renderBuffer);
+        if (mainViewModel.markMessage) {
+            waterfallView.setWaveData(renderBuffer, UtcTimer.getNowSequential(), mainViewModel.currentMessages);
         } else {
-            waterfallView.setWaveData(fft, UtcTimer.getNowSequential(), null);
+            waterfallView.setWaveData(renderBuffer, UtcTimer.getNowSequential(), null);
         }
     }
 
-
     public native void getFFTData(int[] data, int fftData[]);
+
     public native void getFFTDataFloat(float[] data, int fftData[]);
 
     public native void getFFTDataRaw(int[] data, int fftData[]);
+
     public native void getFFTDataRawFloat(float[] data, int fftData[]);
-
-
 }
-

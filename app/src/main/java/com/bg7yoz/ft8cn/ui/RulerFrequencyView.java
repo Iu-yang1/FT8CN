@@ -16,6 +16,8 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
+import com.bg7yoz.ft8cn.spectrum.SpectrumListener;
+
 public class RulerFrequencyView extends View {
     private static final String TAG = "RulerFrequencyView";
     private int rulerWidth = getWidth();
@@ -62,13 +64,14 @@ public class RulerFrequencyView extends View {
     public void drawRuler(Canvas canvas) {
         int top = 1;
         //rulerWidth=getRight();
-        int width_rate = Math.round((float) rulerWidth / 30f);
+        final int majorTickCount = SpectrumListener.DISPLAY_MAX_FREQUENCY_HZ / 100;
+        int width_rate = Math.round((float) rulerWidth / (float) majorTickCount);
         int lineWidth = (int) (getResources().getDisplayMetrics().density);
         int lineHeight = (int) (2 * getResources().getDisplayMetrics().density);
         Rect rect = new Rect();
         Paint paint = new Paint();
         paint.setColor(0xff00ffff);
-        for (int i = 0; i <= 300; i++) {
+        for (int i = 0; i <= majorTickCount; i++) {
             if (i % 1 == 0) {
                 rect.top = top;
                 rect.left = Math.round((float) i * width_rate);
@@ -82,7 +85,7 @@ public class RulerFrequencyView extends View {
                     fontPaint.setDither(true);
                     if (i == 0) {
                         fontPaint.setTextAlign(Paint.Align.LEFT);
-                    } else if (i == 300) {
+                    } else if (i == majorTickCount) {
                         fontPaint.setTextAlign(Paint.Align.RIGHT);
                     } else {
                         fontPaint.setTextAlign(Paint.Align.CENTER);

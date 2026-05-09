@@ -1,6 +1,7 @@
 #include "wsjtx_port.h"
 #include "session_plan.h"
 
+#include <android/log.h>
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -16,6 +17,8 @@ extern "C" {
 }
 
 namespace {
+
+constexpr const char *kWsjtLogTag = "FT8CN-WSJTX";
 
 constexpr int kFt8PhaseTicksFull = 50;
 constexpr int64_t kFt8SlotMilliseconds = 15000;
@@ -62,6 +65,12 @@ struct followup_search_policy_t {
     float freq_window_hz;
     float time_window_sec;
     int max_candidates;
+};
+
+struct pass_decode_stats_t {
+    int decode_success_count;
+    int ap_success_count;
+    int duplicate_count;
 };
 
 struct wsjtx_port_decoder_t {
@@ -363,6 +372,32 @@ static int clamp_candidate_count(int count) {
     return count;
 }
 
+static const char *pass_role_name(wsjtx::PassRole role) {
+    switch (role) {
+        case wsjtx::PassRole::kEarly:
+            return "early";
+        case wsjtx::PassRole::kLate:
+            return "late";
+        case wsjtx::PassRole::kAp:
+            return "ap";
+        case wsjtx::PassRole::kSubtract:
+            return "subtract";
+        case wsjtx::PassRole::kBase:
+        default:
+            return "base";
+    }
+}
+
+static const char *candidate_source_name(wsjtx::CandidateSource source) {
+    switch (source) {
+        case wsjtx::CandidateSource::kFt4RawFft:
+            return "ft4_raw_fft";
+        case wsjtx::CandidateSource::kWaterfall:
+        default:
+            return "waterfall";
+    }
+}
+
 static bool same_candidate_identity(const candidate_t &lhs, const candidate_t &rhs) {
     return lhs.time_offset == rhs.time_offset &&
            lhs.time_sub == rhs.time_sub &&
@@ -466,16 +501,22 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
                              int candidate_count,
                              int iterations,
                              const std::vector<std::string> *ap_texts,
-                             std::vector<subtract_job_t> *jobs) {
+                             std::vector<subtract_job_t> *jobs,
+                             pass_decode_stats_t *stats) {
     candidate_count = clamp_candidate_count(candidate_count);
     if (state == nullptr || candidate_count <= 0) {
         return 0;
+    }
+
+    if (stats != nullptr) {
+        std::memset(stats, 0, sizeof(*stats));
     }
 
     int new_results = 0;
     for (int idx = 0; idx < candidate_count; ++idx) {
         ft8_message decoded;
         bool decoded_ok = false;
+        bool decoded_by_ap = false;
         if (ap_texts != nullptr && !ap_texts->empty()) {
             decoded_ok = decode_candidate_with_ap_texts(state,
                                                         &state->mon.wf,
@@ -483,6 +524,7 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
                                                         *ap_texts,
                                                         iterations,
                                                         &decoded);
+            decoded_by_ap = decoded_ok;
         }
 
         if (!decoded_ok) {
@@ -497,7 +539,17 @@ static int decode_candidates(wsjtx_port_decoder_t *state,
             continue;
         }
 
+        if (stats != nullptr) {
+            ++stats->decode_success_count;
+            if (decoded_by_ap) {
+                ++stats->ap_success_count;
+            }
+        }
+
         if (!remember_decode(state, decoded)) {
+            if (stats != nullptr) {
+                ++stats->duplicate_count;
+            }
             continue;
         }
 
@@ -1434,7 +1486,8 @@ static int collect_ft4_candidates(wsjtx_port_decoder_t *state,
 
 static int collect_candidates_for_pass(wsjtx_port_decoder_t *state,
                                        const wsjtx::SessionPass &pass,
-                                       candidate_t out[kMax_candidates]) {
+                                       candidate_t out[kMax_candidates],
+                                       int *raw_count_out) {
     int count;
 
     switch (pass.candidate_source) {
@@ -1445,6 +1498,10 @@ static int collect_candidates_for_pass(wsjtx_port_decoder_t *state,
         default:
             count = collect_sorted_candidates(state, pass.min_sync_score, out);
             break;
+    }
+
+    if (raw_count_out != nullptr) {
+        *raw_count_out = count;
     }
 
     count = clamp_candidate_count(count);
@@ -1521,6 +1578,19 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
                                                             has_ap_hints,
                                                             state->options);
 
+    __android_log_print(ANDROID_LOG_INFO,
+                        kWsjtLogTag,
+                        "session start mode=%s deep=%d passes=%d rounds=%d apHints=%d wideband=%d followupHistory=%d planPasses=%d ldpc=%d",
+                        state_is_ft4(state) ? "FT4" : "FT8",
+                        deep_mode ? 1 : 0,
+                        state->options.decode_pass_count,
+                        state->options.multi_decode_round_count,
+                        has_ap_hints ? 1 : 0,
+                        state->options.enable_wideband_dx_search ? 1 : 0,
+                        (int) followup_history.size(),
+                        (int) plan.passes.size(),
+                        state->ldpc_iterations);
+
     if (plan.passes.empty()) {
         state->num_candidates = 0;
         return;
@@ -1531,17 +1601,51 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
 
     for (const wsjtx::SessionPass &pass : plan.passes) {
         if (!rebuild_for_pass(state, pass)) {
+            __android_log_print(ANDROID_LOG_INFO,
+                                kWsjtLogTag,
+                                "pass skip role=%s reason=rebuild_failed phaseTicks=%d",
+                                pass_role_name(pass.role),
+                                pass.phase_ticks);
             continue;
         }
         if (pass.apply_subtract_history && !subtract_history.empty()) {
             apply_subtract_jobs(state, subtract_history, plan.mode.subtract_mode);
         }
 
-        const int candidate_count = collect_candidates_for_pass(state, pass, state->candidate_list);
+        int raw_candidate_count = 0;
+        const int candidate_count = collect_candidates_for_pass(state,
+                                                                pass,
+                                                                state->candidate_list,
+                                                                &raw_candidate_count);
+        __android_log_print(ANDROID_LOG_INFO,
+                            kWsjtLogTag,
+                            "pass collect role=%s source=%s minSync=%d maxCandidates=%d phaseTicks=%d subtractHistory=%d raw=%d collected=%d",
+                            pass_role_name(pass.role),
+                            candidate_source_name(pass.candidate_source),
+                            pass.min_sync_score,
+                            pass.max_candidates,
+                            pass.phase_ticks,
+                            (int) subtract_history.size(),
+                            raw_candidate_count,
+                            candidate_count);
+        __android_log_print(ANDROID_LOG_INFO,
+                            kWsjtLogTag,
+                            "pass collect raw=%d clipped=%d role=%s",
+                            raw_candidate_count,
+                            candidate_count,
+                            pass_role_name(pass.role));
         if (candidate_count <= 0) {
             if (should_continue_after_empty_pass(pass)) {
+                __android_log_print(ANDROID_LOG_INFO,
+                                    kWsjtLogTag,
+                                    "pass continue role=%s reason=empty_optional_pass",
+                                    pass_role_name(pass.role));
                 continue;
             }
+            __android_log_print(ANDROID_LOG_INFO,
+                                kWsjtLogTag,
+                                "pass break role=%s reason=empty_required_pass",
+                                pass_role_name(pass.role));
             break;
         }
 
@@ -1554,17 +1658,51 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
             if (!ap_pass_texts.empty()) {
                 ap_texts = &ap_pass_texts;
             }
+            __android_log_print(ANDROID_LOG_INFO,
+                                kWsjtLogTag,
+                                "pass ap role=%s history=%d sessionResults=%d apTexts=%d",
+                                pass_role_name(pass.role),
+                                (int) followup_history.size(),
+                                (int) state->session_results.size(),
+                                (int) ap_pass_texts.size());
+            __android_log_print(ANDROID_LOG_INFO,
+                                kWsjtLogTag,
+                                "pass ap texts=%d role=%s",
+                                (int) ap_pass_texts.size(),
+                                pass_role_name(pass.role));
         }
+        pass_decode_stats_t pass_stats{};
         const int new_results = decode_candidates(state,
                                                   state->candidate_list,
                                                   candidate_count,
                                                   pass.iterations,
                                                   ap_texts,
-                                                  &pass_jobs);
+                                                  &pass_jobs,
+                                                  &pass_stats);
+        __android_log_print(ANDROID_LOG_INFO,
+                            kWsjtLogTag,
+                            "pass decode role=%s iterations=%d apTexts=%d decoded=%d apDecoded=%d duplicates=%d new=%d subtractJobs=%d sessionResults=%d",
+                            pass_role_name(pass.role),
+                            pass.iterations,
+                            (int) ap_pass_texts.size(),
+                            pass_stats.decode_success_count,
+                            pass_stats.ap_success_count,
+                            pass_stats.duplicate_count,
+                            new_results,
+                            (int) pass_jobs.size(),
+                            (int) state->session_results.size());
         if (new_results == 0) {
             if (should_continue_after_empty_pass(pass)) {
+                __android_log_print(ANDROID_LOG_INFO,
+                                    kWsjtLogTag,
+                                    "pass continue role=%s reason=no_new_results",
+                                    pass_role_name(pass.role));
                 continue;
             }
+            __android_log_print(ANDROID_LOG_INFO,
+                                kWsjtLogTag,
+                                "pass break role=%s reason=no_new_results",
+                                pass_role_name(pass.role));
             break;
         }
 
@@ -1575,6 +1713,11 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
     }
 
     if (enable_ft8_followup && has_full_slot_samples(state) && !followup_history.empty()) {
+        __android_log_print(ANDROID_LOG_INFO,
+                            kWsjtLogTag,
+                            "followup start history=%d subtractHistory=%d",
+                            (int) followup_history.size(),
+                            (int) subtract_history.size());
         run_ft8_followup_pass(state, subtract_history, followup_history);
     }
 
@@ -1583,6 +1726,10 @@ static void run_session_passes(wsjtx_port_decoder_t *state) {
     }
 
     state->num_candidates = (int) state->session_results.size();
+    __android_log_print(ANDROID_LOG_INFO,
+                        kWsjtLogTag,
+                        "session end results=%d",
+                        state->num_candidates);
 }
 
 }  // namespace
