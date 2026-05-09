@@ -51,8 +51,10 @@
 
     <TextView
         android:id="@+id/callingListFreqTextView"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:gravity="center"
+        android:includeFontPadding="false"
         android:textSize="12sp"
         app:layout_constraintBottom_toBottomOf="@+id/callListMessageTextView"
         app:layout_constraintEnd_toStartOf="@+id/guideline2"
@@ -89,7 +91,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        app:layout_constraintGuide_begin="105dp" />
+        app:layout_constraintGuide_begin="114dp" />
 
     <TextView
         android:id="@+id/callingListSequenceTextView"
@@ -139,7 +141,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        app:layout_constraintGuide_begin="70dp" />
+        app:layout_constraintGuide_begin="68dp" />
 
     <androidx.constraintlayout.widget.Guideline
         android:id="@+id/guideline9"

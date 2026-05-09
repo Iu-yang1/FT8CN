@@ -2,6 +2,7 @@ package com.bg7yoz.ft8cn.ui;
 
 import android.annotation.SuppressLint;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
@@ -15,9 +16,11 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.databinding.FragmentSpectrumBinding;
+import com.bg7yoz.ft8cn.spectrum.SpectrumListener;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
 public class SpectrumFragment extends Fragment {
+    private static final String TAG = "SpectrumFragment";
     private FragmentSpectrumBinding binding;
     private MainViewModel mainViewModel;
 
@@ -25,6 +28,10 @@ public class SpectrumFragment extends Fragment {
 
     /** 复用的 FFT buffer，避免每帧分配 */
     private int[] fftBuffer;
+    private int[] renderBuffer;
+    private int lastLoggedSourceRate = -1;
+    private int lastLoggedInputLen = -1;
+    private int lastLoggedRenderBins = -1;
 
     static {
         System.loadLibrary("ft8cn");
@@ -110,15 +117,18 @@ public class SpectrumFragment extends Fragment {
     }
 
     private void observeViewModel() {
-        // 核心优化：复用 FFT buffer
-        mainViewModel.spectrumListener.mutableDataBuffer.observe(getViewLifecycleOwner(), new Observer<float[]>() {
+        mainViewModel.spectrumListener.mutableDataBuffer.observe(getViewLifecycleOwner(), new Observer<SpectrumListener.SpectrumFrame>() {
             @Override
-            public void onChanged(float[] buffer) {
-                if (buffer == null || buffer.length == 0) return;
+            public void onChanged(SpectrumListener.SpectrumFrame frame) {
+                if (frame == null || frame.samples == null || frame.samples.length == 0) {
+                    return;
+                }
 
+                float[] buffer = frame.samples;
+                int sourceRate = frame.sampleRate;
                 int requiredSize = buffer.length / 2;
                 if (fftBuffer == null || fftBuffer.length != requiredSize) {
-                    fftBuffer = new int[requiredSize]; // 仅在第一次或大小变化时分配
+                    fftBuffer = new int[requiredSize];
                 }
 
                 if (mainViewModel.deNoise) {
@@ -127,25 +137,49 @@ public class SpectrumFragment extends Fragment {
                     getFFTDataRawFloat(buffer, fftBuffer);
                 }
 
-                // 更新频率线显示
+                int renderBinCount = SpectrumListener.resolveRenderBinCount(
+                        sourceRate,
+                        buffer.length,
+                        fftBuffer.length
+                );
+                renderBuffer = SpectrumListener.normalizeDisplayBins(fftBuffer, renderBinCount);
+
+                if (lastLoggedSourceRate != sourceRate
+                        || lastLoggedInputLen != buffer.length
+                        || lastLoggedRenderBins != renderBuffer.length) {
+                    double binHz = (double) sourceRate / (double) buffer.length;
+                    Log.d(TAG, String.format(
+                            "Spectrum display sourceRate=%d inputLen=%d fftSize=%d binHz=%.2f maxBin=%d renderRange=0-%dHz",
+                            sourceRate,
+                            buffer.length,
+                            buffer.length,
+                            binHz,
+                            Math.max(0, renderBinCount - 1),
+                            SpectrumListener.DISPLAY_MAX_FREQUENCY_HZ
+                    ));
+                    lastLoggedSourceRate = sourceRate;
+                    lastLoggedInputLen = buffer.length;
+                    lastLoggedRenderBins = renderBuffer.length;
+                }
+
                 frequencyLineTimeOut--;
-                if (frequencyLineTimeOut < 0) frequencyLineTimeOut = 0;
+                if (frequencyLineTimeOut < 0) {
+                    frequencyLineTimeOut = 0;
+                }
                 if (frequencyLineTimeOut == 0) {
                     binding.waterfallView.setTouch_x(-1);
                     binding.columnarView.setTouch_x(-1);
                 }
 
-                // 渲染
-                binding.columnarView.setWaveData(fftBuffer);
+                binding.columnarView.setWaveData(renderBuffer);
                 if (mainViewModel.markMessage) {
-                    binding.waterfallView.setWaveData(fftBuffer, UtcTimer.getNowSequential(), mainViewModel.currentMessages);
+                    binding.waterfallView.setWaveData(renderBuffer, UtcTimer.getNowSequential(), mainViewModel.currentMessages);
                 } else {
-                    binding.waterfallView.setWaveData(fftBuffer, UtcTimer.getNowSequential(), null);
+                    binding.waterfallView.setWaveData(renderBuffer, UtcTimer.getNowSequential(), null);
                 }
             }
         });
 
-        // 显示解码耗时
         mainViewModel.ft8SignalListener.decodeTimeSec.observe(getViewLifecycleOwner(), aLong ->
                 binding.decodeDurationTextView.setText(String.format(
                         GeneralVariables.getStringFromResource(R.string.decoding_takes_milliseconds),
