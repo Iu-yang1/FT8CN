@@ -33,6 +33,9 @@ static decoder_backend_t select_decoder_backend(void) {
 static inline void setMagToZero(decoder_t *decoder, int index, int max_block_size) {
     if (index > 0 && index < max_block_size) {
         decoder->mon.wf.mag[index] = 0;
+        if (decoder->mon.wf.mag2 != NULL) {
+            decoder->mon.wf.mag2[index] = 0.0f;
+        }
     }
 }
 
