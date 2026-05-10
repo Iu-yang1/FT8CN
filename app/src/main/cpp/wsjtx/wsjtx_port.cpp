@@ -142,6 +142,9 @@ static void reset_dedupe_state(wsjtx_port_decoder_t *state) {
 static inline void set_mag_to_zero(wsjtx_port_decoder_t *state, int index, int max_block_size) {
     if (index > 0 && index < max_block_size) {
         state->mon.wf.mag[index] = 0;
+        if (state->mon.wf.mag2 != nullptr) {
+            state->mon.wf.mag2[index] = 0.0f;
+        }
     }
 }
 

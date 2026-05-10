@@ -16,6 +16,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 
 static int ldpc_check(uint8_t codeword[]);
 static float fast_tanh(float x);
@@ -29,7 +30,9 @@ void ldpc_decode(float codeword[], int max_iters, uint8_t plain[], int* ok)
 {
     float m[FTX_LDPC_M][FTX_LDPC_N]; // ~60 kB
     float e[FTX_LDPC_M][FTX_LDPC_N]; // ~60 kB
-    int min_errors = FTX_LDPC_M;
+    uint8_t best_plain[FTX_LDPC_N];
+    int min_errors = FTX_LDPC_M + 1;
+    memset(best_plain, 0, sizeof(best_plain));
 
     for (int j = 0; j < FTX_LDPC_M; j++)
     {
@@ -77,6 +80,7 @@ void ldpc_decode(float codeword[], int max_iters, uint8_t plain[], int* ok)
         {
             // 更新当前最佳结果
             min_errors = errors;
+            memcpy(best_plain, plain, sizeof(best_plain));
 
             if (errors == 0)
             {
@@ -103,6 +107,7 @@ void ldpc_decode(float codeword[], int max_iters, uint8_t plain[], int* ok)
         }
     }
 
+    memcpy(plain, best_plain, sizeof(best_plain));
     *ok = min_errors;
 }
 
@@ -138,9 +143,11 @@ void bp_decode(float codeword[], int max_iters, uint8_t plain[], int* ok)
 {
     float tov[FTX_LDPC_N][3];
     float toc[FTX_LDPC_M][7];
+    uint8_t best_plain[FTX_LDPC_N];
 
     //FTX_LDPC_M=83
-    int min_errors = FTX_LDPC_M;
+    int min_errors = FTX_LDPC_M + 1;
+    memset(best_plain, 0, sizeof(best_plain));
 
     // initialize message data
     //FTX_LDPC_N=174
@@ -174,6 +181,7 @@ void bp_decode(float codeword[], int max_iters, uint8_t plain[], int* ok)
         {
             // we have a better guess - update the result
             min_errors = errors;
+            memcpy(best_plain, plain, sizeof(best_plain));
 
             if (errors == 0)
             {
@@ -220,6 +228,7 @@ void bp_decode(float codeword[], int max_iters, uint8_t plain[], int* ok)
         }
     }
 
+    memcpy(plain, best_plain, sizeof(best_plain));
     *ok = min_errors;
 }
 
