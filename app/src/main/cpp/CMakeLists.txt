@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.18.1)
 
 project("ft8cn")
 
+option(FT8CN_ENABLE_WSJTX3_BACKEND "Enable official WSJT-X 3.0 backend bridge" OFF)
+
 add_library(
         ftx_core
         STATIC
@@ -31,6 +33,7 @@ add_library(
         ft8Decoder.c
         ft8Encoder.c
         spectrum_data.c
+        wsjtx3/wsjtx3_backend.c
 )
 
 add_library(
@@ -68,6 +71,12 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/ftx_core/include
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+if (FT8CN_ENABLE_WSJTX3_BACKEND)
+    target_compile_definitions(ftx_core PUBLIC FT8CN_ENABLE_WSJTX3_BACKEND=1)
+else ()
+    target_compile_definitions(ftx_core PUBLIC FT8CN_ENABLE_WSJTX3_BACKEND=0)
+endif ()
 
 target_include_directories(
         radio_experimental

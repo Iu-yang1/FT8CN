@@ -2,6 +2,7 @@
 
 #include "ft8/encode.h"
 #include "wsjtx/wsjtx_port.h"
+#include "wsjtx3/wsjtx3_backend.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -25,9 +26,9 @@ static inline int decoder_min_sync_score(decoder_t *decoder) {
 }
 
 static decoder_backend_t select_decoder_backend(void) {
-    // New work lands behind the WSJT-X port backend first so we can migrate
-    // the Fortran session logic incrementally without changing JNI again.
-    return DECODER_BACKEND_WSJTX_PORT;
+    // 新主线直接指向官方 WSJT-X 3.0 backend，当前平台若尚未接好
+    // Fortran bridge，则在 init 阶段自动回退到过渡 backend。
+    return DECODER_BACKEND_WSJTX3_OFFICIAL;
 }
 
 static inline void setMagToZero(decoder_t *decoder, int index, int max_block_size) {
@@ -80,6 +81,13 @@ void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft
     decoder->num_samples = num_samples;
     decoder->backend = select_decoder_backend();
 
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        if (wsjtx3_backend_init_decoder(decoder, utcTime, sample_rate, num_samples, is_ft8)) {
+            return decoder;
+        }
+        decoder->backend = DECODER_BACKEND_WSJTX_PORT;
+    }
+
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         if (wsjtx_port_init_decoder(decoder, utcTime, sample_rate, num_samples, is_ft8)) {
             return decoder;
@@ -107,6 +115,12 @@ void delete_decoder(decoder_t *decoder) {
         return;
     }
 
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        wsjtx3_backend_free_decoder(decoder);
+        free(decoder);
+        return;
+    }
+
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         wsjtx_port_free_decoder(decoder);
         free(decoder);
@@ -123,6 +137,11 @@ void decoder_monitor_press_samples(float signal[], decoder_t *decoder, int sampl
     }
     if (sample_count < 0) {
         sample_count = 0;
+    }
+
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        wsjtx3_backend_monitor_press(decoder, signal, sample_count);
+        return;
     }
 
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
@@ -153,6 +172,10 @@ int decoder_ft8_find_sync(decoder_t *decoder) {
         return 0;
     }
 
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        return wsjtx3_backend_find_sync(decoder);
+    }
+
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         return wsjtx_port_find_sync(decoder);
     }
@@ -172,6 +195,10 @@ int decoder_ft8_find_sync(decoder_t *decoder) {
 }
 
 ft8_message decoder_ft8_analysis(int idx, decoder_t *decoder) {
+    if (decoder != NULL && decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        return wsjtx3_backend_analyze(decoder, idx);
+    }
+
     if (decoder != NULL && decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         return wsjtx_port_analyze(decoder, idx);
     }
@@ -255,6 +282,11 @@ void decoder_ft8_reset(decoder_t *decoder, long utcTime, int num_samples) {
     decoder->utcTime = utcTime;
     decoder->num_samples = num_samples;
 
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        wsjtx3_backend_reset(decoder, utcTime, num_samples);
+        return;
+    }
+
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         wsjtx_port_reset(decoder, utcTime, num_samples);
         return;
@@ -266,6 +298,11 @@ void decoder_ft8_reset(decoder_t *decoder, long utcTime, int num_samples) {
 
 void decoder_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]) {
     if (decoder == NULL || out == NULL) {
+        return;
+    }
+
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        wsjtx3_backend_get_a91(decoder, out);
         return;
     }
 
@@ -295,6 +332,11 @@ void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations) {
         iterations = 1;
     }
 
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        wsjtx3_backend_set_ldpc_iterations(decoder, iterations);
+        return;
+    }
+
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         wsjtx_port_set_ldpc_iterations(decoder, iterations);
         return;
@@ -304,6 +346,11 @@ void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations) {
 
 void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints) {
     if (decoder == NULL) {
+        return;
+    }
+
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        wsjtx3_backend_set_ap_hints(decoder, ap_hints);
         return;
     }
 
@@ -325,6 +372,11 @@ void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t
         return;
     }
 
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        wsjtx3_backend_set_options(decoder, options);
+        return;
+    }
+
     // WSJT-X 风格的会话参数只在 WSJTX backend 生效，legacy backend 保持原有行为。
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
         wsjtx_port_set_options(decoder, options);
@@ -334,6 +386,10 @@ void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t
 bool decoder_owns_session_flow(decoder_t *decoder) {
     if (decoder == NULL) {
         return false;
+    }
+
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        return wsjtx3_backend_owns_session_flow(decoder);
     }
 
     if (decoder->backend == DECODER_BACKEND_WSJTX_PORT) {
@@ -349,6 +405,11 @@ void decoder_subtract_signal(decoder_t *decoder,
                              float time_sec,
                              int mode) {
     if (decoder == NULL || payload == NULL) {
+        return;
+    }
+
+    if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
+        wsjtx3_backend_subtract_signal(decoder, payload, sample_rate, frequency, time_sec, mode);
         return;
     }
 

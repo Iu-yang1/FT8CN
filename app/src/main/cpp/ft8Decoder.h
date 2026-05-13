@@ -9,7 +9,8 @@
 
 typedef enum {
     DECODER_BACKEND_LEGACY = 0,
-    DECODER_BACKEND_WSJTX_PORT = 1
+    DECODER_BACKEND_WSJTX_PORT = 1,
+    DECODER_BACKEND_WSJTX3_OFFICIAL = 2
 } decoder_backend_t;
 
 typedef struct {
