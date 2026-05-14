@@ -41,6 +41,8 @@ set(WSJTX3_VENDOR_FORTRAN_SOURCES
         ${WSJTX3_VENDOR_LIB}/fftw3mod.f90
         ${WSJTX3_VENDOR_LIB}/timer_module.f90
         ${WSJTX3_VENDOR_LIB}/fmtmsg.f90
+        ${WSJTX3_VENDOR_LIB}/deg2grid.f90
+        ${WSJTX3_VENDOR_LIB}/grid2deg.f90
         ${WSJTX3_VENDOR_LIB}/packjt.f90
         ${WSJTX3_VENDOR_LIB}/chkcall.f90
         ${WSJTX3_VENDOR_LIB}/db.f90
