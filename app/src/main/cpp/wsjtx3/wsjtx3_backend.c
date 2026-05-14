@@ -46,6 +46,127 @@ static wsjtx3_backend_state_t *get_state(decoder_t *decoder) {
     return (decoder == NULL) ? NULL : (wsjtx3_backend_state_t *) decoder->backend_state;
 }
 
+static int clamp_i16(int value) {
+    if (value > 32767) {
+        return 32767;
+    }
+    if (value < -32768) {
+        return -32768;
+    }
+    return value;
+}
+
+static float backend_symbol_period(const wsjtx3_backend_state_t *state) {
+    return (state != NULL && !state->is_ft8) ? FT4_SYMBOL_PERIOD : FT8_SYMBOL_PERIOD;
+}
+
+static int score_from_sync(float sync_value) {
+    const float scaled = sync_value * 10.0f;
+    if (scaled > 32767.0f) {
+        return 32767;
+    }
+    if (scaled < -32768.0f) {
+        return -32768;
+    }
+    return (int) lroundf(scaled);
+}
+
+static void clear_decoder_result_view(decoder_t *decoder) {
+    if (decoder == NULL) {
+        return;
+    }
+
+    decoder->num_candidates = 0;
+    decoder->num_decoded = 0;
+    memset(decoder->candidate_list, 0, sizeof(decoder->candidate_list));
+    memset(decoder->decoded, 0, sizeof(decoder->decoded));
+    memset(decoder->decoded_freq_hz, 0, sizeof(decoder->decoded_freq_hz));
+    memset(decoder->a91, 0, sizeof(decoder->a91));
+    for (int index = 0; index < kMax_decoded_messages; ++index) {
+        decoder->decoded_hashtable[index] = NULL;
+    }
+}
+
+static void publish_message_lookup(decoder_t *decoder, const ft8_message *decoded) {
+    int slot_index;
+    int probe_count;
+
+    if (decoder == NULL || decoded == NULL) {
+        return;
+    }
+
+    slot_index = decoded->message.hash % kMax_decoded_messages;
+    if (slot_index < 0) {
+        slot_index += kMax_decoded_messages;
+    }
+
+    for (probe_count = 0; probe_count < kMax_decoded_messages; ++probe_count) {
+        if (decoder->decoded_hashtable[slot_index] == NULL) {
+            decoder->decoded[slot_index] = decoded->message;
+            decoder->decoded_freq_hz[slot_index] = decoded->freq_hz;
+            decoder->decoded_hashtable[slot_index] = &decoder->decoded[slot_index];
+            ++decoder->num_decoded;
+            return;
+        }
+        slot_index = (slot_index + 1) % kMax_decoded_messages;
+    }
+}
+
+static void populate_candidate_from_bridge_result(const wsjtx3_backend_state_t *state,
+                                                  const wsjtx3_bridge_decode_result_t *bridge_result,
+                                                  candidate_t *candidate) {
+    float symbol_period;
+    float quantized_freq;
+    float quantized_time;
+    int oversampled_freq;
+    int time_steps;
+
+    if (bridge_result == NULL || candidate == NULL) {
+        return;
+    }
+
+    memset(candidate, 0, sizeof(*candidate));
+    candidate->score = (int16_t) score_from_sync(bridge_result->sync);
+    candidate->snr = bridge_result->snr;
+
+    symbol_period = backend_symbol_period(state);
+    quantized_freq = bridge_result->freq * symbol_period * (float) kFreq_osr;
+    oversampled_freq = (int) lroundf(quantized_freq);
+    if (oversampled_freq < 0) {
+        oversampled_freq = 0;
+    }
+    candidate->freq_offset = (int16_t) clamp_i16(oversampled_freq / kFreq_osr);
+    candidate->freq_sub = (uint8_t) (oversampled_freq % kFreq_osr);
+
+    quantized_time = (bridge_result->dt * (float) kTime_osr) / symbol_period;
+    time_steps = (int) lroundf(quantized_time);
+    candidate->time_offset = (int16_t) clamp_i16(time_steps);
+    candidate->time_sub = 0;
+}
+
+static void publish_session_results_to_decoder(decoder_t *decoder,
+                                               const wsjtx3_backend_state_t *state) {
+    int result_count;
+    int index;
+
+    clear_decoder_result_view(decoder);
+    if (decoder == NULL || state == NULL) {
+        return;
+    }
+
+    result_count = state->session_result_count;
+    if (result_count > kMax_candidates) {
+        result_count = kMax_candidates;
+    }
+
+    for (index = 0; index < result_count; ++index) {
+        decoder->candidate_list[index] = state->session_results[index].candidate;
+        publish_message_lookup(decoder, &state->session_results[index]);
+    }
+
+    decoder->num_candidates = result_count;
+}
+
 static void reset_backend_results(decoder_t *decoder, wsjtx3_backend_state_t *state) {
     if (state == NULL) {
         return;
@@ -53,10 +174,7 @@ static void reset_backend_results(decoder_t *decoder, wsjtx3_backend_state_t *st
     state->session_result_count = 0;
     memset(state->session_results, 0, sizeof(state->session_results));
     memset(state->current_a91, 0, sizeof(state->current_a91));
-    if (decoder != NULL) {
-        decoder->num_candidates = 0;
-        decoder->num_decoded = 0;
-    }
+    clear_decoder_result_view(decoder);
 }
 
 static void copy_text(char *dst, size_t dst_size, const char *src) {
@@ -112,17 +230,6 @@ static void select_primary_ap_hint(const ap_hints_t *ap_hints,
         copy_text(his_grid, FTX_AP_GRID_MAX, ap_hints->hint_grids[index]);
         return;
     }
-}
-
-static int score_from_sync(float sync_value) {
-    const float scaled = sync_value * 10.0f;
-    if (scaled > 32767.0f) {
-        return 32767;
-    }
-    if (scaled < -32768.0f) {
-        return -32768;
-    }
-    return (int) lroundf(scaled);
 }
 
 static void build_storage_a91(bool is_ft8,
@@ -419,8 +526,7 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
         decoded.snr = bridge_result.snr;
         decoded.time_sec = bridge_result.dt;
         decoded.freq_hz = bridge_result.freq;
-        decoded.candidate.score = (int16_t) score_from_sync(bridge_result.sync);
-        decoded.candidate.snr = bridge_result.snr;
+        populate_candidate_from_bridge_result(state, &bridge_result, &decoded.candidate);
         build_message_from_text(state->is_ft8, bridge_result.decoded, &decoded.message);
 
         {
@@ -444,8 +550,7 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
           sizeof(state->session_results[0]),
           compare_session_results);
 
-    decoder->num_candidates = state->session_result_count;
-    decoder->num_decoded = state->session_result_count;
+    publish_session_results_to_decoder(decoder, state);
     return state->session_result_count;
 #else
     (void) decoder;
@@ -465,6 +570,11 @@ ft8_message wsjtx3_backend_analyze(decoder_t *decoder, int idx) {
     memcpy(state->current_a91,
            state->session_results[idx].message.a91,
            FTX_LDPC_K_BYTES);
+    if (decoder != NULL) {
+        memcpy(decoder->a91,
+               state->session_results[idx].message.a91,
+               FTX_LDPC_K_BYTES);
+    }
     return state->session_results[idx];
 }
 

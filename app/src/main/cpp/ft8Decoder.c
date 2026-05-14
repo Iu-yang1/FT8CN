@@ -72,6 +72,7 @@ void signalToFFT(decoder_t *decoder, float signal[], int sample_rate) {
 
 void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8) {
     decoder_t *decoder = (decoder_t *) malloc(sizeof(decoder_t));
+    monitor_config_t default_mon_cfg;
     if (decoder == NULL) {
         return NULL;
     }
@@ -80,6 +81,16 @@ void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft
     decoder->utcTime = utcTime;
     decoder->num_samples = num_samples;
     decoder->backend = select_decoder_backend();
+    decoder->kLDPC_iterations = fast_kLDPC_iterations;
+    default_mon_cfg = (monitor_config_t) {
+            .f_min = 100,
+            .f_max = 3000,
+            .sample_rate = sample_rate,
+            .time_osr = kTime_osr,
+            .freq_osr = kFreq_osr,
+            .protocol = is_ft8 ? PROTO_FT8 : PROTO_FT4
+    };
+    decoder->mon_cfg = default_mon_cfg;
 
     if (decoder->backend == DECODER_BACKEND_WSJTX3_OFFICIAL) {
         if (wsjtx3_backend_init_decoder(decoder, utcTime, sample_rate, num_samples, is_ft8)) {
@@ -95,16 +106,6 @@ void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft
         decoder->backend = DECODER_BACKEND_LEGACY;
     }
 
-    decoder->mon_cfg = (monitor_config_t) {
-            .f_min = 100,
-            .f_max = 3000,
-            .sample_rate = sample_rate,
-            .time_osr = kTime_osr,
-            .freq_osr = kFreq_osr,
-            .protocol = is_ft8 ? PROTO_FT8 : PROTO_FT4
-    };
-
-    decoder->kLDPC_iterations = fast_kLDPC_iterations;
     monitor_init(&decoder->mon, &decoder->mon_cfg);
 
     return decoder;
