@@ -120,7 +120,6 @@ contains
     else
        ndecodes=ndec_early
     endif
-
     if(nzhsym.eq.47 .and. ndec_early.eq.0) then
        dd1=dd
        go to 800
@@ -168,7 +167,6 @@ contains
        ifa=nfqso-20
        ifb=nfqso+20
     endif
-
 ! For now:
 ! ndepth=1: 1 pass, bp  
 ! ndepth=2: subtraction, 3 passes, bp+osd (no subtract refinement) 

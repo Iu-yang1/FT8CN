@@ -25,6 +25,7 @@ endif ()
 set(WSJTX3_HOST_SUPPORT_SOURCES
         ${CMAKE_CURRENT_LIST_DIR}/shmem_stub.c
         ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_host_support.f90
+        ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_bridge.f90
 )
 
 set(WSJTX3_VENDOR_CPP_SOURCES
@@ -41,6 +42,7 @@ set(WSJTX3_VENDOR_FORTRAN_SOURCES
         ${WSJTX3_VENDOR_LIB}/timer_module.f90
         ${WSJTX3_VENDOR_LIB}/fmtmsg.f90
         ${WSJTX3_VENDOR_LIB}/packjt.f90
+        ${WSJTX3_VENDOR_LIB}/chkcall.f90
         ${WSJTX3_VENDOR_LIB}/db.f90
         ${WSJTX3_VENDOR_LIB}/shell.f90
         ${WSJTX3_VENDOR_LIB}/pctile.f90
@@ -102,6 +104,8 @@ set_source_files_properties(
 
 target_include_directories(ft8cn_wsjtx3_host_core
         PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}/..
+        ${CMAKE_CURRENT_LIST_DIR}/../..
         ${WSJTX3_VENDOR_ROOT}
         ${WSJTX3_VENDOR_LIB}
         ${WSJTX3_FFTW_INCLUDE_DIR}
@@ -110,4 +114,26 @@ target_include_directories(ft8cn_wsjtx3_host_core
 target_compile_definitions(ft8cn_wsjtx3_host_core
         PRIVATE
         BIGSYM=1
+)
+
+target_compile_options(ft8cn_wsjtx3_host_core
+        PRIVATE
+        $<$<COMPILE_LANGUAGE:Fortran>:-O0 -g -fcheck=all -fbacktrace>
+)
+
+add_executable(ft8cn_wsjtx3_bridge_smoke
+        ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_bridge_smoke.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../common/wave.c
+)
+
+target_include_directories(ft8cn_wsjtx3_bridge_smoke
+        PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+        ${CMAKE_CURRENT_LIST_DIR}/../..
+)
+
+target_link_libraries(ft8cn_wsjtx3_bridge_smoke
+        PRIVATE
+        ft8cn_wsjtx3_host_core
+        fftw3f
 )
