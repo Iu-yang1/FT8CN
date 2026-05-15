@@ -16,5 +16,5 @@
 
 说明：
 
-- Android 现阶段仍会回退到现有 `wsjtx_port` backend
+- Android 现阶段已经统一到官方 `WSJT-X 3.0` backend
 - `experimental` 模块不经过这里，继续保留独立责任边界

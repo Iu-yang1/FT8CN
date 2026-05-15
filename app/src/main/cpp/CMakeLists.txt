@@ -22,9 +22,6 @@ add_library(
         ftx_core/ftx_encoder_api.c
         ftx_core/ftx_selftest.c
 
-        wsjtx/session_plan.cpp
-        wsjtx/wsjtx_port.cpp
-
         fft/kiss_fftr.c
         fft/kiss_fft.c
 
@@ -83,10 +80,22 @@ target_include_directories(
 )
 
 set(FT8CN_WSJTX3_BACKEND_ACTIVE 0)
+set(FT8CN_WSJTX3_BACKEND_REQUESTED ${FT8CN_ENABLE_WSJTX3_BACKEND})
 
-if (FT8CN_ENABLE_WSJTX3_BACKEND
+# 统一到官方 WSJT-X 3.0 backend 后，Android 侧必须显式启用官方 core。
+if (NOT FT8CN_ENABLE_WSJTX3_BACKEND
         AND ANDROID
-        AND WIN32
+        AND CMAKE_HOST_WIN32
+        AND ANDROID_ABI STREQUAL "arm64-v8a"
+        AND EXISTS "${FT8CN_WSJTX3_FLANG_PATH}"
+        AND EXISTS "${FT8CN_WSJTX3_BOOST_HEADERS}")
+    message(STATUS "Overriding cached FT8CN_ENABLE_WSJTX3_BACKEND=OFF for arm64-v8a official WSJT-X core build")
+    set(FT8CN_WSJTX3_BACKEND_REQUESTED ON)
+endif ()
+
+if (FT8CN_WSJTX3_BACKEND_REQUESTED
+        AND ANDROID
+        AND CMAKE_HOST_WIN32
         AND ANDROID_ABI STREQUAL "arm64-v8a"
         AND EXISTS "${FT8CN_WSJTX3_FLANG_PATH}"
         AND EXISTS "${FT8CN_WSJTX3_BOOST_HEADERS}")
@@ -138,6 +147,10 @@ if (FT8CN_WSJTX3_BACKEND_ACTIVE)
     target_compile_definitions(ftx_core PUBLIC FT8CN_ENABLE_WSJTX3_BACKEND=1)
 else ()
     target_compile_definitions(ftx_core PUBLIC FT8CN_ENABLE_WSJTX3_BACKEND=0)
+endif ()
+
+if (ANDROID AND NOT FT8CN_WSJTX3_BACKEND_ACTIVE)
+    message(FATAL_ERROR "FT8CN now requires the official WSJT-X 3.0 backend. Please build arm64-v8a with the configured Fortran toolchain.")
 endif ()
 
 target_include_directories(

@@ -264,7 +264,10 @@ public class Ft8Message {
      */
     @SuppressLint("DefaultLocale")
     public String getFreq_hz() {
-        return String.format("%04.0f", getDisplayAudioFrequencyHz());
+        if (freq_hz <= 0.01f) {
+            return "0000";
+        }
+        return String.format("%04.0f", freq_hz);
     }
 
     public float getDisplayAudioFrequencyHz() {

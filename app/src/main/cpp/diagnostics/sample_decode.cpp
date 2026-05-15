@@ -59,7 +59,69 @@ static bool has_visible_text(const char *text) {
     return false;
 }
 
+static const char *backend_name(const decoder_t *decoder) {
+    if (decoder == nullptr) {
+        return "null";
+    }
+    switch (decoder->backend) {
+        case DECODER_BACKEND_WSJTX3_OFFICIAL:
+            return "wsjtx3_official";
+        default:
+            return "unknown";
+    }
+}
+
 }  // namespace
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_inspectWavFile(JNIEnv *env,
+                                                                    jclass,
+                                                                    jstring wavPath,
+                                                                    jboolean isFt8,
+                                                                    jlong utcTime) {
+    std::string output;
+    const std::string path = copy_jstring(env, wavPath);
+    std::vector<float> samples((size_t) kMaxSupportedRate * kMaxSampleSeconds, 0.0f);
+    int sample_count = (int) samples.size();
+    int sample_rate = 0;
+    int load_result;
+    decoder_t *decoder;
+
+    if (path.empty()) {
+        append_line(&output, "error: wav path is empty");
+        return env->NewStringUTF(output.c_str());
+    }
+
+    load_result = load_wav(samples.data(), &sample_count, &sample_rate, path.c_str());
+    append_line(&output,
+                "inspect path=%s load=%d sampleRate=%d sampleCount=%d",
+                path.c_str(),
+                load_result,
+                sample_rate,
+                sample_count);
+    if (load_result != 0) {
+        return env->NewStringUTF(output.c_str());
+    }
+
+    decoder = (decoder_t *) init_decoder((int64_t) utcTime,
+                                         sample_rate,
+                                         sample_count,
+                                         isFt8 == JNI_TRUE);
+    if (decoder == nullptr) {
+        append_line(&output, "inspect backend=init_failed");
+        return env->NewStringUTF(output.c_str());
+    }
+
+    append_line(&output,
+                "inspect backend=%s ldpc=%d sampleRate=%d expectedSamples=%d",
+                backend_name(decoder),
+                decoder->kLDPC_iterations,
+                sample_rate,
+                sample_count);
+    delete_decoder(decoder);
+    return env->NewStringUTF(output.c_str());
+}
 
 extern "C"
 JNIEXPORT jstring JNICALL
@@ -73,7 +135,9 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                                                                    jint multiDecodeRoundCount,
                                                                    jint qsoFreqSensitivity,
                                                                    jint decodeSensitivity,
-                                                                   jboolean enableWidebandDxSearch) {
+                                                                   jboolean enableEarlyDecode,
+                                                                   jboolean enableWidebandDxSearch,
+                                                                   jboolean deepDecodeEnabled) {
     std::string output;
     const std::string path = copy_jstring(env, wavPath);
     const std::string my_call = copy_jstring(env, myCall);
@@ -117,16 +181,20 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
         append_line(&output, "error: init_decoder failed");
         return env->NewStringUTF(output.c_str());
     }
+    append_line(&output,
+                "decoder backend=%s ldpc=%d",
+                backend_name(decoder),
+                decoder->kLDPC_iterations);
 
     wsjtx_decoder_options_t options{};
     options.decode_pass_count = decodePassCount;
     options.multi_decode_round_count = multiDecodeRoundCount;
     options.qso_freq_sensitivity = qsoFreqSensitivity;
     options.decode_sensitivity = decodeSensitivity;
-    options.enable_early_decode = false;
+    options.enable_early_decode = enableEarlyDecode == JNI_TRUE;
     options.enable_wideband_dx_search = enableWidebandDxSearch == JNI_TRUE;
     decoder_set_wsjtx_options(decoder, &options);
-    decoder_set_ldpc_iterations(decoder, true);
+    decoder_set_ldpc_iterations(decoder, deepDecodeEnabled == JNI_TRUE);
 
     ap_hints_t hints{};
     bool use_hints = false;
@@ -139,12 +207,14 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     decoder_monitor_press_samples(samples.data(), decoder, sample_count);
     const int candidate_count = decoder_ft8_find_sync(decoder);
     append_line(&output,
-                "decode mode=%s utc=%lld candidates=%d passes=%d rounds=%d myCall=%s",
+                "decode mode=%s utc=%lld candidates=%d passes=%d rounds=%d early=%d deep=%d myCall=%s",
                 (isFt8 == JNI_TRUE) ? "FT8" : "FT4",
                 (long long) utcTime,
                 candidate_count,
                 decodePassCount,
                 multiDecodeRoundCount,
+                options.enable_early_decode ? 1 : 0,
+                deepDecodeEnabled == JNI_TRUE ? 1 : 0,
                 my_call.empty() ? "-" : my_call.c_str());
 
     int valid_count = 0;
