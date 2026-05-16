@@ -204,6 +204,7 @@ contains
     type(wsjtx3_context_t), intent(in) :: context
     integer(c_int), intent(in) :: sample_count
     integer(c_int) :: full_samples
+    integer(c_int) :: depth
 
     full_samples = FT4_BRIDGE_NMAX
     if (context%expected_samples > 0) then
@@ -215,7 +216,27 @@ contains
        return
     end if
 
-    ft4_ndepth_from_context = ndepth_from_context(context, .false.)
+    ! FT4 鐨勫畼鏂?ndepth 瑕佸敖閲忓拰鍓嶇 pass / round 璇箟瑙ｅ:
+    ! 1. decode_pass_count 涓昏鍐冲畾鍗曟 official decode 鐨勬繁搴︽。浣?
+    ! 2. multi_decode_round_count 鐢卞灞?C session 鎺у埗 AP / follow-up 杞锛?
+    !    閬垮厤 FT4 鍙堝洖鍒?round count 澶ч儴鍒嗗彧鏄槧灏?ndepth 鐨勬棫鐘舵€併€?
+    depth = 1_c_int
+
+    if (context%decode_pass_count >= 2_c_int) then
+       depth = 2_c_int
+    end if
+    if (context%decode_sensitivity == 2_c_int .and. depth < 2_c_int) then
+       depth = 2_c_int
+    end if
+    if (context%decode_sensitivity == 0_c_int .and. context%ldpc_iterations <= 20_c_int) then
+       depth = 1_c_int
+    end if
+
+    if (context%decode_pass_count >= 3_c_int .and. context%ldpc_iterations > 20_c_int) then
+       depth = 3_c_int
+    end if
+
+    ft4_ndepth_from_context = clamp_int(depth, 1_c_int, 3_c_int)
   end function ft4_ndepth_from_context
 
   integer(c_int) function ft8_phase_from_context(context, sample_count)

@@ -24,6 +24,7 @@ subroutine sync8(dd,npts,nfa,nfb,syncmin,nfqso,maxcand,candidate,ncand,sbase)
   integer icos7(0:6)
   data icos7/3,1,4,0,6,5,2/                   !Costas 7x7 tone pattern
   equivalence (x,cx)
+  save cx,s,savg,x,sync2d,red,red2,candidate0,jpeak,jpeak2,indx,indx2,ii,icos7
 
 ! Compute symbol spectra, stepping by NSTEP steps.  
   savg=0.

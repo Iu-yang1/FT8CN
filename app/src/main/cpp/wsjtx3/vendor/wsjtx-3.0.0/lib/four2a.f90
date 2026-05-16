@@ -37,6 +37,7 @@ subroutine four2a(a,nfft,ndim,isign,iform)
   nloc=loc(a)
 
   found_plan = .false.
+  i=0
   !$omp critical(four2a_setup)
   do i=1,nplan
      if(nfft.eq.nn(i) .and. isign.eq.ns(i) .and.                     &
@@ -46,7 +47,7 @@ subroutine four2a(a,nfft,ndim,isign,iform)
      end if
   enddo
 
-  if(i.ge.NPMAX) stop 'Too many FFTW plans requested.'
+  if(found_plan .and. i.ge.NPMAX) stop 'Too many FFTW plans requested.'
 
   if (.not. found_plan) then
      nplan=nplan+1

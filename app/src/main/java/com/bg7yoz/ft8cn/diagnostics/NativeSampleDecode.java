@@ -12,6 +12,10 @@ public final class NativeSampleDecode {
     private NativeSampleDecode() {
     }
 
+    public static native String inspectWavFile(String wavPath,
+                                               boolean isFt8,
+                                               long utcTime);
+
     public static native String decodeWavFile(String wavPath,
                                               boolean isFt8,
                                               long utcTime,
@@ -20,5 +24,7 @@ public final class NativeSampleDecode {
                                               int multiDecodeRoundCount,
                                               int qsoFreqSensitivity,
                                               int decodeSensitivity,
-                                              boolean enableWidebandDxSearch);
+                                              boolean enableEarlyDecode,
+                                              boolean enableWidebandDxSearch,
+                                              boolean deepDecodeEnabled);
 }

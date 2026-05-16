@@ -146,6 +146,7 @@ while ($pending.Count -gt 0) {
         $objPath = Join-Path $objDir ($name + '.o')
         $cmdArgs = @(
             '-target', $TargetTriple,
+            '-fPIC',
             '-fintrinsic-modules-path', $intrinsicModuleDir,
             '-module-dir', $modDir
         )
@@ -180,6 +181,7 @@ foreach ($src in $vendorCppSources) {
     $objPath = Join-Path $objDir ($name + '.obj')
     $cmdArgs = @(
         '-target', $TargetTriple,
+        '-fPIC',
         '-c',
         '-std=c++17'
     )
@@ -202,6 +204,7 @@ foreach ($src in $hostSupportCSources) {
     $objPath = Join-Path $objDir ($name + '.obj')
     $cmdArgs = @(
         '-target', $TargetTriple,
+        '-fPIC',
         '-c',
         '-std=c11'
     )
@@ -226,10 +229,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $probeSource = Join-Path $probeDir 'android_link_probe.c'
-$probeMainSource = Join-Path $probeDir 'android_main_probe.c'
 $probeObj = Join-Path $probeDir 'android_link_probe.obj'
-$probeMainObj = Join-Path $probeDir 'android_main_probe.obj'
-$probeExe = Join-Path $probeDir 'android_wsjtx3_probe'
+$probeSo = Join-Path $probeDir 'libandroid_wsjtx3_probe.so'
 
 @'
 #include "app/src/main/cpp/wsjtx3/wsjtx3_bridge.h"
@@ -243,34 +244,17 @@ int wsjtx3_android_probe(int handle, const float *samples, int count) {
 }
 '@ | Set-Content -Path $probeSource -Encoding ASCII
 
-@'
-int wsjtx3_android_probe(int handle, const float *samples, int count);
-int main(void) {
-    float samples[8] = {0};
-    return wsjtx3_android_probe(0, samples, 8);
-}
-'@ | Set-Content -Path $probeMainSource -Encoding ASCII
-
 $probeCompileCommands = @(
     [pscustomobject]@{
         Command = $clang
         Arguments = @(
         '-target', $TargetTriple,
+        '-fPIC',
         '-c',
         '-std=c11',
         '-I', $repoRoot,
         $probeSource,
         '-o', $probeObj
-    )
-    },
-    [pscustomobject]@{
-        Command = $clang
-        Arguments = @(
-        '-target', $TargetTriple,
-        '-c',
-        '-std=c11',
-        $probeMainSource,
-        '-o', $probeMainObj
     )
     }
 )
@@ -287,9 +271,11 @@ foreach ($command in $probeCompileCommands) {
 
 $linkArgs = @(
     '-target', $TargetTriple,
-    '-o', $probeExe,
+    '-shared',
+    '-fPIC',
+    '-Wl,-soname,libandroid_wsjtx3_probe.so',
+    '-o', $probeSo,
     '-Wl,--no-undefined',
-    $probeMainObj,
     $probeObj,
     '-Wl,--whole-archive',
     $coreArchive,

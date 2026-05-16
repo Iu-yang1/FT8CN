@@ -13,6 +13,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(ANDROID)
+#include <android/log.h>
+#define WSJTX3_LOG_TAG "WSJTX3Backend"
+#define WSJTX3_LOGI(...) __android_log_print(ANDROID_LOG_INFO, WSJTX3_LOG_TAG, __VA_ARGS__)
+#define WSJTX3_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, WSJTX3_LOG_TAG, __VA_ARGS__)
+#else
+#define WSJTX3_LOGI(...) ((void) 0)
+#define WSJTX3_LOGE(...) ((void) 0)
+#endif
+
 #ifndef FT8CN_ENABLE_WSJTX3_BACKEND
 #define FT8CN_ENABLE_WSJTX3_BACKEND 0
 #endif
@@ -232,6 +242,73 @@ static void select_primary_ap_hint(const ap_hints_t *ap_hints,
     }
 }
 
+static int count_ap_hints(const ap_hints_t *ap_hints) {
+    int index;
+    int count = 0;
+
+    if (ap_hints == NULL) {
+        return 0;
+    }
+
+    for (index = 0; index < ap_hints->hint_call_count && index < FTX_AP_MAX_HINT_CALLS; ++index) {
+        if (ap_hints->hint_calls[index][0] != '\0') {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static bool copy_ap_hint_at(const ap_hints_t *ap_hints,
+                            int hint_index,
+                            char his_call[FTX_AP_CALLSIGN_MAX],
+                            char his_grid[FTX_AP_GRID_MAX]) {
+    int index;
+    int visible_index = 0;
+
+    his_call[0] = '\0';
+    his_grid[0] = '\0';
+    if (ap_hints == NULL || hint_index < 0) {
+        return false;
+    }
+
+    for (index = 0; index < ap_hints->hint_call_count && index < FTX_AP_MAX_HINT_CALLS; ++index) {
+        if (ap_hints->hint_calls[index][0] == '\0') {
+            continue;
+        }
+        if (visible_index == hint_index) {
+            copy_text(his_call, FTX_AP_CALLSIGN_MAX, ap_hints->hint_calls[index]);
+            copy_text(his_grid, FTX_AP_GRID_MAX, ap_hints->hint_grids[index]);
+            return true;
+        }
+        ++visible_index;
+    }
+    return false;
+}
+
+static int ft4_followup_round_budget(const wsjtx3_backend_state_t *state) {
+    int budget;
+
+    if (state == NULL) {
+        return 0;
+    }
+
+    budget = state->options.multi_decode_round_count - 1;
+    if (budget <= 0) {
+        return 0;
+    }
+
+    if (!state->options.enable_wideband_dx_search || state->options.qso_freq_sensitivity == 0) {
+        budget = 1;
+    }
+    if (state->options.decode_sensitivity == 0 && budget > 1) {
+        budget = 1;
+    }
+    if (budget > FTX_AP_MAX_HINT_CALLS) {
+        budget = FTX_AP_MAX_HINT_CALLS;
+    }
+    return budget;
+}
+
 static void build_storage_a91(bool is_ft8,
                               const uint8_t payload[kFtxPayloadBytes],
                               uint8_t storage_a91[FTX_LDPC_K_BYTES],
@@ -387,6 +464,196 @@ static void sync_bridge_options(wsjtx3_backend_state_t *state) {
 #endif
 }
 
+static void push_bridge_options(const wsjtx3_backend_state_t *state,
+                                const wsjtx_decoder_options_t *options,
+                                const char *his_call,
+                                const char *his_grid) {
+#if FT8CN_ENABLE_WSJTX3_BACKEND
+    const wsjtx_decoder_options_t *effective_options = options;
+    static const wsjtx_decoder_options_t default_options = {0};
+
+    if (state == NULL || state->bridge_handle <= 0) {
+        return;
+    }
+    if (effective_options == NULL) {
+        effective_options = &default_options;
+    }
+
+    wsjtx3_bridge_set_options(state->bridge_handle,
+                              effective_options->decode_pass_count,
+                              effective_options->multi_decode_round_count,
+                              effective_options->qso_freq_sensitivity,
+                              effective_options->decode_sensitivity,
+                              effective_options->enable_early_decode ? 1 : 0,
+                              effective_options->enable_wideband_dx_search ? 1 : 0,
+                              state->ldpc_iterations);
+    wsjtx3_bridge_set_ap_hints(state->bridge_handle,
+                               state->ap_hints.my_call,
+                               his_call == NULL ? "" : his_call,
+                               his_grid == NULL ? "" : his_grid);
+    wsjtx3_bridge_set_qso_frequencies(state->bridge_handle,
+                                      state->qso_frequency_hz,
+                                      state->tx_frequency_hz);
+#else
+    (void) state;
+    (void) options;
+    (void) his_call;
+    (void) his_grid;
+#endif
+}
+
+static void merge_bridge_results(wsjtx3_backend_state_t *state, int bridge_count) {
+    int index;
+
+    if (state == NULL || bridge_count <= 0) {
+        return;
+    }
+
+    for (index = 0; index < bridge_count; ++index) {
+        wsjtx3_bridge_decode_result_t bridge_result;
+        ft8_message decoded;
+
+        memset(&bridge_result, 0, sizeof(bridge_result));
+        if (!wsjtx3_bridge_get_result(state->bridge_handle, index, &bridge_result) ||
+            !has_visible_text(bridge_result.decoded)) {
+            continue;
+        }
+
+        memset(&decoded, 0, sizeof(decoded));
+        decoded.utcTime = state->utc_time;
+        decoded.isValid = true;
+        decoded.snr = bridge_result.snr;
+        decoded.time_sec = bridge_result.dt;
+        decoded.freq_hz = bridge_result.freq;
+        populate_candidate_from_bridge_result(state, &bridge_result, &decoded.candidate);
+        build_message_from_text(state->is_ft8, bridge_result.decoded, &decoded.message);
+
+        {
+            const int duplicate_index = find_duplicate_index(state, &decoded);
+            if (duplicate_index >= 0) {
+                if (prefer_candidate(&decoded, &state->session_results[duplicate_index])) {
+                    state->session_results[duplicate_index] = decoded;
+                }
+                continue;
+            }
+        }
+
+        if (state->session_result_count >= kMax_decoded_messages) {
+            continue;
+        }
+        state->session_results[state->session_result_count++] = decoded;
+    }
+}
+
+static int run_bridge_pass(wsjtx3_backend_state_t *state,
+                           int sample_count,
+                           const wsjtx_decoder_options_t *options,
+                           const char *his_call,
+                           const char *his_grid,
+                           const char *pass_label,
+                           int pass_index,
+                           int pass_total) {
+#if FT8CN_ENABLE_WSJTX3_BACKEND
+    const int bridge_count = wsjtx3_bridge_process_float(state->bridge_handle,
+                                                         state->raw_samples,
+                                                         sample_count);
+
+    WSJTX3_LOGI("find_sync bridge pass=%s index=%d/%d handle=%d samples=%d bridgeCount=%d ldpc=%d passes=%d rounds=%d early=%d wideband=%d hisCall=%s",
+                pass_label == NULL ? "default" : pass_label,
+                pass_index,
+                pass_total,
+                state->bridge_handle,
+                sample_count,
+                bridge_count,
+                state->ldpc_iterations,
+                options == NULL ? 0 : options->decode_pass_count,
+                options == NULL ? 0 : options->multi_decode_round_count,
+                options != NULL && options->enable_early_decode ? 1 : 0,
+                options != NULL && options->enable_wideband_dx_search ? 1 : 0,
+                his_call == NULL ? "" : his_call);
+
+    merge_bridge_results(state, bridge_count);
+    return bridge_count;
+#else
+    (void) state;
+    (void) sample_count;
+    (void) options;
+    (void) his_call;
+    (void) his_grid;
+    (void) pass_label;
+    (void) pass_index;
+    (void) pass_total;
+    return 0;
+#endif
+}
+
+static int run_ft4_session(decoder_t *decoder,
+                           wsjtx3_backend_state_t *state,
+                           int sample_count) {
+    int hint_count;
+    int round_budget;
+    int total_passes;
+    int total_bridge_count = 0;
+    int pass_index = 1;
+    char his_call[FTX_AP_CALLSIGN_MAX];
+    char his_grid[FTX_AP_GRID_MAX];
+
+    if (decoder == NULL || state == NULL) {
+        return 0;
+    }
+
+    hint_count = count_ap_hints(&state->ap_hints);
+    round_budget = ft4_followup_round_budget(state);
+    if (round_budget > hint_count) {
+        round_budget = hint_count;
+    }
+    total_passes = 1 + round_budget;
+
+    reset_backend_results(decoder, state);
+
+    his_call[0] = '\0';
+    his_grid[0] = '\0';
+    push_bridge_options(state, &state->options, his_call, his_grid);
+    total_bridge_count += run_bridge_pass(state,
+                                          sample_count,
+                                          &state->options,
+                                          his_call,
+                                          his_grid,
+                                          "ft4-base",
+                                          pass_index++,
+                                          total_passes);
+
+    for (int hint_index = 0; hint_index < round_budget; ++hint_index) {
+        if (!copy_ap_hint_at(&state->ap_hints, hint_index, his_call, his_grid)) {
+            continue;
+        }
+        push_bridge_options(state, &state->options, his_call, his_grid);
+        total_bridge_count += run_bridge_pass(state,
+                                              sample_count,
+                                              &state->options,
+                                              his_call,
+                                              his_grid,
+                                              "ft4-followup",
+                                              pass_index++,
+                                              total_passes);
+    }
+
+    qsort(state->session_results,
+          (size_t) state->session_result_count,
+          sizeof(state->session_results[0]),
+          compare_session_results);
+    publish_session_results_to_decoder(decoder, state);
+    sync_bridge_options(state);
+
+    WSJTX3_LOGI("find_sync ft4 sessionResults=%d totalBridgeCount=%d totalPasses=%d hintCount=%d roundBudget=%d",
+                state->session_result_count,
+                total_bridge_count,
+                total_passes,
+                hint_count,
+                round_budget);
+    return state->session_result_count;
+}
+
 static bool ensure_raw_capacity(wsjtx3_backend_state_t *state, int sample_count) {
     float *resized;
     int new_capacity;
@@ -419,6 +686,7 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
 #if FT8CN_ENABLE_WSJTX3_BACKEND
     wsjtx3_backend_state_t *state = (wsjtx3_backend_state_t *) calloc(1, sizeof(*state));
     if (state == NULL) {
+        WSJTX3_LOGE("init failed: calloc state returned null");
         return false;
     }
 
@@ -433,12 +701,19 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
     state->raw_capacity = (num_samples > 0) ? num_samples : (is_ft8 ? FT8_SAMPLE_RATE * 15 : FT8_SAMPLE_RATE * 8);
     state->raw_samples = (float *) calloc((size_t) state->raw_capacity, sizeof(float));
     if (state->raw_samples == NULL) {
+        WSJTX3_LOGE("init failed: calloc raw_samples returned null capacity=%d", state->raw_capacity);
         free(state);
         return false;
     }
 
     state->bridge_handle = wsjtx3_bridge_create(is_ft8 ? 1 : 0, sample_rate, num_samples, utcTime);
     if (state->bridge_handle <= 0) {
+        WSJTX3_LOGE("init failed: wsjtx3_bridge_create returned %d isFt8=%d sampleRate=%d numSamples=%d utc=%lld",
+                    state->bridge_handle,
+                    is_ft8 ? 1 : 0,
+                    sample_rate,
+                    num_samples,
+                    (long long) utcTime);
         free(state->raw_samples);
         free(state);
         return false;
@@ -447,12 +722,18 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
     decoder->backend_state = state;
     reset_backend_results(decoder, state);
     sync_bridge_options(state);
+    WSJTX3_LOGI("init ok: handle=%d isFt8=%d sampleRate=%d numSamples=%d",
+                state->bridge_handle,
+                is_ft8 ? 1 : 0,
+                sample_rate,
+                num_samples);
     return true;
 #else
     (void) utcTime;
     (void) sample_rate;
     (void) num_samples;
     (void) is_ft8;
+    WSJTX3_LOGE("init failed: FT8CN_ENABLE_WSJTX3_BACKEND is disabled at compile time");
     return false;
 #endif
 }
@@ -505,6 +786,15 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
     const int bridge_count = wsjtx3_bridge_process_float(state->bridge_handle,
                                                          state->raw_samples,
                                                          sample_count);
+    WSJTX3_LOGI("find_sync bridge handle=%d samples=%d bridgeCount=%d ldpc=%d passes=%d rounds=%d early=%d wideband=%d",
+                state->bridge_handle,
+                sample_count,
+                bridge_count,
+                state->ldpc_iterations,
+                state->options.decode_pass_count,
+                state->options.multi_decode_round_count,
+                state->options.enable_early_decode ? 1 : 0,
+                state->options.enable_wideband_dx_search ? 1 : 0);
 
     reset_backend_results(decoder, state);
     if (bridge_count <= 0) {
@@ -550,6 +840,7 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
           sizeof(state->session_results[0]),
           compare_session_results);
 
+    WSJTX3_LOGI("find_sync sessionResults=%d after bridgeCount=%d", state->session_result_count, bridge_count);
     publish_session_results_to_decoder(decoder, state);
     return state->session_result_count;
 #else

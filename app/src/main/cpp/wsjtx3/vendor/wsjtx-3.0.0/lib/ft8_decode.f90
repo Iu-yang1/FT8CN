@@ -160,6 +160,10 @@ contains
        call timer('sub_ft8c',1)
     endif
 
+    if(nzhsym.eq.50 .and. ndec_early.eq.0 .and. .not.nagain) then
+       dd=iwave
+    endif
+
     ifa=nfa
     ifb=nfb
     if(nzhsym.eq.50 .and. nagain) then
