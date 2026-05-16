@@ -216,10 +216,7 @@ contains
        return
     end if
 
-    ! FT4 鐨勫畼鏂?ndepth 瑕佸敖閲忓拰鍓嶇 pass / round 璇箟瑙ｅ:
-    ! 1. decode_pass_count 涓昏鍐冲畾鍗曟 official decode 鐨勬繁搴︽。浣?
-    ! 2. multi_decode_round_count 鐢卞灞?C session 鎺у埗 AP / follow-up 杞锛?
-    !    閬垮厤 FT4 鍙堝洖鍒?round count 澶ч儴鍒嗗彧鏄槧灏?ndepth 鐨勬棫鐘舵€併€?
+
     depth = 1_c_int
 
     if (context%decode_pass_count >= 2_c_int) then

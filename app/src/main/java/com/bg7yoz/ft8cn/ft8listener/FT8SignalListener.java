@@ -52,6 +52,7 @@ public class FT8SignalListener {
 
     private OnWaveDataListener onWaveDataListener;
     private DatabaseOpr db;
+    public MutableLiveData<String> decodeStatusText = new MutableLiveData<>(); // 左上角解码指示文本
 
     private final A91List a91List = new A91List(); // subtract 所需的 A91 缓存
     private final Object slotDedupeLock = new Object();
@@ -96,6 +97,17 @@ public class FT8SignalListener {
         this.onFt8Listen = onFt8Listen;
         this.db = db;
         buildUtcTimer();
+    }
+
+    /**
+     * 把当前解码阶段同步到前端左上角，便于区分提前解码和完整解码。
+     */
+    private void postDecodeStageStatus(int decodeMode, int decodeStage) {
+        final String modeName = FT8Common.modeToString(decodeMode);
+        final String stageName = (decodeStage == DECODE_STAGE_EARLY)
+                ? "\u63d0\u524d\u89e3\u7801\u4e2d"
+                : "\u5b8c\u6574\u89e3\u7801\u4e2d";
+        decodeStatusText.postValue(modeName + " " + stageName);
     }
 
     /**
@@ -585,6 +597,7 @@ public class FT8SignalListener {
                 if (notifyBefore && onFt8Listen != null) {
                     onFt8Listen.beforeListen(utc);
                 }
+                postDecodeStageStatus(decodeMode, decodeStage);
 
                 boolean isFt8 = (decodeMode == FT8Common.FT8_MODE);
                 final float[] decoderInput = resampleForDecoder(
@@ -976,6 +989,10 @@ public class FT8SignalListener {
                 if (onFt8Listen != null) {
                     onFt8Listen.beforeListen(utc);
                 }
+                decodeStatusText.postValue(
+                        FT8Common.modeToString(decodeMode) + " "
+                                + "\u5b9e\u9a8c\u89e3\u7801\u4e2d"
+                );
 
                 ArrayList<Ft8Message> messages = runExperimentalDecode(
                         utc,
@@ -1046,10 +1063,18 @@ public class FT8SignalListener {
         ));
 
         for (int idx = 0; idx < num_candidates; ++idx) {
-            if (useDeepSession && deadlineMs > 0L && System.currentTimeMillis() >= deadlineMs) {
+            if (deadlineMs > 0L && System.currentTimeMillis() >= deadlineMs) {
+                Log.d(TAG, String.format(
+                        "解码轮超时结束: mode=%s deep=%s analyzed=%d/%d deadline=%d",
+                        FT8Common.modeToString(decodeMode),
+                        useDeepSession ? "Y" : "N",
+                        idx,
+                        num_candidates,
+                        deadlineMs
+                ));
                 break;
             }
-            // Deep decode uses a hard wall-clock cutoff so one slow round cannot run far past the UI budget.
+            // 提前解码和深度解码都要服从真实的墙钟超时，避免早解线程拖住完整时隙。
 
             try {
                 ft8Message.signalFormat = decodeMode;
