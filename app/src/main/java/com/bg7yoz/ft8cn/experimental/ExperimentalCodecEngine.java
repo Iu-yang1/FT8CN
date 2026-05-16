@@ -100,6 +100,10 @@ public final class ExperimentalCodecEngine {
         }
     }
 
+    /**
+     * 把业务消息编码成 experimental 的本地回环波形。
+     * 注意这里不是 FT8/FT4 标准发射，只服务实验链路自测。
+     */
     public static float[] generateTxWave(
             Ft8Message message,
             float baseFrequencyHz,
@@ -127,6 +131,10 @@ public final class ExperimentalCodecEngine {
         return packetWave;
     }
 
+    /**
+     * experimental 解码入口。
+     * 先做候选搜索，再做 GF(4) 译码和 CRC 校验，最后只保留最优结果。
+     */
     public static DecodeResult decodeWave(
             float[] samples,
             float baseFrequencyHz,
@@ -392,6 +400,9 @@ public final class ExperimentalCodecEngine {
         return output;
     }
 
+    /**
+     * 先粗搜 CFO 和时偏，再复核前缀分数与有效能量，避免静音窗口误入前列。
+     */
     private static List<SyncCandidate> iterPacketCandidates(
             float[] samples,
             float[] tones,
@@ -960,3 +971,4 @@ public final class ExperimentalCodecEngine {
         }
     }
 }
+

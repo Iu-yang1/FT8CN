@@ -143,3 +143,4 @@ public class Flex6000Rig extends BaseRig {
         readFreqTimer.schedule(readTask(), START_QUERY_FREQ_DELAY,QUERY_FREQ_TIMEOUT);
     }
 }
+

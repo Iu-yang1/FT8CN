@@ -153,3 +153,4 @@ public class BaseRigConnector {
                 | ((short) data[start + 1] & 0xff) << 8);
     }
 }
+

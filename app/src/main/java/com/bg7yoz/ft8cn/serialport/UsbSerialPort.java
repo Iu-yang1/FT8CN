@@ -261,3 +261,4 @@ public interface UsbSerialPort extends Closeable {
     boolean isOpen();
 
 }
+

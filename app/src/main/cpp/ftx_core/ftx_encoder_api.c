@@ -87,3 +87,4 @@ int ftx_encode_codeword(const uint8_t a91[FTX_PAYLOAD_BYTES], uint8_t codeword[F
     ftx_encode_174(a91, codeword);
     return 0;
 }
+

@@ -69,3 +69,4 @@ public class SerialParityBitsSpinnerAdapter extends BaseAdapter {
         return parityBits[position];
     }
 }
+

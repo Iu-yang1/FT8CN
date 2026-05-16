@@ -21,14 +21,14 @@ android {
         minSdk 23
         targetSdk 33
         versionCode 1
-        versionName 'ver0.6-WSJT-Lib-b5'
+        versionName 'ver0.7-WSJT-Lib-b1'
 
         buildFeatures {
             dataBinding true
         }
 
         ndk {
-            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            abiFilters 'arm64-v8a'
         }
 
         externalNativeBuild {

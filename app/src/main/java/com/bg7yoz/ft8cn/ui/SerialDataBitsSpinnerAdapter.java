@@ -61,3 +61,4 @@ public class SerialDataBitsSpinnerAdapter extends BaseAdapter {
         return dataBits[position];
     }
 }
+

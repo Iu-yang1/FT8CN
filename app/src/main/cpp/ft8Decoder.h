@@ -8,8 +8,7 @@
 #include <time.h>
 
 typedef enum {
-    DECODER_BACKEND_LEGACY = 0,
-    DECODER_BACKEND_WSJTX_PORT = 1
+    DECODER_BACKEND_WSJTX3_OFFICIAL = 0
 } decoder_backend_t;
 
 typedef struct {
@@ -86,3 +85,4 @@ void decoder_subtract_signal(decoder_t *decoder,
 void recode(int a174[], int a79[]);
 
 #endif
+

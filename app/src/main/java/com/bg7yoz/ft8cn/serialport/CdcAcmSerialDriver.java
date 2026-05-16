@@ -351,3 +351,4 @@ public class CdcAcmSerialDriver implements UsbSerialDriver {
     }
 
 }
+

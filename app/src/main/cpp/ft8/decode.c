@@ -52,10 +52,22 @@ static int ftx_ldpc_check_codeword(const uint8_t codeword[]);
 static bool ftx_osd_refine(const float *log174, uint8_t plain174[], int *errors);
 static bool ftx_try_decode_pass(const float *log174, int max_iterations, float llr_scale,
                                 uint8_t plain174[], uint8_t a91[], decode_status_t *status);
+static bool ftx_try_decode_pass_no_osd(const float *log174, int max_iterations, float llr_scale,
+                                       uint8_t plain174[], uint8_t a91[], decode_status_t *status);
 static void ftx_unpack_bits_from_bytes(const uint8_t packed[], int num_bits, uint8_t unpacked[]);
 static void ftx_normalize_ap_text(const char *src, char *dst, int dst_size);
 static bool ftx_build_ap_hypothesis(ftx_protocol_t protocol, const char *text,
                                     uint8_t a91[], uint8_t codeword174[]);
+static bool ftx_crc_matches_a91(const uint8_t a91[], uint16_t *crc_extracted, uint16_t *crc_calculated);
+static float ftx_score_codeword_match(const float *log174, const uint8_t codeword174[]);
+static bool ftx_consider_crc_guided_trial(const float *log174, const uint8_t info_bits[],
+                                          float *best_score, bool *found,
+                                          uint8_t best_plain174[], uint8_t best_a91[],
+                                          uint16_t *best_crc_extracted,
+                                          uint16_t *best_crc_calculated);
+static bool ftx_crc_guided_refine(const float *log174, const uint8_t plain174[],
+                                  uint8_t refined_plain174[], uint8_t refined_a91[],
+                                  decode_status_t *status);
 static void ftx_apply_ap_prior(float *log174, const uint8_t codeword174[], float prior_strength);
 static float ftx_score_ap_match(const float *log174, const uint8_t codeword174[]);
 static bool ftx_try_ap_codeword(const float *log174, const uint8_t hypothesisA91[],
@@ -80,9 +92,10 @@ static const float kApPriorStrength = 0.75f;
 static const float kApMinEvidence = 1.15f;
 static const float kApMinMargin = 0.18f;
 enum {
-    kApMaxDecodeTrials = 8,
+    kApMaxDecodeTrials = 3,
     kApTextBufferSize = 80,
-    kApGeneratedTextLimit = FTX_AP_MAX_HINT_CALLS * 210
+    kApGeneratedTextLimit = FTX_AP_MAX_HINT_CALLS * 210,
+    kCrcGuidedWeakBitCount = 10
 };
 // AP 先按 soft evidence 排序，只对前几条候选做硬解，因此可以承受更宽的假设集。
 /**
@@ -116,6 +129,73 @@ static int get_index(const waterfall_t *wf, const candidate_t *candidate) {
  * 这样会比原来稍微灵敏一些，但不至于把噪声候选放大得太夸张。
  */
 static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
+    if (wf == NULL || candidate == NULL || wf->mag2 == NULL) {
+        return 0;
+    }
+
+    const float *mag_cand_linear = wf->mag2 + get_index(wf, candidate);
+    float target_abc = 0.0f;
+    float other_abc = 0.0f;
+    int count_abc = 0;
+    float target_bc = 0.0f;
+    float other_bc = 0.0f;
+    int count_bc = 0;
+
+    for (int m = 0; m < FT8_NUM_SYNC; ++m) {
+        for (int k = 0; k < FT8_LENGTH_SYNC; ++k) {
+            int block = (FT8_SYNC_OFFSET * m) + k;
+            int block_abs = candidate->time_offset + block;
+
+            if (block_abs < 0) {
+                continue;
+            }
+            if (block_abs >= wf->num_blocks) {
+                break;
+            }
+
+            const float *p8 = mag_cand_linear + (block * wf->block_stride);
+            int sm = kFT8CostasPattern[k];
+            float others = 0.0f;
+            for (int n = 0; n < FT8_LENGTH_SYNC; ++n) {
+                if (n != sm) {
+                    others += p8[n];
+                }
+            }
+
+            target_abc += p8[sm];
+            other_abc += others;
+            ++count_abc;
+
+            if (m > 0) {
+                target_bc += p8[sm];
+                other_bc += others;
+                ++count_bc;
+            }
+        }
+    }
+
+    float best_ratio = 0.0f;
+    if (count_abc > 0 && other_abc > 0.0f) {
+        best_ratio = target_abc / (other_abc / 6.0f);
+    }
+    if (count_bc > 0 && other_bc > 0.0f) {
+        float ratio_bc = target_bc / (other_bc / 6.0f);
+        if (ratio_bc > best_ratio) {
+            best_ratio = ratio_bc;
+        }
+    }
+
+    if (!isfinite(best_ratio) || best_ratio <= 1.0f) {
+        best_ratio = 1.0f;
+    }
+    if (best_ratio > 8.0f) {
+        best_ratio = 8.0f;
+    }
+
+    // 直接返回 Costas 比例分数，保持与现有 min_score=10 大致兼容。
+    return (int) lroundf(best_ratio * 10.0f);
+
+    const int ratio_score = (int) ((best_ratio - 1.0f) * 20.0f + 0.5f);
     int score = 0;
     int num_average = 0;
 
@@ -172,7 +252,8 @@ static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
         score /= num_average;
     }
 
-    return score;
+    const int ratio_bonus = ratio_score > score ? ratio_score - score : 0;
+    return score + ((ratio_bonus > 4) ? 4 : ratio_bonus);
 }
 
 /**
@@ -183,6 +264,126 @@ static int ft8_sync_score(const waterfall_t *wf, candidate_t *candidate) {
  * 2. 增加“目标 bin 与其余 3 个 bin 平均差值”的增强项
  * 3. FT4 本来同步符号更短、更密，适当增强这一项有助于弱信号候选进入后续 LDPC
  */
+static int ft8_sync_score_stable(const waterfall_t *wf, candidate_t *candidate) {
+    if (wf == NULL || candidate == NULL || wf->mag2 == NULL) {
+        return 0;
+    }
+
+    const float *mag_cand_linear = wf->mag2 + get_index(wf, candidate);
+    float target_abc = 0.0f;
+    float other_abc = 0.0f;
+    int count_abc = 0;
+    float target_bc = 0.0f;
+    float other_bc = 0.0f;
+    int count_bc = 0;
+
+    for (int m = 0; m < FT8_NUM_SYNC; ++m) {
+        for (int k = 0; k < FT8_LENGTH_SYNC; ++k) {
+            const int block = (FT8_SYNC_OFFSET * m) + k;
+            const int block_abs = candidate->time_offset + block;
+
+            if (block_abs < 0) {
+                continue;
+            }
+            if (block_abs >= wf->num_blocks) {
+                break;
+            }
+
+            const float *p8 = mag_cand_linear + (block * wf->block_stride);
+            const int sm = kFT8CostasPattern[k];
+            float others = 0.0f;
+            for (int n = 0; n < FT8_LENGTH_SYNC; ++n) {
+                if (n != sm) {
+                    others += p8[n];
+                }
+            }
+
+            target_abc += p8[sm];
+            other_abc += others;
+            ++count_abc;
+
+            if (m > 0) {
+                target_bc += p8[sm];
+                other_bc += others;
+                ++count_bc;
+            }
+        }
+    }
+
+    float best_ratio = 0.0f;
+    if (count_abc > 0 && other_abc > 0.0f) {
+        best_ratio = target_abc / (other_abc / 6.0f);
+    }
+    if (count_bc > 0 && other_bc > 0.0f) {
+        const float ratio_bc = target_bc / (other_bc / 6.0f);
+        if (ratio_bc > best_ratio) {
+            best_ratio = ratio_bc;
+        }
+    }
+
+    if (!isfinite(best_ratio) || best_ratio <= 1.0f) {
+        best_ratio = 1.0f;
+    }
+    if (best_ratio > 8.0f) {
+        best_ratio = 8.0f;
+    }
+
+    const int ratio_score = (int) ((best_ratio - 1.0f) * 20.0f + 0.5f);
+    int score = 0;
+    int num_average = 0;
+
+    const uint8_t *mag_cand = wf->mag + get_index(wf, candidate);
+    for (int m = 0; m < FT8_NUM_SYNC; ++m) {
+        for (int k = 0; k < FT8_LENGTH_SYNC; ++k) {
+            const int block = (FT8_SYNC_OFFSET * m) + k;
+            const int block_abs = candidate->time_offset + block;
+
+            if (block_abs < 0) {
+                continue;
+            }
+            if (block_abs >= wf->num_blocks) {
+                break;
+            }
+
+            const uint8_t *p8 = mag_cand + (block * wf->block_stride);
+            const int sm = kFT8CostasPattern[k];
+
+            if (sm > 0) {
+                score += (int) p8[sm] - (int) p8[sm - 1];
+                ++num_average;
+            }
+            if (sm < 7) {
+                score += (int) p8[sm] - (int) p8[sm + 1];
+                ++num_average;
+            }
+            if ((k > 0) && (block_abs > 0)) {
+                score += (int) p8[sm] - (int) p8[sm - wf->block_stride];
+                ++num_average;
+            }
+            if (((k + 1) < FT8_LENGTH_SYNC) && ((block_abs + 1) < wf->num_blocks)) {
+                score += (int) p8[sm] - (int) p8[sm + wf->block_stride];
+                ++num_average;
+            }
+
+            int others = 0;
+            for (int n = 0; n < 8; ++n) {
+                if (n != sm) {
+                    others += p8[n];
+                }
+            }
+            score += ((int) p8[sm] * 7 - others) / 4;
+            ++num_average;
+        }
+    }
+
+    if (num_average > 0) {
+        score /= num_average;
+    }
+
+    const int ratio_bonus = ratio_score > score ? ratio_score - score : 0;
+    return score + ((ratio_bonus > 4) ? 4 : ratio_bonus);
+}
+
 static int ft4_sync_score(const waterfall_t *wf, const candidate_t *candidate) {
     int score = 0;
     int num_average = 0;
@@ -266,7 +467,7 @@ int ft8_find_sync(const waterfall_t *wf, int num_candidates, candidate_t heap[],
                     if (wf->protocol == PROTO_FT4) {
                         candidate.score = ft4_sync_score(wf, &candidate);
                     } else {
-                        candidate.score = ft8_sync_score(wf, &candidate);
+                        candidate.score = ft8_sync_score_stable(wf, &candidate);
                     }
 
                     if (candidate.score < min_score)
@@ -798,17 +999,47 @@ static bool ftx_try_decode_pass(const float *log174, int max_iterations, float l
     }
 
     pack_bits(plain174, FTX_LDPC_K, a91);
-    status->crc_extracted = ftx_extract_crc(a91);
+    if (ftx_crc_matches_a91(a91, &status->crc_extracted, &status->crc_calculated)) {
+        return true;
+    }
 
-    uint8_t crc_buf[FTX_LDPC_K_BYTES];
-    memcpy(crc_buf, a91, sizeof(crc_buf));
+    if (status->ldpc_errors <= 3 &&
+        ftx_crc_guided_refine(work_log174, plain174, plain174, a91, status)) {
+        return true;
+    }
 
-    // The CRC is calculated on the source-encoded message, zero-extended from 77 to 82 bits.
-    crc_buf[9] &= 0xF8;
-    crc_buf[10] &= 0x00;
-    status->crc_calculated = ftx_compute_crc(crc_buf, 96 - 14);
+    return false;
+}
 
-    return status->crc_extracted == status->crc_calculated;
+static bool ftx_try_decode_pass_no_osd(const float *log174, int max_iterations, float llr_scale,
+                                       uint8_t plain174[], uint8_t a91[], decode_status_t *status) {
+    float work_log174[FTX_LDPC_N];
+    memcpy(work_log174, log174, sizeof(work_log174));
+
+    if (llr_scale > 0.0f && fabsf(llr_scale - 1.0f) > 1e-6f) {
+        for (int i = 0; i < FTX_LDPC_N; ++i) {
+            work_log174[i] *= llr_scale;
+        }
+    }
+
+    bp_decode(work_log174, max_iterations, plain174, &status->ldpc_errors);
+    if (status->ldpc_errors > 0) {
+        ldpc_decode(work_log174, max_iterations, plain174, &status->ldpc_errors);
+    }
+    if (status->ldpc_errors > 0) {
+        return false;
+    }
+
+    pack_bits(plain174, FTX_LDPC_K, a91);
+    if (ftx_crc_matches_a91(a91, &status->crc_extracted, &status->crc_calculated)) {
+        return true;
+    }
+
+    if (ftx_crc_guided_refine(work_log174, plain174, plain174, a91, status)) {
+        return true;
+    }
+
+    return false;
 }
 
 static void ftx_unpack_bits_from_bytes(const uint8_t packed[], int num_bits, uint8_t unpacked[]) {
@@ -818,6 +1049,178 @@ static void ftx_unpack_bits_from_bytes(const uint8_t packed[], int num_bits, uin
         unpacked[i] = (uint8_t) ((packed[byteIndex] >> bitIndex) & 0x01u);
     }
     // AP-lite expands the packed 174-bit codeword so soft-prior injection and evidence scoring can share it.
+}
+
+static bool ftx_crc_matches_a91(const uint8_t a91[], uint16_t *crc_extracted, uint16_t *crc_calculated) {
+    if (a91 == NULL) {
+        return false;
+    }
+
+    uint16_t extracted = ftx_extract_crc(a91);
+    uint8_t crc_buf[FTX_LDPC_K_BYTES];
+    memcpy(crc_buf, a91, sizeof(crc_buf));
+    crc_buf[9] &= 0xF8;
+    crc_buf[10] &= 0x00;
+    uint16_t calculated = ftx_compute_crc(crc_buf, 96 - 14);
+
+    if (crc_extracted != NULL) {
+        *crc_extracted = extracted;
+    }
+    if (crc_calculated != NULL) {
+        *crc_calculated = calculated;
+    }
+
+    return extracted == calculated;
+}
+
+static float ftx_score_codeword_match(const float *log174, const uint8_t codeword174[]) {
+    float score = 0.0f;
+
+    for (int i = 0; i < FTX_LDPC_N; ++i) {
+        score += codeword174[i] ? log174[i] : -log174[i];
+    }
+
+    return score;
+}
+
+static bool ftx_consider_crc_guided_trial(const float *log174, const uint8_t info_bits[],
+                                          float *best_score, bool *found,
+                                          uint8_t best_plain174[], uint8_t best_a91[],
+                                          uint16_t *best_crc_extracted,
+                                          uint16_t *best_crc_calculated) {
+    if (log174 == NULL || info_bits == NULL || best_score == NULL || found == NULL ||
+        best_plain174 == NULL || best_a91 == NULL) {
+        return false;
+    }
+
+    uint8_t trial_a91[FTX_LDPC_K_BYTES];
+    memset(trial_a91, 0, sizeof(trial_a91));
+    pack_bits(info_bits, FTX_LDPC_K, trial_a91);
+
+    uint16_t crc_extracted = 0;
+    uint16_t crc_calculated = 0;
+    if (!ftx_crc_matches_a91(trial_a91, &crc_extracted, &crc_calculated)) {
+        return false;
+    }
+
+    uint8_t codeword_bytes[FTX_LDPC_N_BYTES];
+    uint8_t trial_plain174[FTX_LDPC_N];
+    ftx_encode_174(trial_a91, codeword_bytes);
+    ftx_unpack_bits_from_bytes(codeword_bytes, FTX_LDPC_N, trial_plain174);
+
+    const float score = ftx_score_codeword_match(log174, trial_plain174);
+    if (*found && score <= *best_score) {
+        return true;
+    }
+
+    *best_score = score;
+    *found = true;
+    memcpy(best_plain174, trial_plain174, FTX_LDPC_N);
+    memcpy(best_a91, trial_a91, FTX_LDPC_K_BYTES);
+    if (best_crc_extracted != NULL) {
+        *best_crc_extracted = crc_extracted;
+    }
+    if (best_crc_calculated != NULL) {
+        *best_crc_calculated = crc_calculated;
+    }
+    return true;
+}
+
+static bool ftx_crc_guided_refine(const float *log174, const uint8_t plain174[],
+                                  uint8_t refined_plain174[], uint8_t refined_a91[],
+                                  decode_status_t *status) {
+    if (log174 == NULL || plain174 == NULL || refined_plain174 == NULL || refined_a91 == NULL ||
+        status == NULL) {
+        return false;
+    }
+
+    int weakest_idx[kCrcGuidedWeakBitCount];
+    float weakest_reliab[kCrcGuidedWeakBitCount];
+    for (int i = 0; i < kCrcGuidedWeakBitCount; ++i) {
+        weakest_idx[i] = -1;
+        weakest_reliab[i] = FLT_MAX;
+    }
+
+    for (int bit = 0; bit < FTX_LDPC_K; ++bit) {
+        const float reliab = fabsf(log174[bit]);
+        for (int pos = 0; pos < kCrcGuidedWeakBitCount; ++pos) {
+            if (reliab < weakest_reliab[pos]) {
+                for (int sh = kCrcGuidedWeakBitCount - 1; sh > pos; --sh) {
+                    weakest_reliab[sh] = weakest_reliab[sh - 1];
+                    weakest_idx[sh] = weakest_idx[sh - 1];
+                }
+                weakest_reliab[pos] = reliab;
+                weakest_idx[pos] = bit;
+                break;
+            }
+        }
+    }
+
+    int use_count = 0;
+    while (use_count < kCrcGuidedWeakBitCount && weakest_idx[use_count] >= 0) {
+        ++use_count;
+    }
+    if (use_count <= 0) {
+        return false;
+    }
+
+    uint8_t base_info_bits[FTX_LDPC_K];
+    uint8_t trial_info_bits[FTX_LDPC_K];
+    for (int i = 0; i < FTX_LDPC_K; ++i) {
+        base_info_bits[i] = plain174[i];
+    }
+
+    uint8_t best_plain174[FTX_LDPC_N];
+    uint8_t best_a91[FTX_LDPC_K_BYTES];
+    float best_score = -FLT_MAX;
+    uint16_t best_crc_extracted = 0;
+    uint16_t best_crc_calculated = 0;
+    bool found = false;
+
+    for (int i = 0; i < use_count; ++i) {
+        memcpy(trial_info_bits, base_info_bits, sizeof(base_info_bits));
+        trial_info_bits[weakest_idx[i]] ^= 1;
+        ftx_consider_crc_guided_trial(log174, trial_info_bits, &best_score, &found,
+                                      best_plain174, best_a91,
+                                      &best_crc_extracted, &best_crc_calculated);
+    }
+
+    for (int i = 0; i < use_count; ++i) {
+        for (int j = i + 1; j < use_count; ++j) {
+            memcpy(trial_info_bits, base_info_bits, sizeof(base_info_bits));
+            trial_info_bits[weakest_idx[i]] ^= 1;
+            trial_info_bits[weakest_idx[j]] ^= 1;
+            ftx_consider_crc_guided_trial(log174, trial_info_bits, &best_score, &found,
+                                          best_plain174, best_a91,
+                                          &best_crc_extracted, &best_crc_calculated);
+        }
+    }
+
+    const int use3 = (use_count > 6) ? 6 : use_count;
+    for (int i = 0; i < use3; ++i) {
+        for (int j = i + 1; j < use3; ++j) {
+            for (int k = j + 1; k < use3; ++k) {
+                memcpy(trial_info_bits, base_info_bits, sizeof(base_info_bits));
+                trial_info_bits[weakest_idx[i]] ^= 1;
+                trial_info_bits[weakest_idx[j]] ^= 1;
+                trial_info_bits[weakest_idx[k]] ^= 1;
+                ftx_consider_crc_guided_trial(log174, trial_info_bits, &best_score, &found,
+                                              best_plain174, best_a91,
+                                              &best_crc_extracted, &best_crc_calculated);
+            }
+        }
+    }
+
+    if (!found) {
+        return false;
+    }
+
+    memcpy(refined_plain174, best_plain174, FTX_LDPC_N);
+    memcpy(refined_a91, best_a91, FTX_LDPC_K_BYTES);
+    status->ldpc_errors = 0;
+    status->crc_extracted = best_crc_extracted;
+    status->crc_calculated = best_crc_calculated;
+    return true;
 }
 
 static void ftx_normalize_ap_text(const char *src, char *dst, int dst_size) {
@@ -932,12 +1335,12 @@ static bool ftx_try_ap_codeword(const float *log174, const uint8_t hypothesisA91
     uint8_t apA91[FTX_LDPC_K_BYTES];
     decode_status_t apStatus = *status;
 
-    int apIterations = max_iterations + 40;
-    if (apIterations > 320) {
-        apIterations = 320;
+    int apIterations = max_iterations;
+    if (apIterations > 120) {
+        apIterations = 120;
     }
 
-    if (!ftx_try_decode_pass(apLog174, apIterations, 1.0f, apPlain174, apA91, &apStatus)) {
+    if (!ftx_try_decode_pass_no_osd(apLog174, apIterations, 1.0f, apPlain174, apA91, &apStatus)) {
         return false;
     }
 
@@ -1471,3 +1874,4 @@ static void pack_bits(const uint8_t bit_array[], int num_bits, uint8_t packed[])
         }
     }
 }
+

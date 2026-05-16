@@ -10,3 +10,4 @@ public interface OnConnectorStateChanged {
     void onConnected();
     void onRunError(String message);
 }
+

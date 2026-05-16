@@ -165,3 +165,4 @@ void generateFt8ToBuffer(char *message, float frequency, short *buffer) {
     //save_wav(signal, num_total_samples, sample_rate, wav_path);
 
 }
+

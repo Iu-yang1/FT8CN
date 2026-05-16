@@ -18,3 +18,4 @@ public final class NativeApRegression {
      */
     public static native String runSyntheticSuite();
 }
+

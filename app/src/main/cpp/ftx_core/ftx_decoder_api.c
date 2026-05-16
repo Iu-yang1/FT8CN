@@ -256,3 +256,4 @@ int ftx_decoder_get_result(const ftx_decoder_t *decoder, int index, ftx_decode_r
     *out = decoder->results[index];
     return 0;
 }
+

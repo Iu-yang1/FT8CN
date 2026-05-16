@@ -1,7 +1,8 @@
 package com.bg7yoz.ft8cn;
 
 /**
- * FT8 / FT4 有关的常量。
+ * FT8 / FT4 共用常量与模式辅助方法。
+ *
  * @author BGY70Z
  * @date 2023-03-20
  */
@@ -17,24 +18,22 @@ public final class FT8Common {
     public static final int FT8_SLOT_TIME = 15;
     public static final float FT4_SLOT_TIME = 7.5f;
 
-    public static final int FT8_SLOT_TIME_MILLISECOND = 15000;   // 一个周期的毫秒数
-    public static final int FT4_SLOT_TIME_MILLISECOND = 7500;
+    public static final int FT8_SLOT_TIME_MILLISECOND = 15000;   // 一个完整 FT8 时隙的毫秒数
+    public static final int FT4_SLOT_TIME_MILLISECOND = 7500;    // 一个完整 FT4 时隙的毫秒数
 
-    public static final int FT8_5_SYMBOLS_MILLISECOND = 800;     // 5个符号所需的毫秒数
-
-    public static final int FT8_SLOT_TIME_M = 150;               // 15秒
-    public static final int FT4_SLOT_TIME_M = 75;                // 7.5秒
-    public static final int FT8_5_SYMBOLS_TIME_M = 8;            // 5个符号的时间长度 0.8 秒
-
-    public static final int FT8_TRANSMIT_DELAY = 500;            // 默认发射延迟时长，毫秒
-    public static final long DEEP_DECODE_TIMEOUT = 7 * 1000L;    // 深度解码的最长时间范围
-    public static final int DECODE_MAX_ITERATIONS = 1;           // 迭代次数
+    public static final int FT8_5_SYMBOLS_MILLISECOND = 800;     // FT8 前 5 个符号对应的毫秒数
+    public static final int FT8_SLOT_TIME_M = 150;               // 15 秒，UtcTimer 的 0.1 秒单位
+    public static final int FT4_SLOT_TIME_M = 75;                // 7.5 秒，UtcTimer 的 0.1 秒单位
+    public static final int FT8_5_SYMBOLS_TIME_M = 8;            // FT8 前 5 个符号对应的 0.1 秒单位
+    public static final int FT8_TRANSMIT_DELAY = 500;            // 默认发射延迟，单位毫秒
+    public static final long DEEP_DECODE_TIMEOUT = 7 * 1000L;    // 深度解码最长预算
+    public static final int DECODE_MAX_ITERATIONS = 1;           // Java 层额外重试次数
     public static final int EARLY_DECODE_PHASE_TICKS = 41;
     public static final int FULL_DECODE_PHASE_TICKS = 50;
     public static final long EARLY_DECODE_TIMEOUT = 1800L;
     public static final long FT4_EARLY_DECODE_TIMEOUT = 900L;
 
-    // ===== 发射/解码模式参数 =====
+    // ===== 发射 / 解码模式参数 =====
     public static final int FT8_NN = 79;
     public static final int FT4_NN = 105;
 
@@ -45,49 +44,49 @@ public final class FT8Common {
     public static final float FT4_SYMBOL_BT = 1.0f;
 
     /**
-     * 获取当前模式一个周期的毫秒数
+     * 获取当前模式一个完整时隙的毫秒数。
      */
     public static int getSlotTimeMillisecond(int mode) {
         return mode == FT4_MODE ? FT4_SLOT_TIME_MILLISECOND : FT8_SLOT_TIME_MILLISECOND;
     }
 
     /**
-     * 获取当前模式一个周期的 UtcTimer 单位长度
+     * 获取当前模式在 UtcTimer 中对应的 0.1 秒单位长度。
      */
     public static int getSlotTimeM(int mode) {
         return mode == FT4_MODE ? FT4_SLOT_TIME_M : FT8_SLOT_TIME_M;
     }
 
     /**
-     * 获取当前模式一个周期的秒数
+     * 获取当前模式一个完整时隙的秒数。
      */
     public static float getSlotTimeSecond(int mode) {
         return mode == FT4_MODE ? FT4_SLOT_TIME : FT8_SLOT_TIME;
     }
 
     /**
-     * 获取当前模式 tone 个数
+     * 获取当前模式的 tone 数量。
      */
     public static int getToneCount(int mode) {
         return mode == FT4_MODE ? FT4_NN : FT8_NN;
     }
 
     /**
-     * 获取当前模式符号周期
+     * 获取当前模式的符号周期。
      */
     public static float getSymbolPeriod(int mode) {
         return mode == FT4_MODE ? FT4_SYMBOL_PERIOD : FT8_SYMBOL_PERIOD;
     }
 
     /**
-     * 获取当前模式 GFSK BT 参数
+     * 获取当前模式的 GFSK BT 参数。
      */
     public static float getSymbolBt(int mode) {
         return mode == FT4_MODE ? FT4_SYMBOL_BT : FT8_SYMBOL_BT;
     }
 
     /**
-     * 获取当前模式整周期采样点数
+     * 获取当前模式完整时隙对应的采样点数。
      */
     public static int getSamplesPerSlot(int mode) {
         return (int) (getSlotTimeSecond(mode) * SAMPLE_RATE);
@@ -106,8 +105,8 @@ public final class FT8Common {
     }
 
     /**
-     * 获取“立即发射”窗口长度
-     * FT4 周期更短，因此窗口也应更小
+     * 获取“立即发射”窗口长度。
+     * FT4 周期更短，所以窗口也更短。
      */
     public static int getImmediateTxWindowMs(int mode) {
         return mode == FT4_MODE ? 1200 : 2500;
@@ -125,53 +124,49 @@ public final class FT8Common {
     }
 
     /**
-     * Preferred earliest transmit build offset from slot start.
-     * 推荐的最早发射构建偏移（相对时隙起点）。
+     * 推荐的最早发射构建偏移，相对时隙起点。
      */
     public static int getPreferredTxLeadInMs(int mode) {
         return mode == FT4_MODE ? 180 : 260;
     }
 
     /**
-     * Hard cap for delayed auto-TX start caused by late-decode override.
-     * 晚到解码覆盖引起的自动发射延迟硬上限。
+     * 晚到解码覆盖导致的自动发射延迟硬上限。
      */
     public static int getLateDecodeHoldCapMs(int mode) {
         return mode == FT4_MODE ? 620 : 980;
     }
 
     /**
-     * Only when decode updates are very recent do we allow late-decode override.
-     * 仅当解码更新“足够新”时才允许晚到解码覆盖窗口生效。
+     * 只有解码结果足够新时，才允许晚到解码覆盖窗口生效。
      */
     public static int getLateDecodeRecentWindowMs(int mode) {
         return mode == FT4_MODE ? 800 : 1300;
     }
 
     /**
-     * Compensation for local encode/queue/audio path latency.
-     * 本地编码/排队/音频链路补偿时间，避免对端看到滞后起发。
+     * 本地编码、排队与音频链路补偿时间，避免起发滞后。
      */
     public static int getTxPipelineCompensationMs(int mode) {
         return mode == FT4_MODE ? 80 : 140;
     }
 
     /**
-     * 模式转字符串
+     * 模式转字符串。
      */
     public static String modeToString(int mode) {
         return mode == FT4_MODE ? "FT4" : "FT8";
     }
 
     /**
-     * 是否 FT8
+     * 是否 FT8。
      */
     public static boolean isFt8(int mode) {
         return mode == FT8_MODE;
     }
 
     /**
-     * 是否 FT4
+     * 是否 FT4。
      */
     public static boolean isFt4(int mode) {
         return mode == FT4_MODE;

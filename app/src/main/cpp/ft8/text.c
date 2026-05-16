@@ -251,3 +251,4 @@ int nchar(char c, int table_idx)
     // Character not found
     return -1;
 }
+

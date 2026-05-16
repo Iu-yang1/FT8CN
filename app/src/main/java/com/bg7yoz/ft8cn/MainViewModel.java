@@ -222,6 +222,42 @@ public class MainViewModel extends ViewModel {
         return viewModel;
     }
 
+    /**
+     * debug 辅助入口：仅在外部已经初始化 ViewModel 后返回当前实例，
+     * 不会为了调试链路额外创建一套新的前端状态。
+     */
+    public static MainViewModel peekInstance() {
+        return viewModel;
+    }
+
+    /**
+     * debug 样本回归时，用样本结果临时替换前端消息列表，方便直接在 UI 审查。
+     */
+    public void replaceDecodedMessagesForDebug(ArrayList<Ft8Message> messages,
+                                              float averageOffsetSec,
+                                              long decodeDurationMs) {
+        synchronized (ft8Messages) {
+            ft8Messages.clear();
+            if (messages != null) {
+                for (Ft8Message message : messages) {
+                    if (message != null) {
+                        ft8Messages.add(new Ft8Message(message));
+                    }
+                }
+            }
+        }
+        currentMessages = messages;
+        currentDecodeCount = messages == null ? 0 : messages.size();
+        mutable_Decoded_Counter.postValue(currentDecodeCount);
+        mutableFt8MessageList.postValue(ft8Messages);
+        mutableTimerOffset.postValue(averageOffsetSec);
+        mutableIsDecoding.postValue(false);
+        if (decodeDurationMs >= 0L) {
+            ft8SignalListener.decodeTimeSec.postValue(decodeDurationMs);
+            ft8SignalListener.timeSec = decodeDurationMs;
+        }
+    }
+
     public Ft8Message getFt8Message(int position) {
         return Objects.requireNonNull(ft8Messages.get(position));
     }
@@ -501,6 +537,7 @@ public class MainViewModel extends ViewModel {
                     // Experimental mode is used as a local modem bring-up path,
                     // so decode the exact transmitted waveform directly instead
                     // of relying on acoustic leakage or rig-side monitor audio.
+                    // 这条回环链路只服务实验编解码器，不影响 FT8/FT4 标准发射。
                     float[] loopbackWave = GenerateFTx.generateFtX(
                             new Ft8Message(message),
                             GeneralVariables.getBaseFrequency(),
@@ -1270,3 +1307,4 @@ public class MainViewModel extends ViewModel {
         releaseResources();
     }
 }
+

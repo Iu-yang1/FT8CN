@@ -92,3 +92,4 @@ public class Yaesu2RigConstant {
 
 
 }
+

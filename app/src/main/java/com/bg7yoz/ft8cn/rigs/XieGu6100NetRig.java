@@ -104,3 +104,4 @@ public class XieGu6100NetRig extends BaseRig {
         setCivAddress(civAddress);
     }
 }
+

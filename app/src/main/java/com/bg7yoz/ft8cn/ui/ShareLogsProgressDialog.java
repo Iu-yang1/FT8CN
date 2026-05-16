@@ -134,3 +134,4 @@ public class ShareLogsProgressDialog extends Dialog {
         super.dismiss();
     }
 }
+

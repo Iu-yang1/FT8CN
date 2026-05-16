@@ -26,3 +26,4 @@ public final class WaveConstants {
 	public static String FMTSUBCHUNK = "fmt ";
 	public static String DATASUBCHUNK = "data";
 }
+

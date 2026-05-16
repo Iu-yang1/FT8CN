@@ -183,3 +183,4 @@ int ftx_core_run_selftests(char *report, int report_capacity) {
 
     return (passed == total) ? 0 : -1;
 }
+

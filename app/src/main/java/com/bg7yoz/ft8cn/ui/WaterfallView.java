@@ -26,6 +26,7 @@ import androidx.annotation.Nullable;
 
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
+import com.bg7yoz.ft8cn.spectrum.SpectrumListener;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
 import java.util.ArrayList;
@@ -118,7 +119,7 @@ public class WaterfallView extends View {
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         setClickable(true);
         blockHeight = Math.max(1, h / (symbols * cycle));
-        freq_width = (float) w / 3000f;
+        freq_width = (float) w / (float) SpectrumListener.DISPLAY_MAX_FREQUENCY_HZ;
         if (lastBitMap != null) {
             lastBitMap.recycle();
         }
@@ -213,9 +214,9 @@ public class WaterfallView extends View {
 
         //计算频率
         if (touch_x > 0) {//画触摸线
-            freq_hz = Math.round(3000f * (float) touch_x / (float) getWidth());
-            if (freq_hz > 2900) {
-                freq_hz = 2900;
+            freq_hz = Math.round((float) SpectrumListener.DISPLAY_MAX_FREQUENCY_HZ * (float) touch_x / (float) getWidth());
+            if (freq_hz > SpectrumListener.DISPLAY_MAX_FREQUENCY_HZ - 100) {
+                freq_hz = SpectrumListener.DISPLAY_MAX_FREQUENCY_HZ - 100;
             }
             if (freq_hz < 100) {
                 freq_hz = 100;
@@ -275,7 +276,7 @@ public class WaterfallView extends View {
                 colorBuffer[i] = 0xff00ffff | (((data[i] - 127)) << 18);//放大4倍
             }
         }
-        LinearGradient linearGradient = new LinearGradient(0, 0, getWidth() * 2, 0, colorBuffer
+        LinearGradient linearGradient = new LinearGradient(0, 0, getWidth(), 0, colorBuffer
                 , null, Shader.TileMode.CLAMP);
         linearPaint.setShader(linearGradient);
         shiftBitmapDown(linearPaint);
@@ -300,9 +301,10 @@ public class WaterfallView extends View {
                 }
 
                 Path path = new Path();
+                float displayFreqHz = msg.getDisplayAudioFrequencyHz();
 
-                path.moveTo(msg.freq_hz * freq_width, pathStart);
-                path.lineTo(msg.freq_hz * freq_width, pathEnd);
+                path.moveTo(displayFreqHz * freq_width, pathStart);
+                path.lineTo(displayFreqHz * freq_width, pathEnd);
 
 
 
@@ -314,8 +316,8 @@ public class WaterfallView extends View {
                     float text_len = messagePaint.measureText(msg.getMessageText(true));
                     float text_start = ((pathEnd- pathStart)-text_len)/2;
                     float text_high =dpToPixel(4);//messagePaint.getFontSpacing()/2;
-                    _canvas.drawLine(msg.freq_hz * freq_width + text_high , text_start
-                            , msg.freq_hz * freq_width + text_high, text_len + text_start, textLinePaint);
+                    _canvas.drawLine(displayFreqHz * freq_width + text_high , text_start
+                            , displayFreqHz * freq_width + text_high, text_len + text_start, textLinePaint);
                 }
             }
         }
@@ -337,3 +339,4 @@ public class WaterfallView extends View {
         return freq_hz;
     }
 }
+

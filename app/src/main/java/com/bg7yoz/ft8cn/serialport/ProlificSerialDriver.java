@@ -580,3 +580,4 @@ public class ProlificSerialDriver implements UsbSerialDriver {
         return supportedDevices;
     }
 }
+

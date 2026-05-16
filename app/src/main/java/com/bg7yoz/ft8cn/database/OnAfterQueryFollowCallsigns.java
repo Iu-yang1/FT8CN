@@ -10,3 +10,4 @@ import java.util.ArrayList;
 public interface OnAfterQueryFollowCallsigns {
     void doOnAfterQueryFollowCallsigns(ArrayList<String> callsigns);
 }
+

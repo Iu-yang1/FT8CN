@@ -327,3 +327,4 @@ public class FlexConnector extends BaseRigConnector {
         return flexRadio.isConnect();
     }
 }
+

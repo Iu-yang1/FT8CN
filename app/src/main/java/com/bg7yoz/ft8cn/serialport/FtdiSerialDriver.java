@@ -430,3 +430,4 @@ public class FtdiSerialDriver implements UsbSerialDriver {
     }
 
 }
+

@@ -473,3 +473,4 @@ public final class ExperimentalGF4Codec {
         }
     }
 }
+

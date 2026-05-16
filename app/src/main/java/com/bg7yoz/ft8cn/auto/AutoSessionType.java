@@ -5,3 +5,4 @@ public enum AutoSessionType {
     FT8_DXPEDITION_HOUND,
     FT8_DXPEDITION_FOX
 }
+

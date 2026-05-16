@@ -23,3 +23,4 @@ int ftx_encode_codeword(const uint8_t a91[FTX_PAYLOAD_BYTES], uint8_t codeword[F
 #endif
 
 #endif
+

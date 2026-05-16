@@ -162,6 +162,15 @@ public class CallingListFragment extends Fragment {
         });
 
         //观察解码的时长
+        mainViewModel.ft8SignalListener.decodeStatusText.observe(getViewLifecycleOwner(), new Observer<String>() {
+            @Override
+            public void onChanged(String statusText) {
+                if (statusText != null && statusText.trim().length() > 0) {
+                    binding.isDecodingTextView.setText(statusText);
+                }
+            }
+        });
+
         mainViewModel.ft8SignalListener.decodeTimeSec.observe(getViewLifecycleOwner(), new Observer<Long>() {
             @SuppressLint("DefaultLocale")
             @Override
@@ -448,3 +457,4 @@ public class CallingListFragment extends Fragment {
         binding = null;
     }
 }
+

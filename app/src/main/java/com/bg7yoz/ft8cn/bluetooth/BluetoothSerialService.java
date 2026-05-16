@@ -211,3 +211,4 @@ public class BluetoothSerialService extends Service implements BluetoothSerialLi
     }
 
 }
+

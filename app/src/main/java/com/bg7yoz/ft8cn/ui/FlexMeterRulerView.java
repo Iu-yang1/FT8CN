@@ -199,3 +199,4 @@ public class FlexMeterRulerView extends View {
     }
 
 }
+
