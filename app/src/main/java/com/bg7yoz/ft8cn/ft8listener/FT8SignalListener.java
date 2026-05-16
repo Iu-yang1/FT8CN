@@ -1,19 +1,22 @@
 package com.bg7yoz.ft8cn.ft8listener;
 /**
- * 用于监听音频的类。监听通过时钟UtcTimer来控制周期，通过OnWaveDataListener接口来读取音频数据。
- * 支持 FT8 / FT4 模式切换。
+ * 用于监听音频并驱动 FT8 / FT4 解码。时隙节奏由 UtcTimer 控制，
+ * 音频数据通过 OnWaveDataListener 提供。
  *
- * 1. 每一轮解码先固定 decodeMode，避免解码过程中用户切模式造成混乱
- * 2. FT4 允许进入深度解码
+ * 1. 每一轮解码都会先固定 decodeMode，避免解码过程中被 UI 切换 FT8 / FT4 打断。
+ * 2. FT4 也允许进入深度解码，但仍然受整体解码预算约束。
  *
  * @author BGY70Z
  * @date 2023-03-20
  */
 
+import android.content.Context;
+import android.media.AudioFormat;
 import android.util.Log;
 
 import androidx.lifecycle.MutableLiveData;
 
+import com.bg7yoz.ft8cn.BuildConfig;
 import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
@@ -24,30 +27,40 @@ import com.bg7yoz.ft8cn.timer.OnUtcTimer;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.bg7yoz.ft8cn.wave.FT8Resample;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
+import com.bg7yoz.ft8cn.wave.WriteWavHeader;
 
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Locale;
 
 public class FT8SignalListener {
     private static final String TAG = "FT8SignalListener";
     private static final int AP_HINT_CALL_LIMIT = 4;
     private static final int DECODE_STAGE_FULL = 0;
     private static final int DECODE_STAGE_EARLY = 1;
+    private static final long NATIVE_DECODE_THREAD_STACK_BYTES = 16L * 1024L * 1024L;
     // AP-lite only keeps a few recent follow calls so the native fallback stays cheap.
 
     private UtcTimer utcTimer;
-    private final OnFt8Listen onFt8Listen;//当开始监听，解码结束后触发的事件
+    private final OnFt8Listen onFt8Listen; // 监听开始、解码完成后的回调
 
-    public MutableLiveData<Long> decodeTimeSec = new MutableLiveData<>();//解码的时长
-    public long timeSec = 0;//解码的时长
+    public MutableLiveData<Long> decodeTimeSec = new MutableLiveData<>(); // 最近一次解码耗时
+    public long timeSec = 0; // 最近一次解码耗时缓存
 
     private OnWaveDataListener onWaveDataListener;
     private DatabaseOpr db;
 
-    private final A91List a91List = new A91List();//a91列表
+    private final A91List a91List = new A91List(); // subtract 所需的 A91 缓存
     private final Object slotDedupeLock = new Object();
     private final ArrayList<SlotDedupeEntry> slotDedupeEntries = new ArrayList<>();
     private long slotDedupeUtc = Long.MIN_VALUE;
     private int slotDedupeMode = -1;
+    private final Object liveFullDecodeLock = new Object();
+    private final boolean[] liveFullDecodeRunning = new boolean[]{false, false};
+    private final long[] liveFullDecodeUtc = new long[]{Long.MIN_VALUE, Long.MIN_VALUE};
 
     static {
         System.loadLibrary("ft8cn");
@@ -86,7 +99,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 按当前模式创建时钟
+     * 按当前模式重建 UTC 定时器。
      */
     private void buildUtcTimer() {
         utcTimer = new UtcTimer(FT8Common.getSlotTimeM(GeneralVariables.getSignalMode()), false, new OnUtcTimer() {
@@ -96,7 +109,7 @@ public class FT8SignalListener {
 
             @Override
             public void doOnSecTimer(long utc) {
-                Log.d(TAG, String.format("触发录音,%d,mode=%s",
+                Log.d(TAG, String.format("触发录音,utc=%d,mode=%s",
                         utc,
                         FT8Common.modeToString(GeneralVariables.getSignalMode())));
                 runRecorde(utc);
@@ -105,7 +118,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 模式切换后重建监听周期
+     * 模式切换后重建监听周期。
      */
     public void restartByCurrentMode() {
         boolean running = isListening();
@@ -141,14 +154,14 @@ public class FT8SignalListener {
     }
 
     /**
-     * 获取当前时间的偏移量，这里包括总的时钟偏移，也包括本实例的偏移
+     * 返回当前时钟偏移，包含本地顺延和 NTP 修正。
      */
     public int time_Offset() {
         return utcTimer.getTime_sec() + UtcTimer.delay;
     }
 
     /**
-     * 录音。在后台以多线程的方式录音。
+     * 按当前模式拉取音频并启动本轮解码。
      */
     private void runRecorde(long utc) {
         Log.d(TAG, "开始录音...");
@@ -172,7 +185,7 @@ public class FT8SignalListener {
                         new OnGetVoiceDataDone() {
                             @Override
                             public void onGetDone(float[] data) {
-                                Log.d(TAG, String.format("开始提前解码,数据长度:%d,mode=%s",
+                                Log.d(TAG, String.format("收到提前解码音频:samples=%d,mode=%s",
                                         data.length,
                                         FT8Common.modeToString(recordMode)));
                                 decodeFt8(
@@ -195,7 +208,7 @@ public class FT8SignalListener {
                     new OnGetVoiceDataDone() {
                         @Override
                         public void onGetDone(float[] data) {
-                            Log.d(TAG, String.format("开始解码...###,数据长度：%d,mode=%s",
+                            Log.d(TAG, String.format("收到完整解码音频:samples=%d,mode=%s",
                                     data.length,
                                     FT8Common.modeToString(recordMode)));
                             decodeFt8(
@@ -214,7 +227,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 兼容旧调用：如果外部还有旧入口，仍按当前模式跑
+     * 兼容旧调用：外部只给音频时，按当前模式走完整解码。
      */
     public void decodeFt8(long utc, float[] voiceData) {
         decodeFt8(utc, voiceData, FT8Common.SAMPLE_RATE, GeneralVariables.getSignalMode());
@@ -261,7 +274,7 @@ public class FT8SignalListener {
         );
         if (resampled == null || resampled.length == 0) {
             Log.w(TAG, String.format(
-                    "重采样失败，回退原始数据: src=%d,target=%d,mode=%s,stage=%d,len=%d",
+                    "解码前重采样失败，回退原始输入: src=%d,target=%d,mode=%s,stage=%d,len=%d",
                     normalizedSourceRate,
                     FT8Common.SAMPLE_RATE,
                     FT8Common.modeToString(decodeMode),
@@ -284,16 +297,15 @@ public class FT8SignalListener {
     }
 
     private boolean shouldRunEarlyDecodeStage(int decodeMode) {
-        return GeneralVariables.deepDecodeMode
-                && GeneralVariables.wsjtxEnableEarlyDecode
+        return GeneralVariables.wsjtxEnableEarlyDecode
                 && FT8Common.supportsEarlyDecodeStage(decodeMode)
                 && ReBuildSignal.supportSubtract(decodeMode)
                 && !GeneralVariables.isExperimentalCodecEnabled();
     }
 
     /**
-     * experimental 路径单独固定到稳定的 12k 输入。
-     * 这样不会把 FT8/FT4 多采样率接入时的副作用扩散到实验调制解调器。
+     * experimental codec 仍固定使用 12k 输入。
+     * 在这里完成重采样，避免 FT8/FT4 多采样率接入的副作用扩散到实验调制解调链路。
      */
     private float[] prepareExperimentalInput(float[] voiceData, int sampleRate, int decodeMode, String sourceTag) {
         if (voiceData == null) {
@@ -416,7 +428,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * FT4 更保守，FT8 可略宽松
+     * FT4 的 subtract 轮数比 FT8 更保守。
      */
     private int getMaxSubtractRounds(int decodeMode) {
         if (decodeMode == FT8Common.FT4_MODE) {
@@ -473,8 +485,8 @@ public class FT8SignalListener {
     }
 
     /**
-     * 判断消息是否允许进入 subtract 列表
-     * 普通解码可略宽松，深解后更严格，避免误码扩散
+     * 判断消息是否允许加入 subtract 列表。
+     * 普通解码可稍宽，深度解码后更严格，避免误码进一步扩散。
      */
     private boolean shouldAddToSubtractList(Ft8Message msg, boolean isDeep, int decodeMode) {
         if (msg == null || !msg.isValid) {
@@ -497,7 +509,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 当前轮结果中是否存在足够高质量的消息可继续 subtract
+     * 当前轮结果里是否存在足够高质量的消息，可以继续执行 subtract。
      */
     private boolean hasQualifiedSubtractMsg(ArrayList<Ft8Message> msgs, int decodeMode) {
         if (msgs == null || msgs.size() == 0) {
@@ -513,11 +525,11 @@ public class FT8SignalListener {
     }
 
     /**
-     * 启动一次解码流程
+     * 核心解码入口。
      *
-     * @param utc        当前UTC
-     * @param voiceData  当前周期的音频数据
-     * @param decodeMode 本轮固定模式，避免线程运行过程中模式切换导致同一轮解码混用 FT8 / FT4
+     * @param utc        当前时隙 UTC
+     * @param voiceData  输入音频数据
+     * @param decodeMode 本轮固定模式，避免解码线程运行过程中混入另一种模式
      */
     public void decodeFt8(long utc, float[] voiceData, int decodeMode) {
         decodeFt8(utc, voiceData, FT8Common.SAMPLE_RATE, decodeMode);
@@ -531,6 +543,11 @@ public class FT8SignalListener {
                            int expectedSamples,
                            boolean notifyBefore,
                            boolean notifyFinished) {
+        final boolean liveFullSessionRequest = isLiveFullSessionRequest(
+                decodeStage,
+                notifyBefore,
+                notifyFinished
+        );
         if (GeneralVariables.isExperimentalCodecEnabled()) {
             if (decodeStage == DECODE_STAGE_EARLY) {
                 return;
@@ -547,9 +564,21 @@ public class FT8SignalListener {
             return;
         }
 
-        new Thread(new Runnable() {
+        if (liveFullSessionRequest && !tryBeginLiveFullDecode(decodeMode, utc)) {
+            Log.w(TAG, String.format(
+                    "skip overlapped live full decode request, mode=%s, utc=%d, previousUtc=%d",
+                    FT8Common.modeToString(decodeMode),
+                    utc,
+                    getLiveFullDecodeUtc(decodeMode)
+            ));
+            return;
+        }
+
+        Thread decodeThread = new Thread(null, new Runnable() {
             @Override
             public void run() {
+                long ft8Decoder = 0L;
+                try {
                 long time = System.currentTimeMillis();
                 final int slotTimeM = FT8Common.getSlotTimeM(decodeMode);
 
@@ -566,7 +595,7 @@ public class FT8SignalListener {
                 );
                 if (decoderInput == null || decoderInput.length == 0) {
                     Log.w(TAG, String.format(
-                            "跳过空音频解码: mode=%s, stage=%d, srcRate=%d",
+                            "解码输入为空，跳过本轮: mode=%s, stage=%d, srcRate=%d",
                             FT8Common.modeToString(decodeMode),
                             decodeStage,
                             sourceSampleRate
@@ -574,15 +603,16 @@ public class FT8SignalListener {
                     return;
                 }
 
-                // 初始化解码器，按本轮固定模式选择 FT8 / FT4
-                long ft8Decoder = InitDecoder(
+                // 记录真实送入 native decoder 的音频，便于复现 FT8 / FT4 前端链路。
+                maybeDumpDecoderInput(decoderInput, utc, sourceSampleRate, decodeMode, decodeStage, expectedSamples);
+                ft8Decoder = InitDecoder(
                         utc,
                         FT8Common.SAMPLE_RATE,
                         expectedSamples,
                         isFt8
                 );
 
-                // 压入音频数据
+                // 设置 AP hints。
                 String[][] apHints = buildDecoderApHints();
                 DecoderSetApHints(
                         ft8Decoder,
@@ -610,7 +640,8 @@ public class FT8SignalListener {
                     ArrayList<Ft8Message> earlyMsgs = runDecode(
                             ft8Decoder,
                             utc,
-                            true,
+                            false,
+                            false,
                             decodeMode,
                             earlyDecodeDeadlineMs
                     );
@@ -623,11 +654,12 @@ public class FT8SignalListener {
                             decodeMode,
                             earlyMsgs,
                             allMsg,
-                            true,
+                            false,
                             false
                     );
 
                     DeleteDecoder(ft8Decoder);
+                    ft8Decoder = 0L;
                     timeSec = System.currentTimeMillis() - time;
                     Log.d(TAG, String.format("提前解码耗时:%d毫秒,mode=%s",
                             timeSec,
@@ -635,7 +667,45 @@ public class FT8SignalListener {
                     return;
                 }
 
-                ArrayList<Ft8Message> msgs = runDecode(ft8Decoder, utc, false, decodeMode, 0L);
+                if (nativeOwnsSessionFlow) {
+                    /* 官方 backend 已在 native 内部管理整轮 session flow，Java 这里直接跑完整 session，避免外层重复 fast/deep。 */ ArrayList<Ft8Message> sessionMsgs = runDecode(
+                            ft8Decoder,
+                            utc,
+                            GeneralVariables.deepDecodeMode,
+                            false,
+                            decodeMode,
+                            0L
+                    );
+                    addMsgToList(allMsg, sessionMsgs);
+
+                    timeSec = System.currentTimeMillis() - time;
+
+                    publishDecodeMessages(
+                            utc,
+                            slotTimeM,
+                            decodeMode,
+                            sessionMsgs,
+                            allMsg,
+                            false,
+                            true
+                    );
+
+                    DeleteDecoder(ft8Decoder);
+                    ft8Decoder = 0L;
+                    timeSec = System.currentTimeMillis() - time;
+                    decodeTimeSec.postValue(timeSec);
+
+                    if (notifyFinished && onFt8Listen != null) {
+                        onFt8Listen.afterDecodeFinished(utc, timeSec);
+                    }
+
+                    Log.d(TAG, String.format("官方 session 解码耗时:%d毫秒,mode=%s",
+                            timeSec,
+                            FT8Common.modeToString(decodeMode)));
+                    return;
+                }
+
+                ArrayList<Ft8Message> msgs = runDecode(ft8Decoder, utc, false, false, decodeMode, 0L);
                 addMsgToList(allMsg, msgs);
 
                 timeSec = System.currentTimeMillis() - time;
@@ -650,12 +720,12 @@ public class FT8SignalListener {
                         true
                 );
 
-                // FT8 / FT4 都允许进入深度解码，但使用有限轮重解
+                // 只有支持 subtract 的模式才进入深度重解流程。
                 if (GeneralVariables.deepDecodeMode && ReBuildSignal.supportSubtract(decodeMode)) {
                     long deepDecodeDeadlineMs = System.currentTimeMillis() + FT8Common.DEEP_DECODE_TIMEOUT;
                     // The deep-decode timeout is enforced as a real deadline instead of only checking between rounds.
 
-                    msgs = runDecode(ft8Decoder, utc, true, decodeMode, deepDecodeDeadlineMs);
+                    msgs = runDecode(ft8Decoder, utc, true, true, decodeMode, deepDecodeDeadlineMs);
                     addMsgToList(allMsg, msgs);
 
                     timeSec = System.currentTimeMillis() - time;
@@ -683,10 +753,10 @@ public class FT8SignalListener {
                                 break;
                             }
 
-                        // 按本轮固定模式做 subtract，避免中途切模式
+                            // 按本轮固定模式执行 subtract，避免中途切换模式。
                             ReBuildSignal.subtractSignal(ft8Decoder, a91List, decodeMode);
 
-                            msgs = runDecode(ft8Decoder, utc, true, decodeMode, deepDecodeDeadlineMs);
+                            msgs = runDecode(ft8Decoder, utc, true, true, decodeMode, deepDecodeDeadlineMs);
                             if (msgs.size() == 0) {
                                 break;
                             }
@@ -711,6 +781,7 @@ public class FT8SignalListener {
                 }
 
                 DeleteDecoder(ft8Decoder);
+                ft8Decoder = 0L;
                 timeSec = System.currentTimeMillis() - time;
                 decodeTimeSec.postValue(timeSec);
 
@@ -721,8 +792,166 @@ public class FT8SignalListener {
                 Log.d(TAG, String.format("解码耗时:%d毫秒,mode=%s",
                         timeSec,
                         FT8Common.modeToString(decodeMode)));
+                } finally {
+                    if (ft8Decoder != 0L) {
+                        DeleteDecoder(ft8Decoder);
+                    }
+                    if (liveFullSessionRequest) {
+                        finishLiveFullDecode(decodeMode, utc);
+                    }
+                }
             }
-        }).start();
+        }, "ft8-native-decode", NATIVE_DECODE_THREAD_STACK_BYTES);
+        decodeThread.start();
+    }
+
+    private boolean isLiveFullSessionRequest(int decodeStage, boolean notifyBefore, boolean notifyFinished) {
+        return decodeStage == DECODE_STAGE_FULL && !notifyBefore && notifyFinished;
+    }
+
+    private int getLiveDecodeModeIndex(int decodeMode) {
+        return decodeMode == FT8Common.FT4_MODE ? 1 : 0;
+    }
+
+    private boolean isLiveFullDecodeRunning(int decodeMode) {
+        synchronized (liveFullDecodeLock) {
+            return liveFullDecodeRunning[getLiveDecodeModeIndex(decodeMode)];
+        }
+    }
+
+    private long getLiveFullDecodeUtc(int decodeMode) {
+        synchronized (liveFullDecodeLock) {
+            return liveFullDecodeUtc[getLiveDecodeModeIndex(decodeMode)];
+        }
+    }
+
+    private boolean tryBeginLiveFullDecode(int decodeMode, long utc) {
+        synchronized (liveFullDecodeLock) {
+            int modeIndex = getLiveDecodeModeIndex(decodeMode);
+            if (liveFullDecodeRunning[modeIndex]) {
+                return false;
+            }
+            liveFullDecodeRunning[modeIndex] = true;
+            liveFullDecodeUtc[modeIndex] = utc;
+            return true;
+        }
+    }
+
+    private void finishLiveFullDecode(int decodeMode, long utc) {
+        synchronized (liveFullDecodeLock) {
+            int modeIndex = getLiveDecodeModeIndex(decodeMode);
+            if (liveFullDecodeUtc[modeIndex] == utc) {
+                liveFullDecodeRunning[modeIndex] = false;
+                liveFullDecodeUtc[modeIndex] = Long.MIN_VALUE;
+            }
+        }
+    }
+
+    /**
+     * debug 构建下保存真实送入 native decoder 的 12k 音频，
+     * 便于复现前端实际解码链路。
+     */
+    private void maybeDumpDecoderInput(float[] decoderInput,
+                                       long utc,
+                                       int sourceSampleRate,
+                                       int decodeMode,
+                                       int decodeStage,
+                                       int expectedSamples) {
+        if (!BuildConfig.DEBUG || decoderInput == null || decoderInput.length == 0) {
+            return;
+        }
+
+        Context context = GeneralVariables.getMainContext();
+        if (context == null) {
+            return;
+        }
+
+        File dir = new File(context.getFilesDir(), "diagnostics/live_decoder_input");
+        if (!dir.exists() && !dir.mkdirs()) {
+            return;
+        }
+
+        final String modeName = (decodeMode == FT8Common.FT4_MODE) ? "ft4" : "ft8";
+        final String stageName = (decodeStage == DECODE_STAGE_EARLY) ? "early" : "full";
+        File wavFile = new File(dir, "last_" + modeName + "_" + stageName + ".wav");
+        File metaFile = new File(dir, "last_" + modeName + "_" + stageName + ".txt");
+
+        try {
+            writeDebugWavFile(wavFile, decoderInput, FT8Common.SAMPLE_RATE);
+            writeDebugMetadata(metaFile,
+                    utc,
+                    sourceSampleRate,
+                    decodeMode,
+                    decodeStage,
+                    expectedSamples,
+                    decoderInput.length,
+                    wavFile.getAbsolutePath());
+            Log.d(TAG, String.format(Locale.US,
+                    "保存真实解码输入 mode=%s stage=%s path=%s samples=%d",
+                    modeName,
+                    stageName,
+                    wavFile.getAbsolutePath(),
+                    decoderInput.length));
+        } catch (IOException exception) {
+            Log.w(TAG, "保存解码输入失败: " + exception.getMessage());
+        }
+    }
+
+    private void writeDebugWavFile(File file, float[] samples, int sampleRate) throws IOException {
+        final int pcmBytes = samples.length * 2;
+        try (DataOutputStream outputStream = new DataOutputStream(new FileOutputStream(file))) {
+            new WriteWavHeader(
+                    pcmBytes,
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+            ).writeHeader(outputStream);
+            for (float sample : samples) {
+                int scaled = Math.round(sample * 32767.0f);
+                if (scaled > 32767) {
+                    scaled = 32767;
+                } else if (scaled < -32768) {
+                    scaled = -32768;
+                }
+                outputStream.writeByte(scaled & 0xFF);
+                outputStream.writeByte((scaled >> 8) & 0xFF);
+            }
+            outputStream.flush();
+        }
+    }
+
+    private void writeDebugMetadata(File file,
+                                    long utc,
+                                    int sourceSampleRate,
+                                    int decodeMode,
+                                    int decodeStage,
+                                    int expectedSamples,
+                                    int decoderSamples,
+                                    String wavPath) throws IOException {
+        String text = String.format(Locale.US,
+                "utc=%d%nmode=%s%nstage=%s%nsourceSampleRate=%d%ndecoderSampleRate=%d%nexpectedSamples=%d%ndecoderSamples=%d%ndeepDecodeMode=%s%ndecodePassCount=%d%nmultiDecodeRoundCount=%d%nqsoFreqSensitivity=%d%ndecodeSensitivity=%d%nenableEarlyDecode=%s%nwidebandDxSearch=%s%nexperimentalCodecMode=%d%nmyCall=%s%nwavPath=%s%n",
+                utc,
+                FT8Common.modeToString(decodeMode),
+                (decodeStage == DECODE_STAGE_EARLY) ? "early" : "full",
+                sourceSampleRate,
+                FT8Common.SAMPLE_RATE,
+                expectedSamples,
+                decoderSamples,
+                GeneralVariables.deepDecodeMode ? "true" : "false",
+                GeneralVariables.wsjtxDecodePassCount,
+                GeneralVariables.wsjtxMultiDecodeRoundCount,
+                GeneralVariables.wsjtxQsoFreqSensitivity,
+                GeneralVariables.wsjtxDecodeSensitivity,
+                GeneralVariables.wsjtxEnableEarlyDecode ? "true" : "false",
+                GeneralVariables.wsjtxWidebandDxSearch ? "true" : "false",
+                GeneralVariables.experimentalCodecMode,
+                GeneralVariables.myCallsign == null ? "" : GeneralVariables.myCallsign,
+                wavPath);
+
+        try (FileOutputStream outputStream = new FileOutputStream(file)) {
+            outputStream.write(text.getBytes("UTF-8"));
+            outputStream.flush();
+        }
     }
 
     public void decodeExperimentalLoopback(long utc, float[] voiceData, int sampleRate, int decodeMode) {
@@ -782,14 +1011,18 @@ public class FT8SignalListener {
     }
 
     /**
-     * 执行单轮同步与解码
+     * 执行一轮 native 解码。
      *
-     * @param ft8Decoder 解码器
-     * @param utc        UTC
+     * @param ft8Decoder 解码器句柄
+     * @param utc        当前 UTC
      * @param isDeep     是否深度解码
-     * @param decodeMode 本轮固定模式
+     * @param decodeMode 当前固定模式
      */
-    private ArrayList<Ft8Message> runDecode(long ft8Decoder, long utc, boolean isDeep, int decodeMode,
+    private ArrayList<Ft8Message> runDecode(long ft8Decoder,
+                                            long utc,
+                                            boolean useDeepSession,
+                                            boolean markWeakSignal,
+                                            int decodeMode,
                                             long deadlineMs) {
         ArrayList<Ft8Message> ft8Messages = new ArrayList<>();
         Ft8Message ft8Message = new Ft8Message(decodeMode);
@@ -800,20 +1033,20 @@ public class FT8SignalListener {
 
         a91List.clear();
 
-        // 设置解码模式
-        setDecodeMode(ft8Decoder, isDeep);
+        // 设置当前解码模式
+        setDecodeMode(ft8Decoder, useDeepSession);
 
         int num_candidates = DecoderFt8FindSync(ft8Decoder);
         Log.d(TAG, String.format(
                 "解码轮开始: mode=%s deep=%s candidates=%d deadline=%d",
                 FT8Common.modeToString(decodeMode),
-                isDeep ? "Y" : "N",
+                useDeepSession ? "Y" : "N",
                 num_candidates,
                 deadlineMs
         ));
 
         for (int idx = 0; idx < num_candidates; ++idx) {
-            if (isDeep && deadlineMs > 0L && System.currentTimeMillis() >= deadlineMs) {
+            if (useDeepSession && deadlineMs > 0L && System.currentTimeMillis() >= deadlineMs) {
                 break;
             }
             // Deep decode uses a hard wall-clock cutoff so one slow round cannot run far past the UI budget.
@@ -825,7 +1058,7 @@ public class FT8SignalListener {
                     if (ft8Message.isValid) {
                         Ft8Message msg = new Ft8Message(ft8Message);
                         msg.signalFormat = decodeMode;
-                        msg.isWeakSignal = isDeep;//是不是弱信号
+                        msg.isWeakSignal = markWeakSignal;
 
                         if (checkMessageSame(ft8Messages, msg)) {
                             continue;
@@ -833,7 +1066,7 @@ public class FT8SignalListener {
 
                         ft8Messages.add(msg);
 
-                        if (shouldAddToSubtractList(msg, isDeep, decodeMode)) {
+                        if (shouldAddToSubtractList(msg, useDeepSession, decodeMode)) {
                             byte[] a91 = DecoderGetA91(ft8Decoder);
                             a91List.add(a91, msg.freq_hz, msg.time_sec, msg.snr, msg.score, decodeMode);
                         }
@@ -848,7 +1081,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 计算平均时间偏移值
+     * 计算本轮消息的平均时间偏移。
      */
     private float averageOffset(ArrayList<Ft8Message> messages) {
         if (messages.size() == 0) return 0f;
@@ -860,7 +1093,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 把消息添加到列表中
+     * 将新增消息去重后并入列表。
      */
     private void addMsgToList(ArrayList<Ft8Message> allMsg, ArrayList<Ft8Message> newMsg) {
         for (int i = newMsg.size() - 1; i >= 0; i--) {
@@ -873,8 +1106,8 @@ public class FT8SignalListener {
     }
 
     /**
-     * 检查消息列表里同样的内容是否存在
-     * FT8 / FT4 视为不同模式，不互相去重
+     * 检查列表中是否已有相同消息。
+     * FT8 / FT4 视为不同模式，不互相去重。
      */
     private boolean checkMessageSame(ArrayList<Ft8Message> ft8Messages, Ft8Message ft8Message) {
         for (Ft8Message msg : ft8Messages) {
@@ -999,56 +1232,56 @@ public class FT8SignalListener {
     }
 
     /**
-     * 解码的第一步，初始化解码器，获取解码器的地址。
+     * 初始化解码器并返回 native 句柄。
      *
-     * @param utcTime     UTC时间
-     * @param sampleRat   采样率，12000
-     * @param num_samples 缓冲区数据的长度
-     * @param isFt8       是否是FT8信号；false 时为 FT4
-     * @return 返回解码器的地址
+     * @param utcTime     当前 UTC
+     * @param sampleRat   采样率，固定为 12000
+     * @param num_samples 本轮期望采样点数
+     * @param isFt8       true 为 FT8，false 为 FT4
+     * @return 解码器句柄
      */
     public native long InitDecoder(long utcTime, int sampleRat, int num_samples, boolean isFt8);
 
     /**
-     * 解码的第二步，读取Wav数据。
+     * 向解码器喂入整段 PCM 数据。
      *
-     * @param buffer  Wav数据缓冲区
-     * @param decoder 解码器数据的地址
+     * @param buffer  wav 数据
+     * @param decoder 解码器句柄
      */
     public native void DecoderMonitorPress(int[] buffer, long decoder);
 
     public native void DecoderMonitorPressFloat(float[] buffer, long decoder);
 
     /**
-     * 解码的第三步，同步数据。
+     * 执行同步搜索并返回候选数量。
      *
-     * @param decoder 解码器地址
-     * @return 中标信号的数量
+     * @param decoder 解码器句柄
+     * @return 候选数量
      */
     public native int DecoderFt8FindSync(long decoder);
 
     /**
-     * 解码的第四步，分析出消息。（需要在一个循环里）
+     * 分析单个候选并输出消息结果。
      *
-     * @param idx        中标信号的序号
-     * @param decoder    解码器的地址
-     * @param ft8Message 解出来的消息
-     * @return boolean
+     * @param idx        候选索引
+     * @param decoder    解码器句柄
+     * @param ft8Message 输出消息对象
+     * @return 是否成功完成分析
      */
     public native boolean DecoderFt8Analysis(int idx, long decoder, Ft8Message ft8Message);
 
     /**
-     * 解码的最后一步，删除解码器数据
+     * 释放解码器资源。
      *
-     * @param decoder 解码器数据的地址
+     * @param decoder 解码器句柄
      */
     public native void DeleteDecoder(long decoder);
 
     public native void DecoderFt8Reset(long decoder, long utcTime, int num_samples);
 
-    public native byte[] DecoderGetA91(long decoder);//获取当前message的a91数据
+    public native byte[] DecoderGetA91(long decoder); // 获取当前消息的 A91 数据
 
-    public native void setDecodeMode(long decoder, boolean isDeep);//设置解码的模式，isDeep=true是多次迭代，=false是快速迭代
+    public native void setDecodeMode(long decoder, boolean isDeep); // true 为深度解码，false 为快速解码
 
     public native boolean DecoderOwnsSessionFlow(long decoder);
     public native void DecoderSetApHints(long decoder, String myCall, String[] hintCallsigns, String[] hintGrids);

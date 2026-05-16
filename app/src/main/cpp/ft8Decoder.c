@@ -55,8 +55,8 @@ void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft
     decoder->backend = DECODER_BACKEND_WSJTX3_OFFICIAL;
     decoder->kLDPC_iterations = fast_kLDPC_iterations;
     decoder->mon_cfg = (monitor_config_t) {
-            .f_min = 100,
-            .f_max = is_ft8 ? 3000 : 4000,
+            .f_min = 0,
+            .f_max = 3000,
             .sample_rate = sample_rate,
             .time_osr = kTime_osr,
             .freq_osr = kFreq_osr,

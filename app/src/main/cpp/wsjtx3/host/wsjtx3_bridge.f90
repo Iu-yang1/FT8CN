@@ -11,9 +11,9 @@ module wsjtx3_bridge
   integer, parameter :: FT8_PHASE_EARLY = 41
   integer, parameter :: FT8_PHASE_LATE = 47
   integer, parameter :: FT8_PHASE_FULL = 50
-  integer, parameter :: FTX_DECODE_MIN_HZ = 100
+  integer, parameter :: FTX_DECODE_MIN_HZ = 0
   integer, parameter :: FT8_DECODE_MAX_HZ = 3000
-  integer, parameter :: FT4_DECODE_MAX_HZ = 4000
+  integer, parameter :: FT4_DECODE_MAX_HZ = 3000
 
   type :: wsjtx3_result_t
      real(c_float) :: sync = 0.0
@@ -200,6 +200,24 @@ contains
     ft8_phase_ndepth_from_context = ndepth_from_context(context, nagain)
   end function ft8_phase_ndepth_from_context
 
+  integer(c_int) function ft4_ndepth_from_context(context, sample_count)
+    type(wsjtx3_context_t), intent(in) :: context
+    integer(c_int), intent(in) :: sample_count
+    integer(c_int) :: full_samples
+
+    full_samples = FT4_BRIDGE_NMAX
+    if (context%expected_samples > 0) then
+       full_samples = min(full_samples, context%expected_samples)
+    end if
+
+    if (sample_count < full_samples) then
+       ft4_ndepth_from_context = 1_c_int
+       return
+    end if
+
+    ft4_ndepth_from_context = ndepth_from_context(context, .false.)
+  end function ft4_ndepth_from_context
+
   integer(c_int) function ft8_phase_from_context(context, sample_count)
     type(wsjtx3_context_t), intent(in) :: context
     integer(c_int), intent(in) :: sample_count
@@ -317,8 +335,19 @@ contains
   logical function ft8_allow_followup_rounds(context, phase)
     type(wsjtx3_context_t), intent(in) :: context
     integer(c_int), intent(in) :: phase
-    ft8_allow_followup_rounds = phase == FT8_PHASE_FULL .and. context%ldpc_iterations > 20
+    ft8_allow_followup_rounds = phase == FT8_PHASE_FULL .and. context%ldpc_iterations > 20 .and. &
+         (context%decode_pass_count > 1 .or. context%multi_decode_round_count > 1)
   end function ft8_allow_followup_rounds
+
+  integer(c_int) function ft8_followup_budget_from_context(context)
+    type(wsjtx3_context_t), intent(in) :: context
+    integer(c_int) :: pass_budget
+    integer(c_int) :: round_budget
+
+    pass_budget = max(0_c_int, context%decode_pass_count - 1_c_int)
+    round_budget = max(0_c_int, context%multi_decode_round_count - 1_c_int)
+    ft8_followup_budget_from_context = clamp_int(max(pass_budget, round_budget), 0_c_int, 2_c_int)
+  end function ft8_followup_budget_from_context
 
   subroutine call_ft8_decode_phase(handle, context, iwave, phase, capture_results, nagain)
     integer(c_int), intent(in) :: handle
@@ -364,23 +393,19 @@ contains
     g_active_context = 0
   end subroutine call_ft8_decode_phase
 
-  subroutine run_ft8_followup_rounds(handle, context, iwave, round_count, pass_count)
+  subroutine run_ft8_followup_rounds(handle, context, iwave, followup_budget)
     integer(c_int), intent(in) :: handle
     type(wsjtx3_context_t), intent(in) :: context
     integer(c_int16_t), intent(in) :: iwave(:)
-    integer(c_int), intent(in) :: round_count
-    integer(c_int), intent(in) :: pass_count
-    integer(c_int) :: round_index
-    integer(c_int) :: pass_index
+    integer(c_int), intent(in) :: followup_budget
+    integer(c_int) :: followup_index
 
-    if (round_count <= 0 .or. pass_count <= 0) then
+    if (followup_budget <= 0) then
        return
     end if
 
-    do round_index = 1, round_count
-       do pass_index = 1, pass_count
-          call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_FULL, .true., .true.)
-       end do
+    do followup_index = 1, followup_budget
+       call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_FULL, .true., .true.)
     end do
   end subroutine run_ft8_followup_rounds
 
@@ -390,8 +415,7 @@ contains
     integer(c_int16_t), intent(in) :: iwave(:)
     integer(c_int), intent(in) :: sample_count
     integer(c_int) :: phase
-    integer(c_int) :: followup_pass_count
-    integer(c_int) :: followup_round_count
+    integer(c_int) :: followup_budget
 
     phase = ft8_phase_from_context(context, sample_count)
     if (phase <= 0) then
@@ -400,18 +424,11 @@ contains
 
     select case (phase)
     case (FT8_PHASE_FULL)
-       if (context%enable_early_decode == 0) then
-          call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_FULL, .true., .false.)
-       else
-          call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_EARLY, .false., .false.)
-          call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_LATE, .false., .false.)
-          call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_FULL, .true., .false.)
-       end if
+       call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_FULL, .true., .false.)
     case (FT8_PHASE_LATE)
        if (context%enable_early_decode == 0) then
           return
        end if
-       call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_EARLY, .false., .false.)
        call call_ft8_decode_phase(handle, context, iwave, FT8_PHASE_LATE, .true., .false.)
     case (FT8_PHASE_EARLY)
        if (context%enable_early_decode == 0) then
@@ -424,9 +441,8 @@ contains
        return
     end if
 
-    followup_pass_count = max(0_c_int, context%decode_pass_count - 1_c_int)
-    followup_round_count = max(0_c_int, context%multi_decode_round_count - 1_c_int)
-    call run_ft8_followup_rounds(handle, context, iwave, followup_round_count, followup_pass_count)
+    followup_budget = ft8_followup_budget_from_context(context)
+    call run_ft8_followup_rounds(handle, context, iwave, followup_budget)
   end subroutine run_ft8_decode_pipeline
 
   integer(c_int) function wsjtx3_bridge_create(is_ft8, sample_rate, expected_samples, utc_time) &
@@ -514,11 +530,11 @@ contains
     if (.not. context_valid(handle)) then
        return
     end if
-    if (qso_frequency_hz > 0) then
-       g_contexts(handle)%qso_frequency_hz = qso_frequency_hz
+    if (qso_frequency_hz >= FTX_DECODE_MIN_HZ) then
+       g_contexts(handle)%qso_frequency_hz = clamp_int(qso_frequency_hz, FTX_DECODE_MIN_HZ, FT8_DECODE_MAX_HZ)
     end if
-    if (tx_frequency_hz > 0) then
-       g_contexts(handle)%tx_frequency_hz = tx_frequency_hz
+    if (tx_frequency_hz >= FTX_DECODE_MIN_HZ) then
+       g_contexts(handle)%tx_frequency_hz = clamp_int(tx_frequency_hz, FTX_DECODE_MIN_HZ, FT8_DECODE_MAX_HZ)
     end if
   end subroutine wsjtx3_bridge_set_qso_frequencies
 
@@ -564,7 +580,7 @@ contains
        g_active_context = handle
        call g_ft4_decoders(handle)%decode(wsjtx3_ft4_callback, iwave, qso_progress_from_context(context), &
             context%qso_frequency_hz, FTX_DECODE_MIN_HZ, FT4_DECODE_MAX_HZ, &
-            ndepth_from_context(context, .false.), .false., 0, &
+            ft4_ndepth_from_context(context, sample_count), .false., 0, &
             context%my_call, context%his_call)
        g_active_context = 0
     end if
