@@ -31,6 +31,7 @@ void wsjtx3_bridge_set_options(int handle,
                                int enable_early_decode,
                                int enable_wideband_dx_search,
                                int ldpc_iterations);
+void wsjtx3_bridge_set_q65_params(int handle, int q65_submode, int q65_tr_period);
 void wsjtx3_bridge_set_ap_hints(int handle,
                                 const char *my_call,
                                 const char *his_call,

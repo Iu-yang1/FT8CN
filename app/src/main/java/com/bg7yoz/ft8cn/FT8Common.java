@@ -4,6 +4,9 @@ package com.bg7yoz.ft8cn;
  * FTx 共用常量与模式辅助方法。
  */
 public final class FT8Common {
+    public static final String[] Q65_SUBMODE_LABELS = {"A", "B", "C", "D", "E", "F"};
+    public static final int[] Q65_SUPPORTED_TR_PERIODS = {15, 30, 60, 120, 300};
+
     private FT8Common() {
     }
 
@@ -15,6 +18,7 @@ public final class FT8Common {
 
     public static final int FT8_SLOT_TIME = 15;
     public static final float FT4_SLOT_TIME = 7.5f;
+    public static final int Q65_DEFAULT_TR_PERIOD_SECONDS = 60;
     public static final int Q65_SLOT_TIME = 60;
 
     public static final int FT8_SLOT_TIME_MILLISECOND = 15000;
@@ -38,6 +42,13 @@ public final class FT8Common {
     public static final int FT4_NN = 105;
     public static final int Q65_NN = 85;
 
+    public static final int Q65_SUBMODE_A = 0;
+    public static final int Q65_SUBMODE_B = 1;
+    public static final int Q65_SUBMODE_C = 2;
+    public static final int Q65_SUBMODE_D = 3;
+    public static final int Q65_SUBMODE_E = 4;
+    public static final int Q65_SUBMODE_F = 5;
+
     public static final float FT8_SYMBOL_PERIOD = 0.160f;
     public static final float FT4_SYMBOL_PERIOD = 0.048f;
     public static final float Q65_SYMBOL_PERIOD = 0.0f;
@@ -46,6 +57,50 @@ public final class FT8Common {
     public static final float FT4_SYMBOL_BT = 1.0f;
     public static final float Q65_SYMBOL_BT = 0.0f;
 
+    public static int normalizeQ65Submode(int submode) {
+        if (submode < Q65_SUBMODE_A || submode > Q65_SUBMODE_F) {
+            return Q65_SUBMODE_A;
+        }
+        return submode;
+    }
+
+    public static int normalizeQ65TrPeriodSeconds(int trPeriodSeconds) {
+        for (int supported : Q65_SUPPORTED_TR_PERIODS) {
+            if (supported == trPeriodSeconds) {
+                return supported;
+            }
+        }
+        return Q65_DEFAULT_TR_PERIOD_SECONDS;
+    }
+
+    public static String getQ65SubmodeLabel(int submode) {
+        return Q65_SUBMODE_LABELS[normalizeQ65Submode(submode)];
+    }
+
+    public static String getQ65ModeLabel(int submode, int trPeriodSeconds) {
+        return "Q65" + getQ65SubmodeLabel(submode) + "/" + normalizeQ65TrPeriodSeconds(trPeriodSeconds) + "s";
+    }
+
+    public static int getQ65BaseNspsForPeriod12k(int trPeriodSeconds) {
+        switch (normalizeQ65TrPeriodSeconds(trPeriodSeconds)) {
+            case 15:
+                return 1800;
+            case 30:
+                return 3600;
+            case 120:
+                return 16000;
+            case 300:
+                return 41472;
+            case 60:
+            default:
+                return 7200;
+        }
+    }
+
+    public static int getQ65ModeFactor(int submode) {
+        return 1 << normalizeQ65Submode(submode);
+    }
+
     public static int getSlotTimeMillisecond(int mode) {
         switch (mode) {
             case FT8_MODE:
@@ -53,7 +108,7 @@ public final class FT8Common {
             case FT4_MODE:
                 return FT4_SLOT_TIME_MILLISECOND;
             case Q65_MODE:
-                return Q65_SLOT_TIME_MILLISECOND;
+                return normalizeQ65TrPeriodSeconds(GeneralVariables.getQ65TrPeriodSeconds()) * 1000;
             default:
                 return 0;
         }
@@ -66,7 +121,7 @@ public final class FT8Common {
             case FT4_MODE:
                 return FT4_SLOT_TIME_M;
             case Q65_MODE:
-                return Q65_SLOT_TIME_M;
+                return normalizeQ65TrPeriodSeconds(GeneralVariables.getQ65TrPeriodSeconds()) * 10;
             default:
                 return 0;
         }
@@ -79,7 +134,7 @@ public final class FT8Common {
             case FT4_MODE:
                 return FT4_SLOT_TIME;
             case Q65_MODE:
-                return Q65_SLOT_TIME;
+                return (float) normalizeQ65TrPeriodSeconds(GeneralVariables.getQ65TrPeriodSeconds());
             default:
                 return 0f;
         }
@@ -155,12 +210,16 @@ public final class FT8Common {
             case FT4_MODE:
                 return 1200;
             case Q65_MODE:
+                return Math.min(5000, Math.max(2500, getSlotTimeMillisecond(mode) / 6));
             default:
                 return 0;
         }
     }
 
     public static int getFrameDurationMs(int mode) {
+        if (mode == Q65_MODE) {
+            return getSlotTimeMillisecond(mode);
+        }
         return Math.round(getToneCount(mode) * getSymbolPeriod(mode) * 1000f);
     }
 
@@ -236,7 +295,7 @@ public final class FT8Common {
             case FT4_MODE:
                 return "FT4";
             case Q65_MODE:
-                return "Q65";
+                return getQ65ModeLabel(GeneralVariables.getQ65Submode(), GeneralVariables.getQ65TrPeriodSeconds());
             default:
                 return "UNKNOWN(" + mode + ")";
         }

@@ -68,14 +68,25 @@ public final class GenerateFTx {
             Log.i(TAG, "Experimental codec is enabled, but Q65 TX stays on native WSJT-X bridge");
         }
 
-        float[] generated = generateFtXNative(msg, frequency, sampleRate, mode);
+        int q65Submode = GeneralVariables.getQ65Submode();
+        int q65TrPeriodSeconds = GeneralVariables.getQ65TrPeriodSeconds();
+        float[] generated = generateFtXNative(
+                msg,
+                frequency,
+                sampleRate,
+                mode,
+                q65Submode,
+                q65TrPeriodSeconds
+        );
         if (mode == FT8Common.Q65_MODE) {
             int sampleCount = generated == null ? 0 : generated.length;
             float durationMs = sampleRate > 0 ? sampleCount * 1000.0f / sampleRate : 0.0f;
             Log.i(TAG, String.format(
                     Locale.US,
-                    "Q65 TX experimental: mode=%s, submode=A, trPeriod=60, sampleRate=%d, f=%.1f, samples=%d, durationMs=%.1f, text=%s",
+                    "Q65 TX experimental: mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, f=%.1f, samples=%d, durationMs=%.1f, text=%s",
                     FT8Common.modeToString(mode),
+                    FT8Common.getQ65SubmodeLabel(q65Submode),
+                    q65TrPeriodSeconds,
                     sampleRate,
                     frequency,
                     sampleCount,
@@ -104,6 +115,11 @@ public final class GenerateFTx {
      * @param mode       FT8Common.FT8_MODE / FT8Common.FT4_MODE
      * @return float[] PCM 数据
      */
-    private static native float[] generateFtXNative(Ft8Message msg, float frequency, int sampleRate, int mode);
+    private static native float[] generateFtXNative(Ft8Message msg,
+                                                    float frequency,
+                                                    int sampleRate,
+                                                    int mode,
+                                                    int q65Submode,
+                                                    int q65TrPeriodSeconds);
 }
 

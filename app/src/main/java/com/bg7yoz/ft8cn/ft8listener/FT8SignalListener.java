@@ -172,6 +172,8 @@ public class FT8SignalListener {
         final int decodeMode;
         final int decodeStage;
         final int expectedSamples;
+        final int q65Submode;
+        final int q65TrPeriodSeconds;
         final boolean notifyBefore;
         final boolean notifyFinished;
         final boolean liveFullSessionRequest;
@@ -188,6 +190,8 @@ public class FT8SignalListener {
                       int decodeMode,
                       int decodeStage,
                       int expectedSamples,
+                      int q65Submode,
+                      int q65TrPeriodSeconds,
                       boolean notifyBefore,
                       boolean notifyFinished,
                       boolean liveFullSessionRequest,
@@ -203,6 +207,8 @@ public class FT8SignalListener {
             this.decodeMode = decodeMode;
             this.decodeStage = decodeStage;
             this.expectedSamples = expectedSamples;
+            this.q65Submode = q65Submode;
+            this.q65TrPeriodSeconds = q65TrPeriodSeconds;
             this.notifyBefore = notifyBefore;
             this.notifyFinished = notifyFinished;
             this.liveFullSessionRequest = liveFullSessionRequest;
@@ -720,6 +726,20 @@ public class FT8SignalListener {
         return value;
     }
 
+    private int getQ65SubmodeForRequest(int decodeMode) {
+        if (decodeMode != FT8Common.Q65_MODE) {
+            return FT8Common.Q65_SUBMODE_A;
+        }
+        return GeneralVariables.getQ65Submode();
+    }
+
+    private int getQ65TrPeriodForRequest(int decodeMode) {
+        if (decodeMode != FT8Common.Q65_MODE) {
+            return FT8Common.Q65_DEFAULT_TR_PERIOD_SECONDS;
+        }
+        return GeneralVariables.getQ65TrPeriodSeconds();
+    }
+
     private DecodeProfile buildDecodeProfile(int decodeMode, int decodeStage, boolean deepSupplement) {
         if (deepSupplement) {
             return new DecodeProfile(
@@ -881,6 +901,8 @@ public class FT8SignalListener {
                 request.decodeMode,
                 DECODE_STAGE_FULL,
                 request.expectedSamples,
+                request.q65Submode,
+                request.q65TrPeriodSeconds,
                 false,
                 false,
                 false,
@@ -991,6 +1013,8 @@ public class FT8SignalListener {
                 request.profile.enableEarlyDecode,
                 request.profile.enableWidebandDxSearch,
                 request.profile.useDeepSession,
+                request.q65Submode,
+                request.q65TrPeriodSeconds,
                 GeneralVariables.getShortCallsign(GeneralVariables.myCallsign).toUpperCase().trim(),
                 apHints[0],
                 apHints[1]
@@ -1252,6 +1276,8 @@ public class FT8SignalListener {
                 decodeMode,
                 decodeStage,
                 expectedSamples,
+                getQ65SubmodeForRequest(decodeMode),
+                getQ65TrPeriodForRequest(decodeMode),
                 notifyBefore,
                 notifyFinished,
                 liveFullSessionRequest,
@@ -1341,7 +1367,14 @@ public class FT8SignalListener {
             return;
         }
 
-        final String modeName = (decodeMode == FT8Common.FT4_MODE) ? "ft4" : "ft8";
+        final String modeName;
+        if (decodeMode == FT8Common.FT4_MODE) {
+            modeName = "ft4";
+        } else if (decodeMode == FT8Common.Q65_MODE) {
+            modeName = "q65";
+        } else {
+            modeName = "ft8";
+        }
         final String stageName = (decodeStage == DECODE_STAGE_EARLY) ? "early" : "full";
         File wavFile = new File(dir, "last_" + modeName + "_" + stageName + ".wav");
         File metaFile = new File(dir, "last_" + modeName + "_" + stageName + ".txt");
@@ -1779,6 +1812,8 @@ public class FT8SignalListener {
                                                    boolean enableEarlyDecode,
                                                    boolean enableWidebandDxSearch,
                                                    boolean deepDecodeEnabled,
+                                                   int q65Submode,
+                                                   int q65TrPeriodSeconds,
                                                    String myCall,
                                                    String[] hintCallsigns,
                                                    String[] hintGrids);

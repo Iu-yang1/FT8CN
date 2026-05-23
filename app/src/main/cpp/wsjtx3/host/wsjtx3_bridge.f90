@@ -816,6 +816,31 @@ contains
     g_contexts(handle)%ldpc_iterations = max(1_c_int, ldpc_iterations)
   end subroutine wsjtx3_bridge_set_options
 
+  subroutine wsjtx3_bridge_set_q65_params(handle, q65_submode, q65_tr_period) &
+       bind(C, name="wsjtx3_bridge_set_q65_params")
+    integer(c_int), value :: handle
+    integer(c_int), value :: q65_submode
+    integer(c_int), value :: q65_tr_period
+    if (.not. context_valid(handle)) then
+       return
+    end if
+    if (g_contexts(handle)%mode /= WSJTX3_MODE_Q65) then
+       return
+    end if
+    if (q65_submode >= 0_c_int .and. q65_submode <= 5_c_int) then
+       g_contexts(handle)%q65_submode = q65_submode
+    else
+       g_contexts(handle)%q65_submode = Q65_DEFAULT_SUBMODE
+    end if
+
+    select case (q65_tr_period)
+    case (15_c_int, 30_c_int, 60_c_int, 120_c_int, 300_c_int)
+       g_contexts(handle)%q65_tr_period = q65_tr_period
+    case default
+       g_contexts(handle)%q65_tr_period = Q65_DEFAULT_TR_PERIOD
+    end select
+  end subroutine wsjtx3_bridge_set_q65_params
+
   subroutine wsjtx3_bridge_set_ap_hints(handle, my_call, his_call, his_grid) &
        bind(C, name="wsjtx3_bridge_set_ap_hints")
     integer(c_int), value :: handle

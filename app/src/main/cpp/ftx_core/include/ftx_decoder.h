@@ -18,6 +18,8 @@ typedef struct {
     int enable_wideband_dx_search;
     int ldpc_iterations;
     int deep_decode_enabled;
+    int q65_submode;
+    int q65_tr_period_seconds;
 } ftx_decoder_options_t;
 
 ftx_decoder_t *ftx_decoder_create(

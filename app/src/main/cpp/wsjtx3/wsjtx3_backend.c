@@ -146,6 +146,12 @@ static void bridge_set_options_locked(int handle,
     wsjtx3_bridge_unlock();
 }
 
+static void bridge_set_q65_params_locked(int handle, int q65_submode, int q65_tr_period_seconds) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_set_q65_params(handle, q65_submode, q65_tr_period_seconds);
+    wsjtx3_bridge_unlock();
+}
+
 static void bridge_set_ap_hints_locked(int handle,
                                        const char *my_call,
                                        const char *his_call,
@@ -221,6 +227,26 @@ static bool is_ft4_mode(int mode) {
 
 static bool is_q65_mode(int mode) {
     return mode == FTX_MODE_Q65;
+}
+
+static int sanitize_q65_submode(int q65_submode) {
+    if (q65_submode < 0 || q65_submode > 5) {
+        return kQ65DefaultSubmode;
+    }
+    return q65_submode;
+}
+
+static int sanitize_q65_tr_period_seconds(int q65_tr_period_seconds) {
+    switch (q65_tr_period_seconds) {
+        case 15:
+        case 30:
+        case 60:
+        case 120:
+        case 300:
+            return q65_tr_period_seconds;
+        default:
+            return kQ65DefaultTrPeriodSeconds;
+    }
 }
 
 static const char *backend_mode_label(int mode) {
@@ -681,6 +707,9 @@ static void sync_bridge_options(wsjtx3_backend_state_t *state) {
                               state->options.enable_early_decode ? 1 : 0,
                               state->options.enable_wideband_dx_search ? 1 : 0,
                               state->ldpc_iterations);
+    bridge_set_q65_params_locked(state->bridge_handle,
+                                 state->q65_submode,
+                                 state->q65_tr_period_seconds);
     bridge_set_ap_hints_locked(state->bridge_handle, state->ap_hints.my_call, his_call, his_grid);
     bridge_set_qso_frequencies_locked(state->bridge_handle,
                                       state->qso_frequency_hz,
@@ -713,6 +742,9 @@ static void push_bridge_options(const wsjtx3_backend_state_t *state,
                               effective_options->enable_early_decode ? 1 : 0,
                               effective_options->enable_wideband_dx_search ? 1 : 0,
                               state->ldpc_iterations);
+    bridge_set_q65_params_locked(state->bridge_handle,
+                                 state->q65_submode,
+                                 state->q65_tr_period_seconds);
     bridge_set_ap_hints_locked(state->bridge_handle,
                                state->ap_hints.my_call,
                                his_call == NULL ? "" : his_call,
@@ -1212,6 +1244,16 @@ void wsjtx3_backend_set_options(decoder_t *decoder, const wsjtx_decoder_options_
     } else {
         memcpy(&state->options, options, sizeof(state->options));
     }
+    sync_bridge_options(state);
+}
+
+void wsjtx3_backend_set_q65_config(decoder_t *decoder, int q65_submode, int q65_tr_period_seconds) {
+    wsjtx3_backend_state_t *state = get_state(decoder);
+    if (state == NULL) {
+        return;
+    }
+    state->q65_submode = sanitize_q65_submode(q65_submode);
+    state->q65_tr_period_seconds = sanitize_q65_tr_period_seconds(q65_tr_period_seconds);
     sync_bridge_options(state);
 }
 

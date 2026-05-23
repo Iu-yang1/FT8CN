@@ -193,6 +193,13 @@ void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t
     wsjtx3_backend_set_options(decoder, options);
 }
 
+void decoder_set_q65_config(decoder_t *decoder, int q65_submode, int q65_tr_period_seconds) {
+    if (decoder == NULL) {
+        return;
+    }
+    wsjtx3_backend_set_q65_config(decoder, q65_submode, q65_tr_period_seconds);
+}
+
 void decoder_configure_runtime_dirs(const char *temp_dir, const char *data_dir) {
     wsjtx3_backend_configure_runtime_dirs(temp_dir, data_dir);
 }

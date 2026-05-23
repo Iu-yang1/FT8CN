@@ -83,6 +83,8 @@ public class GeneralVariables {
      * 1 = FT4
      */
     public static int signalMode = FT8Common.FT8_MODE;
+    public static int q65Submode = FT8Common.Q65_SUBMODE_A;
+    public static int q65TrPeriodSeconds = FT8Common.Q65_DEFAULT_TR_PERIOD_SECONDS;
 
     /**
      * 模式切换 LiveData
@@ -356,7 +358,9 @@ public class GeneralVariables {
      * 设置当前模式
      */
     public static void setSignalMode(int mode) {
-        if (mode != FT8Common.FT8_MODE && mode != FT8Common.FT4_MODE) {
+        if (mode != FT8Common.FT8_MODE
+                && mode != FT8Common.FT4_MODE
+                && mode != FT8Common.Q65_MODE) {
             return;
         }
         signalMode = mode;
@@ -383,6 +387,31 @@ public class GeneralVariables {
      */
     public static boolean isFt4Mode() {
         return signalMode == FT8Common.FT4_MODE;
+    }
+
+    public static boolean isQ65Mode() {
+        return signalMode == FT8Common.Q65_MODE;
+    }
+
+    public static int getQ65Submode() {
+        return FT8Common.normalizeQ65Submode(q65Submode);
+    }
+
+    public static int getQ65TrPeriodSeconds() {
+        return FT8Common.normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds);
+    }
+
+    public static boolean setQ65Configuration(int submode, int trPeriodSeconds) {
+        int normalizedSubmode = FT8Common.normalizeQ65Submode(submode);
+        int normalizedTrPeriod = FT8Common.normalizeQ65TrPeriodSeconds(trPeriodSeconds);
+        boolean changed = normalizedSubmode != q65Submode || normalizedTrPeriod != q65TrPeriodSeconds;
+        q65Submode = normalizedSubmode;
+        q65TrPeriodSeconds = normalizedTrPeriod;
+        if (changed && signalMode == FT8Common.Q65_MODE) {
+            mutableSignalMode.postValue(signalMode);
+            mutableSignalModeChanged.postValue(signalMode);
+        }
+        return changed;
     }
 
     /**

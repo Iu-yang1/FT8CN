@@ -56,6 +56,8 @@ static void load_default_options(ftx_decoder_options_t *options) {
     options->enable_wideband_dx_search = 1;
     options->ldpc_iterations = fast_kLDPC_iterations;
     options->deep_decode_enabled = 0;
+    options->q65_submode = 0;
+    options->q65_tr_period_seconds = 60;
 }
 
 static void apply_decoder_options(ftx_decoder_t *decoder) {
@@ -74,6 +76,9 @@ static void apply_decoder_options(ftx_decoder_t *decoder) {
     wsjtx_options.enable_early_decode = decoder->options.enable_early_decode != 0;
     wsjtx_options.enable_wideband_dx_search = decoder->options.enable_wideband_dx_search != 0;
     decoder_set_wsjtx_options(decoder->impl, &wsjtx_options);
+    decoder_set_q65_config(decoder->impl,
+                           decoder->options.q65_submode,
+                           decoder->options.q65_tr_period_seconds);
 
     iterations = decoder->options.ldpc_iterations;
     if (iterations <= 0) {

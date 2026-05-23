@@ -573,6 +573,8 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
                                                                         jboolean enableEarlyDecode,
                                                                         jboolean enableWidebandDxSearch,
                                                                         jboolean deepDecodeEnabled,
+                                                                        jint q65Submode,
+                                                                        jint q65TrPeriodSeconds,
                                                                         jstring myCall,
                                                                         jobjectArray hintCallsigns,
                                                                         jobjectArray hintGrids) {
@@ -596,6 +598,8 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
     options.enable_wideband_dx_search = enableWidebandDxSearch ? 1 : 0;
     options.deep_decode_enabled = deepDecodeEnabled ? 1 : 0;
     options.ldpc_iterations = deepDecodeEnabled ? deep_kLDPC_iterations : fast_kLDPC_iterations;
+    options.q65_submode = q65Submode;
+    options.q65_tr_period_seconds = q65TrPeriodSeconds;
     ftx_decoder_set_options(decoder, &options);
 
     char myCallBuffer[FTX_AP_CALLSIGN_MAX] = {};

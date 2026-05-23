@@ -104,24 +104,29 @@ public final class FtxModeSpec {
             true
     );
 
-    private static final FtxModeSpec Q65_SPEC = new FtxModeSpec(
-            FT8Common.Q65_MODE,
-            "Q65",
-            FT8Common.SAMPLE_RATE,
-            FT8Common.Q65_SLOT_TIME_MILLISECOND,
-            FT8Common.Q65_SLOT_TIME_MILLISECOND,
-            FT8Common.Q65_SLOT_TIME_MILLISECOND,
-            false,
-            false,
-            false,
-            false,
-            true,
-            true,
-            "live",
-            "unsupported",
-            new DecodeFrequencyRange(0, 5000),
-            true
-    );
+    private static FtxModeSpec buildQ65Spec() {
+        int q65Submode = GeneralVariables.getQ65Submode();
+        int q65TrPeriodSeconds = GeneralVariables.getQ65TrPeriodSeconds();
+        int slotDurationMs = q65TrPeriodSeconds * 1000;
+        return new FtxModeSpec(
+                FT8Common.Q65_MODE,
+                FT8Common.getQ65ModeLabel(q65Submode, q65TrPeriodSeconds),
+                FT8Common.SAMPLE_RATE,
+                slotDurationMs,
+                slotDurationMs,
+                slotDurationMs,
+                false,
+                false,
+                false,
+                true,
+                true,
+                true,
+                "live",
+                "disabled",
+                new DecodeFrequencyRange(0, 5000),
+                true
+        );
+    }
 
     public int samplesPerSlot() {
         if (slotDurationMs <= 0 || sampleRate <= 0) {
@@ -137,7 +142,7 @@ public final class FtxModeSpec {
             case FT8Common.FT4_MODE:
                 return FT4_SPEC;
             case FT8Common.Q65_MODE:
-                return Q65_SPEC;
+                return buildQ65Spec();
             default:
                 return null;
         }

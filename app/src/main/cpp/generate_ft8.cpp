@@ -29,9 +29,43 @@ extern "C" {
 static constexpr jint SIGNAL_MODE_FT8 = 0;
 static constexpr jint SIGNAL_MODE_FT4 = 1;
 static constexpr jint SIGNAL_MODE_Q65 = 2;
-static constexpr int Q65_DEFAULT_SUBMODE = 0;
-static constexpr int Q65_DEFAULT_TR_PERIOD_SECONDS = 60;
 static constexpr int Q65_SYMBOL_COUNT = 85;
+
+static int normalizeQ65Submode(int q65Submode) {
+    if (q65Submode < 0 || q65Submode > 5) {
+        return 0;
+    }
+    return q65Submode;
+}
+
+static int normalizeQ65TrPeriodSeconds(int q65TrPeriodSeconds) {
+    switch (q65TrPeriodSeconds) {
+        case 15:
+        case 30:
+        case 60:
+        case 120:
+        case 300:
+            return q65TrPeriodSeconds;
+        default:
+            return 60;
+    }
+}
+
+static int q65BaseNspsForPeriod12k(int q65TrPeriodSeconds) {
+    switch (normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds)) {
+        case 15:
+            return 1800;
+        case 30:
+            return 3600;
+        case 120:
+            return 16000;
+        case 300:
+            return 41472;
+        case 60:
+        default:
+            return 7200;
+    }
+}
 
 char *Jstring2CStr(JNIEnv *env, jstring jstr) {
     char *rtn = nullptr;
@@ -77,14 +111,20 @@ static void buildMessageText(JNIEnv *env, jobject msgObj, char *outText, int out
 static jfloatArray generateQ65Wave(JNIEnv *env,
                                    const char *messageText,
                                    jfloat frequency,
-                                   jint sampleRate) {
+                                   jint sampleRate,
+                                   jint q65Submode,
+                                   jint q65TrPeriodSeconds) {
     if (messageText == nullptr || messageText[0] == '\0' || sampleRate <= 0) {
         return nullptr;
     }
 
-    const int baseNsps12k = 7200;
+    q65Submode = normalizeQ65Submode(q65Submode);
+    q65TrPeriodSeconds = normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds);
+
+    const int baseNsps12k = q65BaseNspsForPeriod12k(q65TrPeriodSeconds);
+    const int modeFactor = 1 << q65Submode;
     int scaledNsps = static_cast<int>(std::lround(
-            static_cast<double>(baseNsps12k) * static_cast<double>(sampleRate) / 12000.0));
+            static_cast<double>(baseNsps12k * modeFactor) * static_cast<double>(sampleRate) / 12000.0));
     if (scaledNsps < 1) {
         scaledNsps = 1;
     }
@@ -98,8 +138,8 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
 
     const int generated = wsjtx3_backend_generate_q65_wave(
             messageText,
-            Q65_DEFAULT_SUBMODE,
-            Q65_DEFAULT_TR_PERIOD_SECONDS,
+            q65Submode,
+            q65TrPeriodSeconds,
             sampleRate,
             frequency,
             signal,
@@ -119,8 +159,8 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
     }
 
     env->SetFloatArrayRegion(result, 0, generated, signal);
-    LOGI("Q65 TX waveform generated: submode=A trPeriod=%ds sampleRate=%d freq=%.1f samples=%d text=%s",
-         Q65_DEFAULT_TR_PERIOD_SECONDS, sampleRate, frequency, generated, messageText);
+    LOGI("Q65 TX waveform generated: submode=%c trPeriod=%ds sampleRate=%d freq=%.1f samples=%d text=%s",
+         'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, generated, messageText);
     free(signal);
     return result;
 }
@@ -215,7 +255,9 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
         jobject msgObj,
         jfloat frequency,
         jint sampleRate,
-        jint mode) {
+        jint mode,
+        jint q65Submode,
+        jint q65TrPeriodSeconds) {
 
     if (msgObj == nullptr) {
         return nullptr;
@@ -229,7 +271,7 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
     }
 
     if (mode == SIGNAL_MODE_Q65) {
-        return generateQ65Wave(env, text, frequency, sampleRate);
+        return generateQ65Wave(env, text, frequency, sampleRate, q65Submode, q65TrPeriodSeconds);
     }
 
     if (mode != SIGNAL_MODE_FT8 && mode != SIGNAL_MODE_FT4) {
