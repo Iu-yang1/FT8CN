@@ -718,6 +718,30 @@ static int run_bridge_pass(wsjtx3_backend_state_t *state,
 #endif
 }
 
+static int run_ft8_session(decoder_t *decoder,
+                           wsjtx3_backend_state_t *state,
+                           int sample_count) {
+    char his_call[FTX_AP_CALLSIGN_MAX];
+    char his_grid[FTX_AP_GRID_MAX];
+
+    (void) decoder;
+    if (state == NULL) {
+        return 0;
+    }
+
+    his_call[0] = '\0';
+    his_grid[0] = '\0';
+    push_bridge_options(state, &state->options, his_call, his_grid);
+    return run_bridge_pass(state,
+                           sample_count,
+                           &state->options,
+                           his_call,
+                           his_grid,
+                           "ft8-main",
+                           1,
+                           1);
+}
+
 static int run_ft4_session(decoder_t *decoder,
                            wsjtx3_backend_state_t *state,
                            int sample_count) {
@@ -729,6 +753,7 @@ static int run_ft4_session(decoder_t *decoder,
     char his_call[FTX_AP_CALLSIGN_MAX];
     char his_grid[FTX_AP_GRID_MAX];
 
+    (void) decoder;
     if (decoder == NULL || state == NULL) {
         return 0;
     }
@@ -739,8 +764,6 @@ static int run_ft4_session(decoder_t *decoder,
         round_budget = hint_count;
     }
     total_passes = 1 + round_budget;
-
-    reset_backend_results(decoder, state);
 
     his_call[0] = '\0';
     his_grid[0] = '\0';
@@ -769,21 +792,49 @@ static int run_ft4_session(decoder_t *decoder,
                                               total_passes);
     }
 
-    qsort(state->session_results,
-          (size_t) state->session_result_count,
-          sizeof(state->session_results[0]),
-          compare_session_results);
-    state->last_bridge_raw_count = total_bridge_count;
-    state->last_merged_count = state->session_result_count;
-    publish_session_results_to_decoder(decoder, state);
-    sync_bridge_options(state);
-
     WSJTX3_LOGI("find_sync ft4 sessionResults=%d totalBridgeCount=%d totalPasses=%d hintCount=%d roundBudget=%d",
                 state->session_result_count,
                 total_bridge_count,
                 total_passes,
                 hint_count,
                 round_budget);
+    return total_bridge_count;
+}
+
+static int run_wsjtx3_session(decoder_t *decoder,
+                              wsjtx3_backend_state_t *state,
+                              int sample_count) {
+    if (state == NULL || sample_count <= 0) {
+        return 0;
+    }
+
+    if (state->is_ft8) {
+        return run_ft8_session(decoder, state, sample_count);
+    }
+    return run_ft4_session(decoder, state, sample_count);
+}
+
+static int finalize_wsjtx3_session(decoder_t *decoder,
+                                   wsjtx3_backend_state_t *state,
+                                   int total_bridge_count) {
+    if (state == NULL) {
+        return 0;
+    }
+
+    qsort(state->session_results,
+          (size_t) state->session_result_count,
+          sizeof(state->session_results[0]),
+          compare_session_results);
+    state->last_bridge_raw_count = total_bridge_count;
+    state->last_merged_count = state->session_result_count;
+
+    WSJTX3_LOGI("find_sync session mode=%s rawBridgeCount=%d mergedCount=%d",
+                state->is_ft8 ? "FT8" : "FT4",
+                total_bridge_count,
+                state->session_result_count);
+
+    publish_session_results_to_decoder(decoder, state);
+    sync_bridge_options(state);
     return state->session_result_count;
 }
 
@@ -915,74 +966,12 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
     }
 
 #if FT8CN_ENABLE_WSJTX3_BACKEND
+    int total_bridge_count;
     const int sample_count = state->last_sample_count > 0 ? state->last_sample_count : state->expected_samples;
-    const int bridge_count = bridge_process_float_locked(state->bridge_handle,
-                                                         state->raw_samples,
-                                                         sample_count);
-    WSJTX3_LOGI("find_sync bridge handle=%d samples=%d bridgeCount=%d ldpc=%d passes=%d rounds=%d early=%d wideband=%d",
-                state->bridge_handle,
-                sample_count,
-                bridge_count,
-                state->ldpc_iterations,
-                state->options.decode_pass_count,
-                state->options.multi_decode_round_count,
-                state->options.enable_early_decode ? 1 : 0,
-                state->options.enable_wideband_dx_search ? 1 : 0);
 
     reset_backend_results(decoder, state);
-    if (bridge_count <= 0) {
-        state->last_bridge_raw_count = bridge_count;
-        state->last_merged_count = 0;
-        return 0;
-    }
-
-    for (int index = 0; index < bridge_count; ++index) {
-        wsjtx3_bridge_decode_result_t bridge_result;
-        ft8_message decoded;
-        memset(&bridge_result, 0, sizeof(bridge_result));
-        if (!bridge_get_result_locked(state->bridge_handle, index, &bridge_result) ||
-            !has_visible_text(bridge_result.decoded)) {
-            continue;
-        }
-
-        memset(&decoded, 0, sizeof(decoded));
-        decoded.utcTime = state->utc_time;
-        decoded.isValid = true;
-        decoded.snr = bridge_result.snr;
-        decoded.time_sec = bridge_result.dt;
-        decoded.freq_hz = bridge_result.freq;
-        populate_candidate_from_bridge_result(state, &bridge_result, &decoded.candidate);
-        build_message_from_text(state->is_ft8, bridge_result.decoded, &decoded.message);
-
-        {
-            const int duplicate_index = find_duplicate_index(state, &decoded);
-            if (duplicate_index >= 0) {
-                if (prefer_candidate(&decoded, &state->session_results[duplicate_index])) {
-                    state->session_results[duplicate_index] = decoded;
-                }
-                continue;
-            }
-        }
-
-        if (state->session_result_count >= kMax_decoded_messages) {
-            continue;
-        }
-        state->session_results[state->session_result_count++] = decoded;
-    }
-
-    qsort(state->session_results,
-          (size_t) state->session_result_count,
-          sizeof(state->session_results[0]),
-          compare_session_results);
-    state->last_bridge_raw_count = bridge_count;
-    state->last_merged_count = state->session_result_count;
-
-    WSJTX3_LOGI("find_sync sessionResults=%d after bridgeCount=%d mergedCount=%d",
-                state->session_result_count,
-                bridge_count,
-                state->session_result_count);
-    publish_session_results_to_decoder(decoder, state);
-    return state->session_result_count;
+    total_bridge_count = run_wsjtx3_session(decoder, state, sample_count);
+    return finalize_wsjtx3_session(decoder, state, total_bridge_count);
 #else
     (void) decoder;
     return 0;
