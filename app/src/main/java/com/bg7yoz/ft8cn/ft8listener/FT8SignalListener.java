@@ -733,6 +733,42 @@ public class FT8SignalListener {
         return 0L;
     }
 
+    private int getEarlyStageSampleFloor(int expectedSamples) {
+        if (expectedSamples <= 0) {
+            return 0;
+        }
+        return expectedSamples * FT8Common.EARLY_DECODE_PHASE_TICKS / FT8Common.FULL_DECODE_PHASE_TICKS;
+    }
+
+    private String buildDecodeDiagnosticReason(DecodeRequest request,
+                                              float[] decoderInput,
+                                              NativeBatchDecodeResult nativeResult,
+                                              int publishedCount) {
+        if (request.decodeStage == DECODE_STAGE_EARLY) {
+            int earlyFloorSamples = getEarlyStageSampleFloor(request.expectedSamples);
+            if (decoderInput.length < earlyFloorSamples) {
+                return String.format(Locale.US,
+                        "insufficient-early-samples current=%d required=%d",
+                        decoderInput.length,
+                        earlyFloorSamples);
+            }
+        }
+
+        if (nativeResult.bridgeRawCount == 0) {
+            return "no-bridge-candidates";
+        }
+        if (nativeResult.mergedCount == 0) {
+            return "no-merged-results";
+        }
+        if (nativeResult.messages.size() == 0) {
+            return "empty-native-batch";
+        }
+        if (publishedCount == 0) {
+            return "all-filtered-at-java-publish";
+        }
+        return "results-published";
+    }
+
     private void maybeScheduleDeepSupplement(DecodeRequest request) {
         if (!request.profile.scheduleDeepSupplement) {
             return;
@@ -927,6 +963,21 @@ public class FT8SignalListener {
                 request.profile.publishAsDeep,
                 request.profile.publishEmptyWhenSlotIsNew
         );
+
+        if (msgs.size() == 0 || publishedCount == 0) {
+            Log.d(TAG, String.format(Locale.US,
+                    "decode diagnostic stage=%s mode=%s utc=%d reason=%s inputSamples=%d expectedSamples=%d bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d javaPublishedCount=%d",
+                    request.profile.stageName,
+                    FT8Common.modeToString(request.decodeMode),
+                    request.utc,
+                    buildDecodeDiagnosticReason(request, decoderInput, nativeResult, publishedCount),
+                    decoderInput.length,
+                    request.expectedSamples,
+                    nativeResult.bridgeRawCount,
+                    nativeResult.mergedCount,
+                    msgs.size(),
+                    publishedCount));
+        }
 
         if (request.notifyFinished) {
             decodeTimeSec.postValue(timeSec);
