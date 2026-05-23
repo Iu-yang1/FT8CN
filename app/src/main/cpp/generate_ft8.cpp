@@ -115,6 +115,12 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
                                    jint q65Submode,
                                    jint q65TrPeriodSeconds) {
     if (messageText == nullptr || messageText[0] == '\0' || sampleRate <= 0) {
+        LOGE("Q65 TX waveform generation failed: reason=invalid-input mode=Q65 submode=%c trPeriod=%d sampleRate=%d freq=%.1f text=%s",
+             'A' + normalizeQ65Submode(q65Submode),
+             normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds),
+             sampleRate,
+             frequency,
+             messageText == nullptr ? "<null>" : messageText);
         return nullptr;
     }
 
@@ -132,6 +138,8 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
     const int capacity = Q65_SYMBOL_COUNT * scaledNsps;
     float *signal = static_cast<float *>(malloc(sizeof(float) * capacity));
     if (signal == nullptr) {
+        LOGE("Q65 TX waveform generation failed: reason=malloc-null mode=Q65 submode=%c trPeriod=%d sampleRate=%d freq=%.1f text=%s capacity=%d",
+             'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, messageText, capacity);
         return nullptr;
     }
     memset(signal, 0, sizeof(float) * capacity);
@@ -146,21 +154,37 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
             capacity
     );
     if (generated <= 0 || generated > capacity) {
-        LOGE("Q65 TX waveform generation failed: generated=%d capacity=%d sampleRate=%d freq=%.1f text=%s",
-             generated, capacity, sampleRate, frequency, messageText);
+        LOGE("Q65 TX waveform generation failed: reason=backend-generate-failed mode=Q65 submode=%c trPeriod=%d sampleRate=%d freq=%.1f text=%s generated=%d capacity=%d",
+             'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, messageText, generated, capacity);
         free(signal);
         return nullptr;
     }
 
+    float peak = 0.0f;
+    double energy = 0.0;
+    for (int i = 0; i < generated; ++i) {
+        float abs = std::fabs(signal[i]);
+        if (abs > peak) {
+            peak = abs;
+        }
+        energy += static_cast<double>(signal[i]) * static_cast<double>(signal[i]);
+    }
+    double rms = generated > 0 ? std::sqrt(energy / static_cast<double>(generated)) : 0.0;
+    double durationMs = sampleRate > 0
+                        ? static_cast<double>(generated) * 1000.0 / static_cast<double>(sampleRate)
+                        : 0.0;
+
     jfloatArray result = env->NewFloatArray(generated);
     if (result == nullptr) {
+        LOGE("Q65 TX waveform generation failed: reason=new-float-array-null mode=Q65 submode=%c trPeriod=%d sampleRate=%d freq=%.1f text=%s generated=%d",
+             'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, messageText, generated);
         free(signal);
         return nullptr;
     }
 
     env->SetFloatArrayRegion(result, 0, generated, signal);
-    LOGI("Q65 TX waveform generated: submode=%c trPeriod=%ds sampleRate=%d freq=%.1f samples=%d text=%s",
-         'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, generated, messageText);
+    LOGI("Q65 TX waveform generated: submode=%c trPeriod=%ds sampleRate=%d freq=%.1f samples=%d durationMs=%.1f peak=%.6f rms=%.6f text=%s",
+         'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, generated, durationMs, peak, rms, messageText);
     free(signal);
     return result;
 }

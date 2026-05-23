@@ -36,7 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 
 /**
- * 发射控制与自动通联流程。
+ * 鍙戝皠鎺у埗涓庤嚜鍔ㄩ€氳仈娴佺▼銆?
  */
 public class FT8TransmitSignal {
     private static final String TAG = "FT8TransmitSignal";
@@ -61,10 +61,10 @@ public class FT8TransmitSignal {
     private int lastTransmittedFunctionOrder = -1;
     private Ft8Message lastTransmittedMessage = null;
     private MultiSlotTransmitPlan lastTransmitPlan = null;
-    //防止立即发射时序竞争：记录上次发射尝试的周期索引，避免同一周期重复触发
+    //闃叉绔嬪嵆鍙戝皠鏃跺簭绔炰簤锛氳褰曚笂娆″彂灏勫皾璇曠殑鍛ㄦ湡绱㈠紩锛岄伩鍏嶅悓涓€鍛ㄦ湡閲嶅瑙﹀彂
     private long lastTransmitAttemptSequence = -1;
     // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
-    // 避免重复点击导致实验模式单次发射被触发两次。
+    // 閬垮厤閲嶅鐐瑰嚮瀵艰嚧瀹為獙妯″紡鍗曟鍙戝皠琚Е鍙戜袱娆°€?
     private long lastManualTransmitRequestMs = 0L;
     private volatile long lastDecodeMessageUpdateMs = 0L;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
@@ -516,7 +516,7 @@ public class FT8TransmitSignal {
 
         resetTargetReport();
 
-        // 立即发射时添加去重检查，防止周期边界重复触发
+        // 绔嬪嵆鍙戝皠鏃舵坊鍔犲幓閲嶆鏌ワ紝闃叉鍛ㄦ湡杈圭晫閲嶅瑙﹀彂
         int currentSeq = UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM());
         long currentFullSeq = UtcTimer.getSystemTime() / FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode());
 
@@ -556,7 +556,7 @@ public class FT8TransmitSignal {
             if (reserveBeforeQueue) {
                 // For manual experimental TX we reserve the state before queueing
                 // to prevent duplicate click events from dispatching two jobs.
-                // 实验手动发射在入队前先占位，避免重复点击并发入队。
+                // 瀹為獙鎵嬪姩鍙戝皠鍦ㄥ叆闃熷墠鍏堝崰浣嶏紝閬垮厤閲嶅鐐瑰嚮骞跺彂鍏ラ槦銆?
                 isTransmitting = true;
                 mutableIsTransmitting.postValue(true);
             }
@@ -590,7 +590,7 @@ public class FT8TransmitSignal {
         mutableToCallsign.postValue(transmitCallsign);
         toCallsign = transmitCallsign;
 
-        if (functionOrder == -1) {//说明是回复消息
+        if (functionOrder == -1) {//璇存槑鏄洖澶嶆秷鎭?
             this.functionOrder = normalizeFunctionOrder(
                     GeneralVariables.checkFunOrderByExtraInfo(toMaidenheadGrid) + 1);
             if (this.functionOrder == 6) {
@@ -810,6 +810,29 @@ public class FT8TransmitSignal {
             temp[i] = (short) (x * 32767.0);
         }
         return temp;
+    }
+
+    private String buildBufferStats(float[] buffer, int sampleRate) {
+        if (buffer == null || buffer.length == 0) {
+            return "samples=0, durationMs=0.0, peak=0.000000, rms=0.000000";
+        }
+        float peak = 0.0f;
+        double energy = 0.0;
+        for (float sample : buffer) {
+            float abs = Math.abs(sample);
+            if (abs > peak) {
+                peak = abs;
+            }
+            energy += sample * sample;
+        }
+        double rms = Math.sqrt(energy / buffer.length);
+        float durationMs = sampleRate > 0 ? buffer.length * 1000.0f / sampleRate : 0.0f;
+        return String.format(java.util.Locale.US,
+                "samples=%d, durationMs=%.1f, peak=%.6f, rms=%.6f",
+                buffer.length,
+                durationMs,
+                peak,
+                rms);
     }
 
     private void updateMessageStartTimeForOrder(int order) {
@@ -1116,12 +1139,38 @@ public class FT8TransmitSignal {
             }
         }
 
-        //进入声卡模式
+        //杩涘叆澹板崱妯″紡
+        Log.d(TAG, String.format(java.util.Locale.US,
+                "playTransmitPlan build-wave start: mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, slots=%d, freq=%.1f, text=%s",
+                FT8Common.modeToString(currentMode),
+                FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                GeneralVariables.getQ65TrPeriodSeconds(),
+                currentSampleRate,
+                plan.size(),
+                primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                primaryMessage == null ? "" : primaryMessage.getMessageText()));
         float[] buffer = MultiSlotAudioMixer.build(plan, GeneralVariables.audioSampleRate);
         if (buffer == null) {
+            Log.e(TAG, String.format(java.util.Locale.US,
+                    "playTransmitPlan failed: reason=mixer-returned-null, mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, freq=%.1f, text=%s",
+                    FT8Common.modeToString(currentMode),
+                    FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                    GeneralVariables.getQ65TrPeriodSeconds(),
+                    currentSampleRate,
+                    primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                    primaryMessage == null ? "" : primaryMessage.getMessageText()));
             afterPlayAudio();
             return;
         }
+        Log.d(TAG, String.format(java.util.Locale.US,
+                "playTransmitPlan buffer ready: mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, freq=%.1f, volume=%.2f, %s",
+                FT8Common.modeToString(currentMode),
+                FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                GeneralVariables.getQ65TrPeriodSeconds(),
+                currentSampleRate,
+                primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                GeneralVariables.volumePercent,
+                buildBufferStats(buffer, currentSampleRate)));
 
         Log.d(TAG, String.format("playFT8Signal: prepare audio playback, mode=%s, format=%s, sampleRate=%d",
                 FT8Common.modeToString(currentMode),
@@ -1150,6 +1199,18 @@ public class FT8TransmitSignal {
                 bufferSize,
                 AudioTrack.MODE_STATIC,
                 mySession);
+        if (audioTrack.getState() != AudioTrack.STATE_INITIALIZED) {
+            Log.e(TAG, String.format(java.util.Locale.US,
+                    "audio track init failed: mode=%s, format=%s, sampleRate=%d, trackState=%d, bufferBytes=%d, %s",
+                    FT8Common.modeToString(currentMode),
+                    GeneralVariables.audioOutput32Bit ? "Float32" : "Int16",
+                    currentSampleRate,
+                    audioTrack.getState(),
+                    bufferSize,
+                    buildBufferStats(buffer, currentSampleRate)));
+            afterPlayAudio();
+            return;
+        }
 
 
         int writeResult;
@@ -1163,6 +1224,14 @@ public class FT8TransmitSignal {
         if (buffer.length > writeResult) {
             Log.e(TAG, String.format("audio write truncated: %d -> %d", buffer.length, writeResult));
         }
+        Log.d(TAG, String.format(java.util.Locale.US,
+                "audio write result: mode=%s, format=%s, sampleRate=%d, trackState=%d, writeResult=%d, requestedSamples=%d",
+                FT8Common.modeToString(currentMode),
+                GeneralVariables.audioOutput32Bit ? "Float32" : "Int16",
+                currentSampleRate,
+                audioTrack.getState(),
+                writeResult,
+                buffer.length));
 
 
         if (writeResult == AudioTrack.ERROR_INVALID_OPERATION
@@ -1187,14 +1256,20 @@ public class FT8TransmitSignal {
         });
 
         if (audioTrack != null) {
+            audioTrack.setVolume(GeneralVariables.volumePercent);
             audioTrack.play();
-            audioTrack.setVolume(GeneralVariables.volumePercent);//设置播放的音量
+            Log.d(TAG, String.format(java.util.Locale.US,
+                    "audio playback started: mode=%s, playState=%d, marker=%d, volume=%.2f",
+                    FT8Common.modeToString(currentMode),
+                    audioTrack.getPlayState(),
+                    buffer.length,
+                    GeneralVariables.volumePercent));
         }
     }
 
     /**
-     * 【优化】播放完成后的清理工作
-     * 改进点：立即释放 AudioTrack 资源，避免长时间运行时资源累积
+     * 銆愪紭鍖栥€戞挱鏀惧畬鎴愬悗鐨勬竻鐞嗗伐浣?
+     * 鏀硅繘鐐癸細绔嬪嵆閲婃斁 AudioTrack 璧勬簮锛岄伩鍏嶉暱鏃堕棿杩愯鏃惰祫婧愮疮绉?
      */
     private void afterPlayAudio() {
         int transmittedOrder = lastTransmittedFunctionOrder > 0
@@ -1209,15 +1284,15 @@ public class FT8TransmitSignal {
         updateDxpeditionFoxSlotStatus();
         clearPendingDxpeditionMacro();
 
-        // 【优化】先释放音频资源再更新状态，确保资源及时回收
+        // 銆愪紭鍖栥€戝厛閲婃斁闊抽璧勬簮鍐嶆洿鏂扮姸鎬侊紝纭繚璧勬簮鍙婃椂鍥炴敹
         if (audioTrack != null) {
             try {
-                audioTrack.stop();     // 停止播放
-                audioTrack.release();   // 释放资源
+                audioTrack.stop();     // 鍋滄鎾斁
+                audioTrack.release();   // 閲婃斁璧勬簮
             } catch (Exception e) {
                 Log.w(TAG, "Error releasing AudioTrack: " + e.getMessage());
             } finally {
-                audioTrack = null;      // 清空引用
+                audioTrack = null;      // 娓呯┖寮曠敤
             }
         }
 
@@ -1225,7 +1300,7 @@ public class FT8TransmitSignal {
 
         if (isExperimentalManualTxMode() && activated) {
             // Experimental chain uses one-shot manual TX: stop right after each frame.
-            // 实验链路是一帧一发，发完立即停止。
+            // 瀹為獙閾捐矾鏄竴甯т竴鍙戯紝鍙戝畬绔嬪嵆鍋滄銆?
             setActivated(false);
         }
 
@@ -1358,7 +1433,7 @@ public class FT8TransmitSignal {
         if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
             int cqQueueSize = callQueueManager.size();
             if (GeneralVariables.cqQueueEnabled && cqQueueSize > 0) {
-                return String.format("CQ队列 %d", cqQueueSize);
+                return String.format("CQ闃熷垪 %d", cqQueueSize);
             }
             return "";
         }
@@ -2218,7 +2293,7 @@ public class FT8TransmitSignal {
             if (!ft8Message.isAutoFlowRelevant()) continue;
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;
             // Only enforce band match when decoded message carries a valid RF band.
-            // 仅在解码消息带有有效频段时才做频段一致性约束。
+            // 浠呭湪瑙ｇ爜娑堟伅甯︽湁鏈夋晥棰戞鏃舵墠鍋氶娈典竴鑷存€х害鏉熴€?
             if (ft8Message.band > 0 && ft8Message.band != GeneralVariables.band) continue;
             if (!ft8Message.checkIsCQ()) continue;
 
@@ -2366,7 +2441,7 @@ public class FT8TransmitSignal {
         );
 
         // Late-decode override is only enabled for a short time after fresh decode updates.
-        // 只有在“刚收到新解码”的短窗口里，才允许晚到解码覆盖发射内容。
+        // 鍙湁鍦ㄢ€滃垰鏀跺埌鏂拌В鐮佲€濈殑鐭獥鍙ｉ噷锛屾墠鍏佽鏅氬埌瑙ｇ爜瑕嗙洊鍙戝皠鍐呭銆?
         if (lastDecodeMessageUpdateMs > 0L) {
             long sinceDecodeMs = nowMs - lastDecodeMessageUpdateMs;
             if (sinceDecodeMs >= 0

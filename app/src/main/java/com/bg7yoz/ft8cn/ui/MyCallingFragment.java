@@ -1,7 +1,7 @@
 package com.bg7yoz.ft8cn.ui;
 /**
- * 呼叫界面。
- * 支持 FT8 / FT4 模式切换。
+ * 閸涚厧褰ㄩ悾宀勬桨閵?
+ * 閺€顖涘瘮 FT8 / FT4 濡€崇础閸掑洦宕查妴?
  *
  * @author BGY70Z
  * @date 2023-03-20
@@ -70,6 +70,7 @@ public class MyCallingFragment extends Fragment {
     private CqQueueAdapter cqQueueAdapter;
     private FunctionOrderSpinnerAdapter functionOrderSpinnerAdapter;
     private boolean updatingDxpeditionModeUi = false;
+    private boolean updatingSignalModeUi = false;
 
     private boolean isExperimentalManualTxMode() {
         return GeneralVariables.isExperimentalCodecEnabled();
@@ -743,28 +744,28 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * 马上对发起者呼叫
+     * 妞诡兛绗傜€电懓褰傜挧鐤偓鍛嚑閸?
      *
-     * @param message 消息
+     * @param message 濞戝牊浼?
      */
     private void doCallNow(Ft8Message message) {
         mainViewModel.addFollowCallsign(message.getCallsignFrom());
         if (!mainViewModel.ft8TransmitSignal.isActivated()) {
             mainViewModel.ft8TransmitSignal.setActivated(true);
-            GeneralVariables.transmitMessages.add(message);//把消息添加到关注列表中
+            GeneralVariables.transmitMessages.add(message);//閹跺﹥绉烽幁顖涘潑閸旂姴鍩岄崗铏暈閸掓銆冩稉?
         }
-        // 呼叫发起者
+        // 閸涚厧褰ㄩ崣鎴ｆ崳閼?
         mainViewModel.ft8TransmitSignal.setTransmit(message.getFromCallTransmitCallsign(), 1, message.getAutoReplyExtraInfo());
         mainViewModel.ft8TransmitSignal.transmitNow();
 
-        GeneralVariables.resetLaunchSupervision();//复位自动监管
+        GeneralVariables.resetLaunchSupervision();//婢跺秳缍呴懛顏勫З閻╂垹顓?
     }
 
     /**
-     * 菜单选项
+     * 閼挎粌宕熼柅澶愩€?
      *
-     * @param item 菜单
-     * @return 是否选择
+     * @param item 閼挎粌宕?
+     * @return 閺勵垰鎯侀柅澶嬪
      */
     @Override
     public boolean onContextItemSelected(@NonNull MenuItem item) {
@@ -772,10 +773,10 @@ public class MyCallingFragment extends Fragment {
         Ft8Message ft8Message = transmitCallListAdapter.getMessageByPosition(position);
         if (ft8Message == null) return super.onContextItemSelected(item);
 
-        GeneralVariables.resetLaunchSupervision();//复位自动监管
+        GeneralVariables.resetLaunchSupervision();//婢跺秳缍呴懛顏勫З閻╂垹顓?
         switch (item.getItemId()) {
-            case 1://时序与发送者相反
-                Log.d(TAG, "呼叫：" + ft8Message.getCallsignTo());
+            case 1://閺冭泛绨稉搴″絺闁浇鈧懐娴夐崣?
+                Log.d(TAG, "鍛煎彨 TO: " + ft8Message.getCallsignTo());
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
                 }
@@ -784,31 +785,31 @@ public class MyCallingFragment extends Fragment {
                 break;
 
             case 3:
-                Log.d(TAG, "呼叫：" + ft8Message.getCallsignFrom());
+                Log.d(TAG, "鍛煎彨 FROM: " + ft8Message.getCallsignFrom());
                 doCallNow(ft8Message);
                 break;
 
-            case 4://回复
-                Log.d(TAG, "回复：" + ft8Message.getCallsignFrom());
+            case 4://閸ョ偛顦?
+                Log.d(TAG, "鍥炲: " + ft8Message.getCallsignFrom());
                 mainViewModel.addFollowCallsign(ft8Message.getCallsignFrom());
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
-                    GeneralVariables.transmitMessages.add(ft8Message);//把消息添加到关注列表中
+                    GeneralVariables.transmitMessages.add(ft8Message);//閹跺﹥绉烽幁顖涘潑閸旂姴鍩岄崗铏暈閸掓銆冩稉?
                 }
                 mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getFromCallTransmitCallsign(), -1, ft8Message.getAutoReplyExtraInfo());
                 mainViewModel.ft8TransmitSignal.transmitNow();
                 break;
 
-            case 5://to 的QRZ
+            case 5://to 閻ㄥ嚥RZ
                 showQrzFragment(ft8Message.getCallsignTo());
                 break;
-            case 6://from 的QRZ
+            case 6://from 閻ㄥ嚥RZ
                 showQrzFragment(ft8Message.getCallsignFrom());
                 break;
-            case 7://查to的日志
+            case 7://閺岊櫤o閻ㄥ嫭妫╄箛?
                 navigateToLogFragment(ft8Message.getCallsignTo());
                 break;
-            case 8://查from的日志
+            case 8://閺岊櫖rom閻ㄥ嫭妫╄箛?
                 navigateToLogFragment(ft8Message.getCallsignFrom());
                 break;
         }
@@ -817,20 +818,20 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * 跳转到日志查询界面
+     * 鐠哄疇娴嗛崚鐗堟）韫囨鐓＄拠銏㈡櫕闂?
      *
-     * @param callsign 呼号
+     * @param callsign 閸涚厧褰?
      */
     private void navigateToLogFragment(String callsign) {
-        mainViewModel.queryKey = callsign;//把呼号作为关键字提交
+        mainViewModel.queryKey = callsign;//閹跺﹤鎳犻崣铚傜稊娑撳搫鍙ч柨顔肩摟閹绘劒姘?
         NavController navController = Navigation.findNavController(requireActivity(), R.id.fragmentContainerView);
-        navController.navigate(R.id.action_menu_nav_mycalling_to_menu_nav_history);//跳转到日志
+        navController.navigate(R.id.action_menu_nav_mycalling_to_menu_nav_history);//鐠哄疇娴嗛崚鐗堟）韫?
     }
 
     /**
-     * 查询QRZ信息
+     * 閺屻儴顕桻RZ娣団剝浼?
      *
-     * @param callsign 呼号
+     * @param callsign 閸涚厧褰?
      */
     private void showQrzFragment(String callsign) {
         NavHostFragment navHostFragment = (NavHostFragment) requireActivity().getSupportFragmentManager().findFragmentById(R.id.fragmentContainerView);
@@ -841,7 +842,7 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * 切换 FT8 / FT4 模式
+     * 閸掑洦宕?FT8 / FT4 濡€崇础
      */
     @SuppressLint("NotifyDataSetChanged")
     private void switchSignalMode(int mode) {
@@ -850,64 +851,42 @@ public class MyCallingFragment extends Fragment {
             return;
         }
 
-        if (mode >= 0) {
-            GeneralVariables.setSignalMode(mode);
-            restartForModeRuntimeChange();
-            updateSignalModeUI();
-            ToastMessage.show("鍒囨崲鍒?" + getCurrentModeLabel());
-            return;
-        }
-
         GeneralVariables.setSignalMode(mode);
-
-        // 切换模式时，重建接收与发射时钟
-        if (mainViewModel.ft8SignalListener != null) {
-            mainViewModel.ft8SignalListener.restartByCurrentMode();
-        }
-        if (mainViewModel.ft8TransmitSignal != null) {
-            mainViewModel.ft8TransmitSignal.restartByCurrentMode();
-        }
-
-        // 切模式时停止发射，避免跨模式卡住
-        mainViewModel.ft8TransmitSignal.setActivated(false);
-        mainViewModel.ft8TransmitSignal.setTransmitting(false);
-
-        // 复位到 CQ 状态
-        mainViewModel.ft8TransmitSignal.resetToCQ();
-
-        // 清空当前显示列表，避免 FT8/FT4 混合
-        mainViewModel.clearTransmittingMessage();
-
+        Log.i(TAG, "switchSignalMode: mode=" + FT8Common.modeToString(mode));
+        restartForModeRuntimeChange();
         updateSignalModeUI();
-
-        ToastMessage.show("切换到 " + getCurrentModeLabel());
+        ToastMessage.show("鍒囨崲鍒?" + getCurrentModeLabel());
     }
 
     /**
-     * 刷新模式相关 UI
+     * 閸掗攱鏌婂Ο鈥崇础閻╃鍙?UI
      */
     @SuppressLint("DefaultLocale")
     private void updateSignalModeUI() {
         int mode = GeneralVariables.getSignalMode();
 
-        if (mode == FT8Common.FT4_MODE) {
-            binding.rbFt4.setChecked(true);
-        } else {
-            binding.rbFt8.setChecked(true);
-        }
-        if (mode == FT8Common.Q65_MODE) {
-            binding.rbQ65.setChecked(true);
+        updatingSignalModeUi = true;
+        try {
+            if (mode == FT8Common.FT4_MODE) {
+                binding.rbFt4.setChecked(true);
+            } else if (mode == FT8Common.Q65_MODE) {
+                binding.rbQ65.setChecked(true);
+            } else {
+                binding.rbFt8.setChecked(true);
+            }
+        } finally {
+            updatingSignalModeUi = false;
         }
         updateQ65ConfigUi();
 
-        // 更新发射频率标题
+        // 閺囧瓨鏌婇崣鎴濈殸妫版垹宸奸弽鍥暯
         binding.baseFrequencyTextView.setText(String.format(
                 "[%s] " + GeneralVariables.getStringFromResource(R.string.sound_frequency_is),
                 getCurrentModeLabel(),
                 GeneralVariables.getBaseFrequency()
         ));
 
-        // 更新当前目标显示
+        // 閺囧瓨鏌婅ぐ鎾冲閻╊喗鐖ｉ弰鍓с仛
         if (mainViewModel.ft8TransmitSignal != null && mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() != null) {
             TransmitCallsign transmitCallsign = mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue();
             if (GeneralVariables.toModifier != null) {
@@ -929,17 +908,17 @@ public class MyCallingFragment extends Fragment {
         mainViewModel = MainViewModel.getInstance(this);
         binding = FragmentMyCallingBinding.inflate(inflater, container, false);
 
-        // 当横屏时显示频谱图
+        // 瑜版挻铆鐏炲繑妞傞弰鍓с仛妫版垼姘ㄩ崶?
         if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
             binding.messageSpectrumView.run(mainViewModel, this);
         }
 
-        // 发射消息的列表
+        // 閸欐垵鐨犲☉鍫熶紖閻ㄥ嫬鍨悰?
         functionOrderSpinnerAdapter = new FunctionOrderSpinnerAdapter(requireContext(), mainViewModel);
         binding.functionOrderSpinner.setAdapter(functionOrderSpinnerAdapter);
         functionOrderSpinnerAdapter.notifyDataSetChanged();
 
-        // 关注的消息列表
+        // 閸忚櫕鏁為惃鍕Х閹垰鍨悰?
         transmitRecycleView = binding.transmitRecycleView;
         transmitCallListAdapter = new CallingListAdapter(this.getContext(), mainViewModel,
                 GeneralVariables.transmitMessages, CallingListAdapter.ShowMode.MY_CALLING);
@@ -948,22 +927,29 @@ public class MyCallingFragment extends Fragment {
         transmitCallListAdapter.notifyDataSetChanged();
         initCqQueuePanel();
 
-        // 设置消息列表滑动，用于快速呼叫
+        // 鐠佸墽鐤嗗☉鍫熶紖閸掓銆冨鎴濆З閿涘瞼鏁ゆ禍搴℃彥闁喎鎳犻崣?
         initRecyclerViewAction();
         requireActivity().registerForContextMenu(transmitRecycleView);
 
-        // 初始化模式选择 UI
-        if (GeneralVariables.getSignalMode() == FT8Common.FT4_MODE) {
-            binding.rbFt4.setChecked(true);
-        } else {
-            binding.rbFt8.setChecked(true);
-        }
-        if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
-            binding.rbQ65.setChecked(true);
+        // 閸掓繂顫愰崠鏍佸蹇涒偓澶嬪 UI
+        updatingSignalModeUi = true;
+        try {
+            if (GeneralVariables.getSignalMode() == FT8Common.FT4_MODE) {
+                binding.rbFt4.setChecked(true);
+            } else if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+                binding.rbQ65.setChecked(true);
+            } else {
+                binding.rbFt8.setChecked(true);
+            }
+        } finally {
+            updatingSignalModeUi = false;
         }
         updateQ65ConfigUi();
 
         binding.rgSignalMode.setOnCheckedChangeListener((group, checkedId) -> {
+            if (updatingSignalModeUi) {
+                return;
+            }
             int mode;
             if (checkedId == R.id.rbFt4) {
                 mode = FT8Common.FT4_MODE;
@@ -1027,7 +1013,7 @@ public class MyCallingFragment extends Fragment {
             return true;
         });
 
-        // 显示UTC时间
+        // 閺勫墽銇歎TC閺冨爼妫?
         mainViewModel.timerSec.observe(getViewLifecycleOwner(), new Observer<Long>() {
             @Override
             public void onChanged(Long aLong) {
@@ -1040,7 +1026,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 显示发射频率
+        // 閺勫墽銇氶崣鎴濈殸妫版垹宸?
         GeneralVariables.mutableBaseFrequency.observe(getViewLifecycleOwner(), new Observer<Float>() {
             @SuppressLint("DefaultLocale")
             @Override
@@ -1052,7 +1038,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 观察模式变化
+        // 鐟欏倸鐧傚Ο鈥崇础閸欐ê瀵?
         GeneralVariables.mutableSignalMode.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @Override
             public void onChanged(Integer integer) {
@@ -1062,7 +1048,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 观察发射状态按钮的变化
+        // 鐟欏倸鐧傞崣鎴濈殸閻樿埖鈧焦瀵滈柦顔炬畱閸欐ê瀵?
         Observer<Boolean> transmittingObserver = new Observer<Boolean>() {
             @Override
             public void onChanged(Boolean aBoolean) {
@@ -1080,7 +1066,7 @@ public class MyCallingFragment extends Fragment {
                     binding.setTransmitImageButton.setAnimation(null);
                 }
 
-                // 暂停播放按键
+                // 閺嗗倸浠犻幘顓熸杹閹稿鏁?
                 if (mainViewModel.ft8TransmitSignal.isTransmitting()) {
                     binding.pauseTransmittingImageButton.setImageResource(R.drawable.ic_baseline_pause_circle_outline_24);
                     binding.pauseTransmittingImageButton.setVisibility(View.VISIBLE);
@@ -1094,16 +1080,16 @@ public class MyCallingFragment extends Fragment {
         mainViewModel.ft8TransmitSignal.mutableIsTransmitting.observe(getViewLifecycleOwner(), transmittingObserver);
         mainViewModel.ft8TransmitSignal.mutableIsActivated.observe(getViewLifecycleOwner(), transmittingObserver);
 
-        // 暂停按钮
+        // 閺嗗倸浠犻幐澶愭尦
         binding.pauseTransmittingImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 mainViewModel.ft8TransmitSignal.setTransmitting(false);
-                GeneralVariables.resetLaunchSupervision();//复位自动监管
+                GeneralVariables.resetLaunchSupervision();//婢跺秳缍呴懛顏勫З閻╂垹顓?
             }
         });
 
-        // 监视命令程序
+        // 閻╂垼顫嬮崨鎴掓姢缁嬪绨?
         mainViewModel.ft8TransmitSignal.mutableFunctions.observe(getViewLifecycleOwner(),
                 new Observer<ArrayList<FunctionOfTransmit>>() {
                     @Override
@@ -1113,7 +1099,7 @@ public class MyCallingFragment extends Fragment {
                     }
                 });
 
-        // 观察指令序号的变化
+        // 鐟欏倸鐧傞幐鍥︽姢鎼村繐褰块惃鍕綁閸?
         mainViewModel.ft8TransmitSignal.mutableDxpeditionFoxSlotStatus.observe(getViewLifecycleOwner(),
                 new Observer<String>() {
                     @Override
@@ -1134,7 +1120,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 设置当指令序号被选择的事件
+        // 鐠佸墽鐤嗚ぐ鎾村瘹娴犮倕绨崣鐤潶闁瀚ㄩ惃鍕皑娴?
         mainViewModel.ft8TransmitSignal.mutableCqQueue.observe(getViewLifecycleOwner(), new Observer<ArrayList<CqCallEntry>>() {
             @Override
             public void onChanged(ArrayList<CqCallEntry> cqCallEntries) {
@@ -1158,7 +1144,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 显示当前目标呼号
+        // 閺勫墽銇氳ぐ鎾冲閻╊喗鐖ｉ崨鐓庡娇
         mainViewModel.ft8TransmitSignal.mutableToCallsign.observe(getViewLifecycleOwner(), new Observer<TransmitCallsign>() {
             @Override
             public void onChanged(TransmitCallsign transmitCallsign) {
@@ -1186,7 +1172,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 显示当前发射的时序
+        // 閺勫墽銇氳ぐ鎾冲閸欐垵鐨犻惃鍕鎼?
         mainViewModel.ft8TransmitSignal.mutableSequential.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @SuppressLint("DefaultLocale")
             @Override
@@ -1203,7 +1189,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 设置发射按钮
+        // 鐠佸墽鐤嗛崣鎴濈殸閹稿鎸?
         binding.setTransmitImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -1215,11 +1201,11 @@ public class MyCallingFragment extends Fragment {
                     mainViewModel.ft8TransmitSignal.restTransmitting();
                 }
                 mainViewModel.ft8TransmitSignal.setActivated(!mainViewModel.ft8TransmitSignal.isActivated());
-                GeneralVariables.resetLaunchSupervision();//复位自动监管
+                GeneralVariables.resetLaunchSupervision();//婢跺秳缍呴懛顏勫З閻╂垹顓?
             }
         });
 
-        // 观察传输消息列表的变化
+        // 鐟欏倸鐧傛导鐘虹翻濞戝牊浼呴崚妤勩€冮惃鍕綁閸?
         mainViewModel.mutableTransmitMessagesCount.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @SuppressLint("DefaultLocale")
             @Override
@@ -1239,7 +1225,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 清除传输消息列表
+        // 濞撳懘娅庢导鐘虹翻濞戝牊浼呴崚妤勩€?
         binding.clearMycallListImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -1247,7 +1233,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 复位到CQ按键
+        // 婢跺秳缍呴崚鐧圦閹稿鏁?
         binding.resetToCQImageView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -1260,11 +1246,11 @@ public class MyCallingFragment extends Fragment {
                     return;
                 }
                 mainViewModel.ft8TransmitSignal.resetToCQ();
-                GeneralVariables.resetLaunchSupervision();//复位自动监管
+                GeneralVariables.resetLaunchSupervision();//婢跺秳缍呴懛顏勫З閻╂垹顓?
             }
         });
 
-        // 自由文本输入框的限定操作
+        // 閼奉亞鏁遍弬鍥ㄦ拱鏉堟挸鍙嗗鍡欐畱闂勬劕鐣鹃幙宥勭稊
         binding.transFreeTextEdit.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
@@ -1338,7 +1324,7 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * 设置列表滑动动作
+     * 鐠佸墽鐤嗛崚妤勩€冨鎴濆З閸斻劋缍?
      */
     private void syncFreeTextInput() {
         String currentFreeText = mainViewModel.ft8TransmitSignal.getFreeText();
@@ -1389,7 +1375,7 @@ public class MyCallingFragment extends Fragment {
                     }
                     transmitCallListAdapter.notifyItemChanged(viewHolder.getAdapterPosition());
                 }
-                if (direction == ItemTouchHelper.END) {//删除
+                if (direction == ItemTouchHelper.END) {//閸掔娀娅?
                     transmitCallListAdapter.deleteMessage(viewHolder.getAdapterPosition());
                     transmitCallListAdapter.notifyItemRemoved(viewHolder.getAdapterPosition());
                 }
@@ -1448,4 +1434,3 @@ public class MyCallingFragment extends Fragment {
         }).attachToRecyclerView(binding.transmitRecycleView);
     }
 }
-

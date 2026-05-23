@@ -23,6 +23,48 @@ public final class GenerateFTx {
     private GenerateFTx() {
     }
 
+    private static String buildQ65TxContext(Ft8Message msg,
+                                            float frequency,
+                                            int sampleRate,
+                                            int q65Submode,
+                                            int q65TrPeriodSeconds) {
+        return String.format(
+                Locale.US,
+                "mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, f=%.1f, text=%s",
+                FT8Common.modeToString(FT8Common.Q65_MODE),
+                FT8Common.getQ65SubmodeLabel(q65Submode),
+                q65TrPeriodSeconds,
+                sampleRate,
+                frequency,
+                msg == null ? "" : msg.getMessageText()
+        );
+    }
+
+    private static String buildWaveStats(float[] wave, int sampleRate) {
+        if (wave == null || wave.length == 0) {
+            return "samples=0, durationMs=0.0, peak=0.000000, rms=0.000000";
+        }
+        float peak = 0.0f;
+        double energy = 0.0;
+        for (float sample : wave) {
+            float abs = Math.abs(sample);
+            if (abs > peak) {
+                peak = abs;
+            }
+            energy += sample * sample;
+        }
+        double rms = Math.sqrt(energy / wave.length);
+        float durationMs = sampleRate > 0 ? wave.length * 1000.0f / sampleRate : 0.0f;
+        return String.format(
+                Locale.US,
+                "samples=%d, durationMs=%.1f, peak=%.6f, rms=%.6f",
+                wave.length,
+                durationMs,
+                peak,
+                rms
+        );
+    }
+
     /**
      * 按消息自身 signalFormat 生成音频
      */
@@ -79,18 +121,20 @@ public final class GenerateFTx {
                 q65TrPeriodSeconds
         );
         if (mode == FT8Common.Q65_MODE) {
-            int sampleCount = generated == null ? 0 : generated.length;
-            float durationMs = sampleRate > 0 ? sampleCount * 1000.0f / sampleRate : 0.0f;
+            if (generated == null || generated.length == 0) {
+                Log.e(TAG, "Q65 TX waveform generation failed: reason=native-returned-empty, "
+                        + buildQ65TxContext(msg, frequency, sampleRate, q65Submode, q65TrPeriodSeconds));
+                return generated;
+            }
             Log.i(TAG, String.format(
                     Locale.US,
-                    "Q65 TX experimental: mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, f=%.1f, samples=%d, durationMs=%.1f, text=%s",
+                    "Q65 TX experimental: mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, f=%.1f, %s, text=%s",
                     FT8Common.modeToString(mode),
                     FT8Common.getQ65SubmodeLabel(q65Submode),
                     q65TrPeriodSeconds,
                     sampleRate,
                     frequency,
-                    sampleCount,
-                    durationMs,
+                    buildWaveStats(generated, sampleRate),
                     msg.getMessageText()
             ));
         }
