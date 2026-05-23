@@ -20,11 +20,10 @@ if (NOT WSJTX3_FFTW_INCLUDE_DIR)
     message(FATAL_ERROR "未找到 FFTW 头文件或 Fortran include，请先安装 ucrt64 FFTW。")
 endif ()
 
-# 这里只保留 FT8/FT4 官方核心真正会走到的源码。
-# 目标是先验证官方核心的最小可编译闭包，避免继续把 Qt、旧模式和测试程序编进来。
+# 这里只保留移动端官方 core 真正会走到的最小源码集合，
+# 继续避免把 Qt、旧模式 UI 和测试程序整包拖进来。
 set(WSJTX3_HOST_SUPPORT_SOURCES
         ${CMAKE_CURRENT_LIST_DIR}/shmem_stub.c
-        ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_host_support.f90
         ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_bridge.f90
 )
 
@@ -34,12 +33,27 @@ set(WSJTX3_VENDOR_CPP_SOURCES
         ${WSJTX3_VENDOR_LIB}/crc14.cpp
 )
 
+set(WSJTX3_VENDOR_C_SOURCES
+        # Q65 codec C helpers
+        ${WSJTX3_VENDOR_LIB}/qra/q65/fadengauss.c
+        ${WSJTX3_VENDOR_LIB}/qra/q65/fadenlorentz.c
+        ${WSJTX3_VENDOR_LIB}/qra/q65/normrnd.c
+        ${WSJTX3_VENDOR_LIB}/qra/q65/npfwht.c
+        ${WSJTX3_VENDOR_LIB}/qra/q65/pdmath.c
+        ${WSJTX3_VENDOR_LIB}/qra/q65/q65.c
+        ${WSJTX3_VENDOR_LIB}/qra/q65/q65_subs.c
+        ${WSJTX3_VENDOR_LIB}/qra/q65/qra15_65_64_irr_e23.c
+        ${WSJTX3_VENDOR_LIB}/qra/q65/qracodes.c
+)
+
 set(WSJTX3_VENDOR_FORTRAN_SOURCES
         # 公共模块与基础工具
         ${WSJTX3_VENDOR_LIB}/shmem.f90
         ${WSJTX3_VENDOR_LIB}/crc.f90
         ${WSJTX3_VENDOR_LIB}/fftw3mod.f90
         ${WSJTX3_VENDOR_LIB}/timer_module.f90
+        ${WSJTX3_VENDOR_LIB}/types.f90
+        ${WSJTX3_VENDOR_LIB}/prog_args.f90
         ${WSJTX3_VENDOR_LIB}/fmtmsg.f90
         ${WSJTX3_VENDOR_LIB}/deg2grid.f90
         ${WSJTX3_VENDOR_LIB}/grid2deg.f90
@@ -90,11 +104,24 @@ set(WSJTX3_VENDOR_FORTRAN_SOURCES
         ${WSJTX3_VENDOR_LIB}/ft4/get_ft4_bitmetrics.f90
         ${WSJTX3_VENDOR_LIB}/ft4/subtractft4.f90
         ${WSJTX3_VENDOR_LIB}/ft4/sync4d.f90
+
+        # Q65 decode / encode 所需最小链路
+        ${WSJTX3_VENDOR_LIB}/q65_decode.f90
+        ${WSJTX3_VENDOR_LIB}/spec64.f90
+        ${WSJTX3_VENDOR_LIB}/twkfreq.f90
+        ${WSJTX3_VENDOR_LIB}/qra/q65/genq65.f90
+        ${WSJTX3_VENDOR_LIB}/qra/q65/q65.f90
+        ${WSJTX3_VENDOR_LIB}/qra/q65/q65_ap.f90
+        ${WSJTX3_VENDOR_LIB}/qra/q65/q65_encoding_modules.f90
+        ${WSJTX3_VENDOR_LIB}/qra/q65/q65_loops.f90
+        ${WSJTX3_VENDOR_LIB}/qra/q65/q65_set_list.f90
+        ${WSJTX3_VENDOR_LIB}/qra/q65/q65_set_list2.f90
 )
 
 add_library(ft8cn_wsjtx3_host_core STATIC
         ${WSJTX3_HOST_SUPPORT_SOURCES}
         ${WSJTX3_VENDOR_CPP_SOURCES}
+        ${WSJTX3_VENDOR_C_SOURCES}
         ${WSJTX3_VENDOR_FORTRAN_SOURCES}
 )
 
@@ -110,6 +137,7 @@ target_include_directories(ft8cn_wsjtx3_host_core
         ${CMAKE_CURRENT_LIST_DIR}/../..
         ${WSJTX3_VENDOR_ROOT}
         ${WSJTX3_VENDOR_LIB}
+        ${WSJTX3_VENDOR_LIB}/qra/q65
         ${WSJTX3_FFTW_INCLUDE_DIR}
 )
 

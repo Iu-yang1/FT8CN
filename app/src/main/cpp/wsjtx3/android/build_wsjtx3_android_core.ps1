@@ -90,8 +90,8 @@ Assert-Path $runtimeArchive 'Android flang-rt archive'
 
 $vendorFortranSources = New-Object System.Collections.Generic.List[string]
 $vendorCppSources = New-Object System.Collections.Generic.List[string]
+$vendorCSources = New-Object System.Collections.Generic.List[string]
 $hostSupportFortranSources = @(
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\wsjtx3_host_support.f90'),
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\wsjtx3_bridge.f90')
 )
 $hostSupportCSources = @(
@@ -103,11 +103,15 @@ $hostSupportCSources = @(
 )
 
 foreach ($line in Get-Content $hostCMakePath) {
-    if ($line -match '\$\{WSJTX3_VENDOR_LIB\}/(.+?\.f90)') {
+    $trimmedLine = $line.Trim()
+    if ($trimmedLine -match '^\$\{WSJTX3_VENDOR_LIB\}/(.+?\.f90)$') {
         $vendorFortranSources.Add((Join-Path $repoRoot ('app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\' + $matches[1].Replace('/', '\'))))
     }
-    if ($line -match '\$\{WSJTX3_VENDOR_LIB\}/(.+?\.cpp)') {
+    if ($trimmedLine -match '^\$\{WSJTX3_VENDOR_LIB\}/(.+?\.cpp)$') {
         $vendorCppSources.Add((Join-Path $repoRoot ('app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\' + $matches[1].Replace('/', '\'))))
+    }
+    if ($trimmedLine -match '^\$\{WSJTX3_VENDOR_LIB\}/(.+?\.c)$') {
+        $vendorCSources.Add((Join-Path $repoRoot ('app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\' + $matches[1].Replace('/', '\'))))
     }
 }
 
@@ -121,11 +125,13 @@ $fortranIncludeDirs = @(
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\ft8'),
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\ft4'),
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\ft8var'),
+    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\qra\q65'),
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3')
 )
 $nativeIncludeDirs = @(
     (Join-Path $repoRoot 'app\src\main\cpp'),
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib'),
+    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\qra\q65'),
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host'),
     $BoostHeaders
 )
@@ -195,6 +201,29 @@ foreach ($src in $vendorCppSources) {
             Write-Host $result.Output
         }
         throw "Official C++ helper compile failed: $src"
+    }
+    $compiledObjects.Add($objPath)
+}
+
+foreach ($src in $vendorCSources) {
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($src)
+    $objPath = Join-Path $objDir ($name + '.obj')
+    $cmdArgs = @(
+        '-target', $TargetTriple,
+        '-fPIC',
+        '-c',
+        '-std=c11'
+    )
+    foreach ($includeDir in $nativeIncludeDirs) {
+        $cmdArgs += @('-I', $includeDir)
+    }
+    $cmdArgs += @($src, '-o', $objPath)
+    $result = Invoke-NativeCapture -command $clang -arguments $cmdArgs
+    if ($result.ExitCode -ne 0) {
+        if ($result.Output) {
+            Write-Host $result.Output
+        }
+        throw "Official C helper compile failed: $src"
     }
     $compiledObjects.Add($objPath)
 }
