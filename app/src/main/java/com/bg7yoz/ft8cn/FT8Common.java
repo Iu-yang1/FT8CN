@@ -1,10 +1,7 @@
 package com.bg7yoz.ft8cn;
 
 /**
- * FT8 / FT4 共用常量与模式辅助方法。
- *
- * @author BGY70Z
- * @date 2023-03-20
+ * FTx 共用常量与模式辅助方法。
  */
 public final class FT8Common {
     private FT8Common() {
@@ -18,77 +15,115 @@ public final class FT8Common {
 
     public static final int FT8_SLOT_TIME = 15;
     public static final float FT4_SLOT_TIME = 7.5f;
+    public static final int Q65_SLOT_TIME = 60;
 
-    public static final int FT8_SLOT_TIME_MILLISECOND = 15000;   // 一个完整 FT8 时隙的毫秒数
-    public static final int FT4_SLOT_TIME_MILLISECOND = 7500;    // 一个完整 FT4 时隙的毫秒数
+    public static final int FT8_SLOT_TIME_MILLISECOND = 15000;
+    public static final int FT4_SLOT_TIME_MILLISECOND = 7500;
+    public static final int Q65_SLOT_TIME_MILLISECOND = 60000;
 
-    public static final int FT8_5_SYMBOLS_MILLISECOND = 800;     // FT8 前 5 个符号对应的毫秒数
-    public static final int FT8_SLOT_TIME_M = 150;               // 15 秒，UtcTimer 的 0.1 秒单位
-    public static final int FT4_SLOT_TIME_M = 75;                // 7.5 秒，UtcTimer 的 0.1 秒单位
-    public static final int FT8_5_SYMBOLS_TIME_M = 8;            // FT8 前 5 个符号对应的 0.1 秒单位
-    public static final int FT8_TRANSMIT_DELAY = 500;            // 默认发射延迟，单位毫秒
-    public static final long DEEP_DECODE_TIMEOUT = 7 * 1000L;    // 深度解码最长预算
-    public static final int DECODE_MAX_ITERATIONS = 1;           // Java 层额外重试次数
+    public static final int FT8_5_SYMBOLS_MILLISECOND = 800;
+    public static final int FT8_SLOT_TIME_M = 150;
+    public static final int FT4_SLOT_TIME_M = 75;
+    public static final int Q65_SLOT_TIME_M = 600;
+    public static final int FT8_5_SYMBOLS_TIME_M = 8;
+    public static final int FT8_TRANSMIT_DELAY = 500;
+    public static final long DEEP_DECODE_TIMEOUT = 7 * 1000L;
+    public static final int DECODE_MAX_ITERATIONS = 1;
     public static final int EARLY_DECODE_PHASE_TICKS = 41;
     public static final int FULL_DECODE_PHASE_TICKS = 50;
     public static final long EARLY_DECODE_TIMEOUT = 1800L;
     public static final long FT4_EARLY_DECODE_TIMEOUT = 900L;
 
-    // ===== 发射 / 解码模式参数 =====
     public static final int FT8_NN = 79;
     public static final int FT4_NN = 105;
+    public static final int Q65_NN = 85;
 
     public static final float FT8_SYMBOL_PERIOD = 0.160f;
     public static final float FT4_SYMBOL_PERIOD = 0.048f;
+    public static final float Q65_SYMBOL_PERIOD = 0.0f;
 
     public static final float FT8_SYMBOL_BT = 2.0f;
     public static final float FT4_SYMBOL_BT = 1.0f;
+    public static final float Q65_SYMBOL_BT = 0.0f;
 
-    /**
-     * 获取当前模式一个完整时隙的毫秒数。
-     */
     public static int getSlotTimeMillisecond(int mode) {
-        return mode == FT4_MODE ? FT4_SLOT_TIME_MILLISECOND : FT8_SLOT_TIME_MILLISECOND;
+        switch (mode) {
+            case FT8_MODE:
+                return FT8_SLOT_TIME_MILLISECOND;
+            case FT4_MODE:
+                return FT4_SLOT_TIME_MILLISECOND;
+            case Q65_MODE:
+                return Q65_SLOT_TIME_MILLISECOND;
+            default:
+                return 0;
+        }
     }
 
-    /**
-     * 获取当前模式在 UtcTimer 中对应的 0.1 秒单位长度。
-     */
     public static int getSlotTimeM(int mode) {
-        return mode == FT4_MODE ? FT4_SLOT_TIME_M : FT8_SLOT_TIME_M;
+        switch (mode) {
+            case FT8_MODE:
+                return FT8_SLOT_TIME_M;
+            case FT4_MODE:
+                return FT4_SLOT_TIME_M;
+            case Q65_MODE:
+                return Q65_SLOT_TIME_M;
+            default:
+                return 0;
+        }
     }
 
-    /**
-     * 获取当前模式一个完整时隙的秒数。
-     */
     public static float getSlotTimeSecond(int mode) {
-        return mode == FT4_MODE ? FT4_SLOT_TIME : FT8_SLOT_TIME;
+        switch (mode) {
+            case FT8_MODE:
+                return FT8_SLOT_TIME;
+            case FT4_MODE:
+                return FT4_SLOT_TIME;
+            case Q65_MODE:
+                return Q65_SLOT_TIME;
+            default:
+                return 0f;
+        }
     }
 
-    /**
-     * 获取当前模式的 tone 数量。
-     */
     public static int getToneCount(int mode) {
-        return mode == FT4_MODE ? FT4_NN : FT8_NN;
+        switch (mode) {
+            case FT8_MODE:
+                return FT8_NN;
+            case FT4_MODE:
+                return FT4_NN;
+            case Q65_MODE:
+                return Q65_NN;
+            default:
+                return 0;
+        }
     }
 
-    /**
-     * 获取当前模式的符号周期。
-     */
     public static float getSymbolPeriod(int mode) {
-        return mode == FT4_MODE ? FT4_SYMBOL_PERIOD : FT8_SYMBOL_PERIOD;
+        switch (mode) {
+            case FT8_MODE:
+                return FT8_SYMBOL_PERIOD;
+            case FT4_MODE:
+                return FT4_SYMBOL_PERIOD;
+            case Q65_MODE:
+                return Q65_SYMBOL_PERIOD;
+            default:
+                return 0f;
+        }
     }
 
-    /**
-     * 获取当前模式的 GFSK BT 参数。
-     */
     public static float getSymbolBt(int mode) {
-        return mode == FT4_MODE ? FT4_SYMBOL_BT : FT8_SYMBOL_BT;
+        switch (mode) {
+            case FT8_MODE:
+                return FT8_SYMBOL_BT;
+            case FT4_MODE:
+                return FT4_SYMBOL_BT;
+            case Q65_MODE:
+                return Q65_SYMBOL_BT;
+            default:
+                return 0f;
+        }
     }
 
-    /**
-     * 获取当前模式完整时隙对应的采样点数。
-     */
     public static int getSamplesPerSlot(int mode) {
         return (int) (getSlotTimeSecond(mode) * SAMPLE_RATE);
     }
@@ -98,19 +133,31 @@ public final class FT8Common {
     }
 
     public static long getEarlyDecodeTimeoutMs(int mode) {
-        return mode == FT4_MODE ? FT4_EARLY_DECODE_TIMEOUT : EARLY_DECODE_TIMEOUT;
+        switch (mode) {
+            case FT8_MODE:
+                return EARLY_DECODE_TIMEOUT;
+            case FT4_MODE:
+                return FT4_EARLY_DECODE_TIMEOUT;
+            case Q65_MODE:
+            default:
+                return 0L;
+        }
     }
 
     public static boolean supportsEarlyDecodeStage(int mode) {
         return mode == FT8_MODE || mode == FT4_MODE;
     }
 
-    /**
-     * 获取“立即发射”窗口长度。
-     * FT4 周期更短，所以窗口也更短。
-     */
     public static int getImmediateTxWindowMs(int mode) {
-        return mode == FT4_MODE ? 1200 : 2500;
+        switch (mode) {
+            case FT8_MODE:
+                return 2500;
+            case FT4_MODE:
+                return 1200;
+            case Q65_MODE:
+            default:
+                return 0;
+        }
     }
 
     public static int getFrameDurationMs(int mode) {
@@ -118,64 +165,92 @@ public final class FT8Common {
     }
 
     public static int getLateDecodeOverrideWindowMs(int mode) {
-        int slotMs = getSlotTimeMillisecond(mode);
-        int frameMs = getFrameDurationMs(mode);
-        int guardMs = mode == FT4_MODE ? 350 : 450;
+        final int slotMs = getSlotTimeMillisecond(mode);
+        final int frameMs = getFrameDurationMs(mode);
+        final int guardMs;
+        switch (mode) {
+            case FT8_MODE:
+                guardMs = 450;
+                break;
+            case FT4_MODE:
+                guardMs = 350;
+                break;
+            default:
+                return 0;
+        }
         return Math.max(0, slotMs - frameMs - guardMs);
     }
 
-    /**
-     * 推荐的最早发射构建偏移，相对时隙起点。
-     */
     public static int getPreferredTxLeadInMs(int mode) {
-        return mode == FT4_MODE ? 180 : 260;
+        switch (mode) {
+            case FT8_MODE:
+                return 260;
+            case FT4_MODE:
+                return 180;
+            case Q65_MODE:
+            default:
+                return 0;
+        }
     }
 
-    /**
-     * 晚到解码覆盖导致的自动发射延迟硬上限。
-     */
     public static int getLateDecodeHoldCapMs(int mode) {
-        return mode == FT4_MODE ? 620 : 980;
+        switch (mode) {
+            case FT8_MODE:
+                return 980;
+            case FT4_MODE:
+                return 620;
+            case Q65_MODE:
+            default:
+                return 0;
+        }
     }
 
-    /**
-     * 只有解码结果足够新时，才允许晚到解码覆盖窗口生效。
-     */
     public static int getLateDecodeRecentWindowMs(int mode) {
-        return mode == FT4_MODE ? 800 : 1300;
+        switch (mode) {
+            case FT8_MODE:
+                return 1300;
+            case FT4_MODE:
+                return 800;
+            case Q65_MODE:
+            default:
+                return 0;
+        }
     }
 
-    /**
-     * 本地编码、排队与音频链路补偿时间，避免起发滞后。
-     */
     public static int getTxPipelineCompensationMs(int mode) {
-        return mode == FT4_MODE ? 80 : 140;
+        switch (mode) {
+            case FT8_MODE:
+                return 140;
+            case FT4_MODE:
+                return 80;
+            case Q65_MODE:
+            default:
+                return 0;
+        }
     }
 
-    /**
-     * 模式转字符串。
-     */
     public static String modeToString(int mode) {
-        if (mode == FT4_MODE) {
-            return "FT4";
+        switch (mode) {
+            case FT8_MODE:
+                return "FT8";
+            case FT4_MODE:
+                return "FT4";
+            case Q65_MODE:
+                return "Q65";
+            default:
+                return "UNKNOWN(" + mode + ")";
         }
-        if (mode == Q65_MODE) {
-            return "Q65";
-        }
-        return "FT8";
     }
 
-    /**
-     * 是否 FT8。
-     */
     public static boolean isFt8(int mode) {
         return mode == FT8_MODE;
     }
 
-    /**
-     * 是否 FT4。
-     */
     public static boolean isFt4(int mode) {
         return mode == FT4_MODE;
+    }
+
+    public static boolean isQ65(int mode) {
+        return mode == Q65_MODE;
     }
 }

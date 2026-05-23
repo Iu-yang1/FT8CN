@@ -34,7 +34,15 @@ int ftx_unpack_message(const uint8_t payload[FTX_PAYLOAD_BYTES], char *message, 
 }
 
 int ftx_get_tone_count(ftx_mode_t mode) {
-    return (mode == FTX_MODE_FT4) ? FT4_NN : FT8_NN;
+    switch (mode) {
+        case FTX_MODE_FT8:
+            return FT8_NN;
+        case FTX_MODE_FT4:
+            return FT4_NN;
+        case FTX_MODE_Q65:
+        default:
+            return -1;
+    }
 }
 
 int ftx_encode_tones(ftx_mode_t mode,
@@ -43,15 +51,17 @@ int ftx_encode_tones(ftx_mode_t mode,
                      int tone_capacity) {
     const int tone_count = ftx_get_tone_count(mode);
 
-    if (payload == NULL || tones == NULL || tone_capacity < tone_count) {
+    if (payload == NULL || tones == NULL || tone_count <= 0 || tone_capacity < tone_count) {
         return -1;
     }
 
     memset(tones, 0, (size_t) tone_capacity);
     if (mode == FTX_MODE_FT4) {
         ft4_encode(payload, tones);
-    } else {
+    } else if (mode == FTX_MODE_FT8) {
         ft8_encode(payload, tones);
+    } else {
+        return -1;
     }
     return tone_count;
 }

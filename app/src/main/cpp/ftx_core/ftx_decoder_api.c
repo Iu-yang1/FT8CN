@@ -137,7 +137,10 @@ ftx_decoder_t *ftx_decoder_create(ftx_mode_t mode,
     if (sample_rate <= 0 || num_samples <= 0) {
         return NULL;
     }
-    if (mode != FTX_MODE_FT8 && mode != FTX_MODE_FT4) {
+    if (mode != FTX_MODE_FT8 && mode != FTX_MODE_FT4 && mode != FTX_MODE_Q65) {
+        return NULL;
+    }
+    if (mode == FTX_MODE_Q65) {
         return NULL;
     }
 
