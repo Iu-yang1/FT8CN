@@ -100,12 +100,29 @@ static void store_decode_result(ftx_decoder_t *decoder, const ft8_message *messa
     result->score = message->candidate.score;
     result->time_sec = message->time_sec;
     result->freq_hz = message->freq_hz;
+    result->i3 = message->message.i3;
+    result->n3 = message->message.n3;
+    result->report = message->message.report;
+    result->r_flag = message->message.r_flag;
+    result->rtty_tu = message->message.rtty_tu;
+    result->eu_serial = message->message.eu_serial;
+    result->call_to_hash10 = message->message.call_to_hash.hash10;
+    result->call_to_hash12 = message->message.call_to_hash.hash12;
+    result->call_to_hash22 = message->message.call_to_hash.hash22;
+    result->call_de_hash10 = message->message.call_de_hash.hash10;
+    result->call_de_hash12 = message->message.call_de_hash.hash12;
+    result->call_de_hash22 = message->message.call_de_hash.hash22;
     result->message_hash = message->message.hash;
 
     copy_text(result->text, sizeof(result->text), message->message.text);
     copy_text(result->call_to, sizeof(result->call_to), message->message.call_to);
     copy_text(result->call_de, sizeof(result->call_de), message->message.call_de);
+    copy_text(result->dx_call_to2, sizeof(result->dx_call_to2), message->message.dx_call_to2);
+    copy_text(result->extra, sizeof(result->extra), message->message.extra);
     copy_text(result->grid, sizeof(result->grid), message->message.maidenGrid);
+    copy_text(result->rtty_state, sizeof(result->rtty_state), message->message.rtty_state);
+    copy_text(result->arrl_rac, sizeof(result->arrl_rac), message->message.arrl_rac);
+    copy_text(result->arrl_class, sizeof(result->arrl_class), message->message.arrl_class);
 
     decoder->result_count++;
 }
@@ -207,6 +224,16 @@ int ftx_decoder_set_ap_hints(ftx_decoder_t *decoder,
 }
 
 int ftx_decoder_process_float(ftx_decoder_t *decoder, const float *samples, int sample_count) {
+    if (decoder == NULL) {
+        return -1;
+    }
+    return ftx_decoder_process_float_slot(decoder, samples, sample_count, decoder->utc_time);
+}
+
+int ftx_decoder_process_float_slot(ftx_decoder_t *decoder,
+                                   const float *samples,
+                                   int sample_count,
+                                   long long utc_time) {
     int candidate_count;
     int index;
 
@@ -215,9 +242,10 @@ int ftx_decoder_process_float(ftx_decoder_t *decoder, const float *samples, int 
     }
 
     decoder->result_count = 0;
+    decoder->utc_time = utc_time;
     decoder->num_samples = sample_count;
 
-    decoder_ft8_reset(decoder->impl, (long) decoder->utc_time, sample_count);
+    decoder_ft8_reset(decoder->impl, (long) utc_time, sample_count);
     apply_decoder_options(decoder);
     decoder_set_ap_hints(decoder->impl, &decoder->ap_hints);
     decoder_monitor_press_samples((float *) samples, decoder->impl, sample_count);

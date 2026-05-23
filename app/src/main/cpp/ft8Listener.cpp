@@ -14,6 +14,7 @@ extern "C" {
 #include "common/debug.h"
 #include "ft8Decoder.h"
 #include "ft8Encoder.h"
+#include "ftx_core/include/ftx_decoder.h"
 #include "ft8/constants.h"
 #include "ft8/encode.h"
 }
@@ -23,6 +24,7 @@ static const int SIGNAL_MODE_FT4 = 1;
 
 typedef struct {
     jclass messageClass;
+    jmethodID constructorWithSignalFormat;
     jfieldID utcTime;
     jfieldID isValid;
     jfieldID time_sec;
@@ -64,6 +66,10 @@ static inline int normalize_decode_snr_for_display(int rawSnr, int signalMode) {
     return snr;
 }
 
+static jstring newJStringOrEmpty(JNIEnv *env, const char *value) {
+    return env->NewStringUTF(value == nullptr ? "" : value);
+}
+
 static void copyJStringToBuffer(JNIEnv *env, jstring source, char *dest, size_t destSize) {
     if (dest == nullptr || destSize == 0) {
         return;
@@ -100,6 +106,10 @@ static bool ensure_ft8_message_jni_cache(JNIEnv *env) {
         return false;
     }
 
+    g_ft8_message_jni_cache.constructorWithSignalFormat = env->GetMethodID(
+            g_ft8_message_jni_cache.messageClass,
+            "<init>",
+            "(I)V");
     g_ft8_message_jni_cache.utcTime = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "utcTime", "J");
     g_ft8_message_jni_cache.isValid = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "isValid", "Z");
     g_ft8_message_jni_cache.time_sec = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "time_sec", "F");
@@ -129,6 +139,65 @@ static bool ensure_ft8_message_jni_cache(JNIEnv *env) {
     g_ft8_message_jni_cache.callToHash12 = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "callToHash12", "J");
     g_ft8_message_jni_cache.callToHash22 = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "callToHash22", "J");
     return true;
+}
+
+static void populate_ft8_message_fields(JNIEnv *env,
+                                        jobject ft8Message,
+                                        int signalMode,
+                                        const ftx_decode_result_t *result) {
+    if (ft8Message == nullptr || result == nullptr) {
+        return;
+    }
+
+    env->SetLongField(ft8Message, g_ft8_message_jni_cache.utcTime, (jlong) result->utc_time);
+    env->SetBooleanField(ft8Message, g_ft8_message_jni_cache.isValid, result->is_valid != 0);
+    env->SetFloatField(ft8Message, g_ft8_message_jni_cache.time_sec, result->time_sec);
+    env->SetFloatField(ft8Message, g_ft8_message_jni_cache.freq_hz, result->freq_hz);
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.score, result->score);
+    env->SetIntField(ft8Message,
+                     g_ft8_message_jni_cache.snr,
+                     normalize_decode_snr_for_display(result->snr, signalMode));
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.messageHash, (jint) result->message_hash);
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.signalFormat, signalMode);
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.i3, result->i3);
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.n3, result->n3);
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.report, result->report);
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.rFlag, result->r_flag);
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.rttyTu, result->rtty_tu);
+    env->SetIntField(ft8Message, g_ft8_message_jni_cache.euSerial, result->eu_serial);
+    env->SetLongField(ft8Message, g_ft8_message_jni_cache.callFromHash10, (jlong) result->call_de_hash10);
+    env->SetLongField(ft8Message, g_ft8_message_jni_cache.callFromHash12, (jlong) result->call_de_hash12);
+    env->SetLongField(ft8Message, g_ft8_message_jni_cache.callFromHash22, (jlong) result->call_de_hash22);
+    env->SetLongField(ft8Message, g_ft8_message_jni_cache.callToHash10, (jlong) result->call_to_hash10);
+    env->SetLongField(ft8Message, g_ft8_message_jni_cache.callToHash12, (jlong) result->call_to_hash12);
+    env->SetLongField(ft8Message, g_ft8_message_jni_cache.callToHash22, (jlong) result->call_to_hash22);
+
+    jstring callsignFrom = newJStringOrEmpty(env, result->call_de);
+    jstring callsignTo = newJStringOrEmpty(env, result->call_to);
+    jstring dxCallTo2 = newJStringOrEmpty(env, result->dx_call_to2);
+    jstring extraInfo = newJStringOrEmpty(env, result->extra);
+    jstring maidenGrid = newJStringOrEmpty(env, result->grid);
+    jstring rttyState = newJStringOrEmpty(env, result->rtty_state);
+    jstring arrlRac = newJStringOrEmpty(env, result->arrl_rac);
+    jstring arrlClass = newJStringOrEmpty(env, result->arrl_class);
+
+    env->SetObjectField(ft8Message, g_ft8_message_jni_cache.callsignFrom, callsignFrom);
+    env->SetObjectField(ft8Message, g_ft8_message_jni_cache.callsignTo, callsignTo);
+    env->SetObjectField(ft8Message, g_ft8_message_jni_cache.dxCallTo2, dxCallTo2);
+    env->SetObjectField(ft8Message, g_ft8_message_jni_cache.extraInfo, extraInfo);
+    env->SetObjectField(ft8Message, g_ft8_message_jni_cache.maidenGrid, maidenGrid);
+    env->SetObjectField(ft8Message, g_ft8_message_jni_cache.rttyState, rttyState);
+    env->SetObjectField(ft8Message, g_ft8_message_jni_cache.arrlRac, arrlRac);
+    env->SetObjectField(ft8Message, g_ft8_message_jni_cache.arrlClass, arrlClass);
+
+    env->DeleteLocalRef(callsignFrom);
+    env->DeleteLocalRef(callsignTo);
+    env->DeleteLocalRef(dxCallTo2);
+    env->DeleteLocalRef(extraInfo);
+    env->DeleteLocalRef(maidenGrid);
+    env->DeleteLocalRef(rttyState);
+    env->DeleteLocalRef(arrlRac);
+    env->DeleteLocalRef(arrlClass);
 }
 
 extern "C"
@@ -388,6 +457,159 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetApHints(JNIEnv *en
 /**
  * 把频率幅度置零
  */
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_InitBatchDecoder(JNIEnv *env,
+                                                                     jobject thiz,
+                                                                     jint sampleRate,
+                                                                     jint num_samples,
+                                                                     jboolean isFt8) {
+    (void) env;
+    (void) thiz;
+    ftx_mode_t mode = isFt8 ? FTX_MODE_FT8 : FTX_MODE_FT4;
+    return (jlong) ftx_decoder_create(mode, sampleRate, num_samples, 0LL);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DeleteBatchDecoder(JNIEnv *env,
+                                                                       jobject thiz,
+                                                                       jlong decoderHandle) {
+    (void) env;
+    (void) thiz;
+    ftx_decoder_destroy((ftx_decoder_t *) decoderHandle);
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *env,
+                                                                        jobject thiz,
+                                                                        jlong decoderHandle,
+                                                                        jlong utcTime,
+                                                                        jint expectedSamples,
+                                                                        jfloatArray buffer,
+                                                                        jint decodeMode,
+                                                                        jint decodePassCount,
+                                                                        jint multiDecodeRoundCount,
+                                                                        jint qsoFreqSensitivity,
+                                                                        jint decodeSensitivity,
+                                                                        jboolean enableEarlyDecode,
+                                                                        jboolean enableWidebandDxSearch,
+                                                                        jboolean deepDecodeEnabled,
+                                                                        jstring myCall,
+                                                                        jobjectArray hintCallsigns,
+                                                                        jobjectArray hintGrids) {
+    (void) thiz;
+    (void) expectedSamples;
+
+    auto *decoder = (ftx_decoder_t *) decoderHandle;
+    if (decoder == nullptr || buffer == nullptr) {
+        return nullptr;
+    }
+    if (!ensure_ft8_message_jni_cache(env)) {
+        return nullptr;
+    }
+
+    ftx_decoder_options_t options{};
+    options.decode_pass_count = decodePassCount;
+    options.multi_decode_round_count = multiDecodeRoundCount;
+    options.qso_freq_sensitivity = qsoFreqSensitivity;
+    options.decode_sensitivity = decodeSensitivity;
+    options.enable_early_decode = enableEarlyDecode ? 1 : 0;
+    options.enable_wideband_dx_search = enableWidebandDxSearch ? 1 : 0;
+    options.deep_decode_enabled = deepDecodeEnabled ? 1 : 0;
+    options.ldpc_iterations = deepDecodeEnabled ? deep_kLDPC_iterations : fast_kLDPC_iterations;
+    ftx_decoder_set_options(decoder, &options);
+
+    char myCallBuffer[FTX_AP_CALLSIGN_MAX] = {};
+    copyJStringToBuffer(env, myCall, myCallBuffer, sizeof(myCallBuffer));
+
+    const char *hintCalls[FTX_MAX_HINT_CALLS] = {};
+    const char *hintGridValues[FTX_MAX_HINT_CALLS] = {};
+    jstring hintCallRefs[FTX_MAX_HINT_CALLS] = {};
+    jstring hintGridRefs[FTX_MAX_HINT_CALLS] = {};
+    jsize callCount = hintCallsigns == nullptr ? 0 : env->GetArrayLength(hintCallsigns);
+    jsize gridCount = hintGrids == nullptr ? 0 : env->GetArrayLength(hintGrids);
+    jsize hintCount = callCount < gridCount ? callCount : gridCount;
+    if (hintCount > FTX_MAX_HINT_CALLS) {
+        hintCount = FTX_MAX_HINT_CALLS;
+    }
+
+    for (jsize index = 0; index < hintCount; ++index) {
+        hintCallRefs[index] = (jstring) env->GetObjectArrayElement(hintCallsigns, index);
+        hintGridRefs[index] = (jstring) env->GetObjectArrayElement(hintGrids, index);
+        hintCalls[index] = hintCallRefs[index] == nullptr
+                           ? nullptr
+                           : env->GetStringUTFChars(hintCallRefs[index], nullptr);
+        hintGridValues[index] = hintGridRefs[index] == nullptr
+                                ? nullptr
+                                : env->GetStringUTFChars(hintGridRefs[index], nullptr);
+    }
+    ftx_decoder_set_ap_hints(decoder, myCallBuffer, hintCalls, hintGridValues, (int) hintCount);
+
+    jsize sampleCount = env->GetArrayLength(buffer);
+    jfloat *samples = env->GetFloatArrayElements(buffer, nullptr);
+    int resultCount = -1;
+    if (samples != nullptr && sampleCount > 0) {
+        resultCount = ftx_decoder_process_float_slot(decoder,
+                                                     samples,
+                                                     (int) sampleCount,
+                                                     (long long) utcTime);
+        env->ReleaseFloatArrayElements(buffer, samples, JNI_ABORT);
+    } else if (samples != nullptr) {
+        env->ReleaseFloatArrayElements(buffer, samples, JNI_ABORT);
+    }
+
+    for (jsize index = 0; index < hintCount; ++index) {
+        if (hintCalls[index] != nullptr) {
+            env->ReleaseStringUTFChars(hintCallRefs[index], hintCalls[index]);
+        }
+        if (hintGridValues[index] != nullptr) {
+            env->ReleaseStringUTFChars(hintGridRefs[index], hintGridValues[index]);
+        }
+        if (hintCallRefs[index] != nullptr) {
+            env->DeleteLocalRef(hintCallRefs[index]);
+        }
+        if (hintGridRefs[index] != nullptr) {
+            env->DeleteLocalRef(hintGridRefs[index]);
+        }
+    }
+
+    if (resultCount < 0) {
+        return nullptr;
+    }
+    if (resultCount == 0) {
+        return env->NewObjectArray(0, g_ft8_message_jni_cache.messageClass, nullptr);
+    }
+
+    jobjectArray resultArray = env->NewObjectArray(resultCount,
+                                                   g_ft8_message_jni_cache.messageClass,
+                                                   nullptr);
+    if (resultArray == nullptr) {
+        return nullptr;
+    }
+
+    for (int index = 0; index < resultCount; ++index) {
+        ftx_decode_result_t result{};
+        if (ftx_decoder_get_result(decoder, index, &result) != 0) {
+            continue;
+        }
+
+        jobject messageObject = env->NewObject(g_ft8_message_jni_cache.messageClass,
+                                               g_ft8_message_jni_cache.constructorWithSignalFormat,
+                                               decodeMode);
+        if (messageObject == nullptr) {
+            continue;
+        }
+
+        populate_ft8_message_fields(env, messageObject, decodeMode, &result);
+        env->SetObjectArrayElement(resultArray, index, messageObject);
+        env->DeleteLocalRef(messageObject);
+    }
+
+    return resultArray;
+}
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_ReBuildSignal_doSubtractSignal(JNIEnv *env, jclass clazz,

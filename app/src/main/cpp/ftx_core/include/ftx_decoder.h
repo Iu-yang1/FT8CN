@@ -48,6 +48,13 @@ int ftx_decoder_process_float(
         int sample_count
 );
 
+int ftx_decoder_process_float_slot(
+        ftx_decoder_t *decoder,
+        const float *samples,
+        int sample_count,
+        long long utc_time
+);
+
 int ftx_decoder_get_result_count(
         const ftx_decoder_t *decoder
 );
