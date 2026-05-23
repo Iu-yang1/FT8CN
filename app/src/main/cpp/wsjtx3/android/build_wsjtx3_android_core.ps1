@@ -43,6 +43,17 @@ function Write-LogLine([string] $path, [string] $line) {
     Add-Content -Path $path -Value $line -Encoding UTF8
 }
 
+function Get-UniquePaths([System.Collections.Generic.List[string]] $paths) {
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $unique = New-Object System.Collections.Generic.List[string]
+    foreach ($path in $paths) {
+        if ($seen.Add($path)) {
+            $unique.Add($path)
+        }
+    }
+    return $unique
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..\..\..\..')).ProviderPath
 $hostCMakePath = Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\CMakeLists.txt'
@@ -115,9 +126,14 @@ foreach ($line in Get-Content $hostCMakePath) {
     }
 }
 
+$vendorFortranSources = Get-UniquePaths $vendorFortranSources
+$vendorCppSources = Get-UniquePaths $vendorCppSources
+$vendorCSources = Get-UniquePaths $vendorCSources
+
 $fortranSources = New-Object System.Collections.Generic.List[string]
 $vendorFortranSources | ForEach-Object { $fortranSources.Add($_) }
 $hostSupportFortranSources | ForEach-Object { $fortranSources.Add($_) }
+$fortranSources = Get-UniquePaths $fortranSources
 
 $fortranIncludeDirs = @(
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib'),
@@ -252,7 +268,8 @@ foreach ($src in $hostSupportCSources) {
 }
 
 Remove-Item $coreArchive -ErrorAction SilentlyContinue
-& $llvmAr rcs $coreArchive @($compiledObjects.ToArray())
+$compiledObjects = Get-UniquePaths $compiledObjects
+& $llvmAr rcs $coreArchive @($compiledObjects)
 if ($LASTEXITCODE -ne 0) {
     throw "Official WSJT-X archive creation failed: $coreArchive"
 }
