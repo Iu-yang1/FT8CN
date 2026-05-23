@@ -35,6 +35,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 
 public class FT8SignalListener {
     private static final String TAG = "FT8SignalListener";
@@ -61,6 +64,17 @@ public class FT8SignalListener {
     private final Object liveFullDecodeLock = new Object();
     private final boolean[] liveFullDecodeRunning = new boolean[]{false, false};
     private final long[] liveFullDecodeUtc = new long[]{Long.MIN_VALUE, Long.MIN_VALUE};
+    private final Object decodeScheduleLock = new Object();
+    private final long[] latestScheduledFullDecodeUtc = new long[]{Long.MIN_VALUE, Long.MIN_VALUE};
+    private final ExecutorService decodeExecutor = Executors.newSingleThreadExecutor(new ThreadFactory() {
+        @Override
+        public Thread newThread(Runnable runnable) {
+            return new Thread(null,
+                    runnable,
+                    "ft8-native-decode-worker",
+                    NATIVE_DECODE_THREAD_STACK_BYTES);
+        }
+    });
 
     static {
         System.loadLibrary("ft8cn");
@@ -89,6 +103,82 @@ public class FT8SignalListener {
         SlotDedupeEntry(Ft8Message message, boolean publishedAsStrong) {
             this.message = message;
             this.publishedAsStrong = publishedAsStrong;
+        }
+    }
+
+    private static class DecodeProfile {
+        final String stageName;
+        final int decodePassCount;
+        final int multiDecodeRoundCount;
+        final int qsoFreqSensitivity;
+        final int decodeSensitivity;
+        final boolean enableEarlyDecode;
+        final boolean enableWidebandDxSearch;
+        final boolean useDeepSession;
+        final boolean markWeakSignal;
+        final boolean publishAsDeep;
+        final boolean publishEmptyWhenSlotIsNew;
+        final boolean scheduleDeepSupplement;
+
+        DecodeProfile(String stageName,
+                      int decodePassCount,
+                      int multiDecodeRoundCount,
+                      int qsoFreqSensitivity,
+                      int decodeSensitivity,
+                      boolean enableEarlyDecode,
+                      boolean enableWidebandDxSearch,
+                      boolean useDeepSession,
+                      boolean markWeakSignal,
+                      boolean publishAsDeep,
+                      boolean publishEmptyWhenSlotIsNew,
+                      boolean scheduleDeepSupplement) {
+            this.stageName = stageName;
+            this.decodePassCount = decodePassCount;
+            this.multiDecodeRoundCount = multiDecodeRoundCount;
+            this.qsoFreqSensitivity = qsoFreqSensitivity;
+            this.decodeSensitivity = decodeSensitivity;
+            this.enableEarlyDecode = enableEarlyDecode;
+            this.enableWidebandDxSearch = enableWidebandDxSearch;
+            this.useDeepSession = useDeepSession;
+            this.markWeakSignal = markWeakSignal;
+            this.publishAsDeep = publishAsDeep;
+            this.publishEmptyWhenSlotIsNew = publishEmptyWhenSlotIsNew;
+            this.scheduleDeepSupplement = scheduleDeepSupplement;
+        }
+    }
+
+    private static class DecodeRequest {
+        final long utc;
+        final float[] voiceData;
+        final int sourceSampleRate;
+        final int decodeMode;
+        final int decodeStage;
+        final int expectedSamples;
+        final boolean notifyBefore;
+        final boolean notifyFinished;
+        final boolean liveFullSessionRequest;
+        final DecodeProfile profile;
+
+        DecodeRequest(long utc,
+                      float[] voiceData,
+                      int sourceSampleRate,
+                      int decodeMode,
+                      int decodeStage,
+                      int expectedSamples,
+                      boolean notifyBefore,
+                      boolean notifyFinished,
+                      boolean liveFullSessionRequest,
+                      DecodeProfile profile) {
+            this.utc = utc;
+            this.voiceData = voiceData;
+            this.sourceSampleRate = sourceSampleRate;
+            this.decodeMode = decodeMode;
+            this.decodeStage = decodeStage;
+            this.expectedSamples = expectedSamples;
+            this.notifyBefore = notifyBefore;
+            this.notifyFinished = notifyFinished;
+            this.liveFullSessionRequest = liveFullSessionRequest;
+            this.profile = profile;
         }
     }
 
@@ -147,6 +237,7 @@ public class FT8SignalListener {
         if (utcTimer != null) {
             utcTimer.destroy();
         }
+        decodeExecutor.shutdownNow();
     }
 
     public boolean isListening() {
@@ -404,16 +495,16 @@ public class FT8SignalListener {
         return null;
     }
 
-    private void publishDecodeMessages(long utc,
-                                       int slotTimeM,
-                                       int decodeMode,
-                                       ArrayList<Ft8Message> messages,
-                                       ArrayList<Ft8Message> offsetMessages,
-                                       boolean isDeep,
-                                       boolean publishEmptyWhenSlotIsNew) {
+    private int publishDecodeMessages(long utc,
+                                      int slotTimeM,
+                                      int decodeMode,
+                                      ArrayList<Ft8Message> messages,
+                                      ArrayList<Ft8Message> offsetMessages,
+                                      boolean isDeep,
+                                      boolean publishEmptyWhenSlotIsNew) {
         SlotFilterResult filtered = filterNewSlotMessages(utc, decodeMode, messages);
         if (filtered.messages.size() == 0 && (!publishEmptyWhenSlotIsNew || filtered.hadPublishedBefore)) {
-            return;
+            return 0;
         }
 
         if (onFt8Listen != null) {
@@ -425,6 +516,7 @@ public class FT8SignalListener {
                     isDeep
             );
         }
+        return filtered.messages.size();
     }
 
     /**
@@ -535,6 +627,320 @@ public class FT8SignalListener {
         decodeFt8(utc, voiceData, FT8Common.SAMPLE_RATE, decodeMode);
     }
 
+    private int clampInt(int value, int minValue, int maxValue) {
+        if (value < minValue) {
+            return minValue;
+        }
+        if (value > maxValue) {
+            return maxValue;
+        }
+        return value;
+    }
+
+    private DecodeProfile buildDecodeProfile(int decodeMode, int decodeStage, boolean deepSupplement) {
+        if (deepSupplement) {
+            return new DecodeProfile(
+                    "deep",
+                    clampInt(GeneralVariables.wsjtxDecodePassCount, 2, 3),
+                    clampInt(GeneralVariables.wsjtxMultiDecodeRoundCount, 2, 3),
+                    clampInt(GeneralVariables.wsjtxQsoFreqSensitivity, 0, 2),
+                    clampInt(Math.max(1, GeneralVariables.wsjtxDecodeSensitivity), 1, 2),
+                    false,
+                    GeneralVariables.wsjtxWidebandDxSearch,
+                    true,
+                    true,
+                    true,
+                    false,
+                    false
+            );
+        }
+
+        if (decodeStage == DECODE_STAGE_EARLY) {
+            return new DecodeProfile(
+                    "early",
+                    1,
+                    1,
+                    0,
+                    0,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false
+            );
+        }
+
+        return new DecodeProfile(
+                "live",
+                clampInt(GeneralVariables.wsjtxDecodePassCount, 1, 2),
+                1,
+                clampInt(GeneralVariables.wsjtxQsoFreqSensitivity, 0, 1),
+                1,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                GeneralVariables.deepDecodeMode && ReBuildSignal.supportSubtract(decodeMode)
+        );
+    }
+
+    private void markScheduledLiveFullDecode(int decodeMode, long utc) {
+        synchronized (decodeScheduleLock) {
+            latestScheduledFullDecodeUtc[getLiveDecodeModeIndex(decodeMode)] = utc;
+        }
+    }
+
+    private long getLatestScheduledLiveFullDecodeUtc(int decodeMode) {
+        synchronized (decodeScheduleLock) {
+            return latestScheduledFullDecodeUtc[getLiveDecodeModeIndex(decodeMode)];
+        }
+    }
+
+    private boolean shouldSkipScheduledDecode(DecodeRequest request) {
+        long latestLiveUtc = getLatestScheduledLiveFullDecodeUtc(request.decodeMode);
+        if (request.liveFullSessionRequest) {
+            return request.utc < latestLiveUtc;
+        }
+        if (request.profile.publishAsDeep) {
+            return request.utc < latestLiveUtc;
+        }
+        if (request.decodeStage == DECODE_STAGE_EARLY) {
+            return request.utc < latestLiveUtc;
+        }
+        return false;
+    }
+
+    private long getDecodeDeadlineMs(int decodeMode, DecodeProfile profile) {
+        if ("early".equals(profile.stageName)) {
+            return System.currentTimeMillis() + FT8Common.getEarlyDecodeTimeoutMs(decodeMode);
+        }
+        if ("deep".equals(profile.stageName)) {
+            return System.currentTimeMillis() + FT8Common.DEEP_DECODE_TIMEOUT;
+        }
+        return 0L;
+    }
+
+    private void maybeScheduleDeepSupplement(DecodeRequest request, boolean nativeOwnsSessionFlow) {
+        if (!nativeOwnsSessionFlow || !request.profile.scheduleDeepSupplement) {
+            return;
+        }
+
+        enqueueDecodeRequest(new DecodeRequest(
+                request.utc,
+                request.voiceData,
+                request.sourceSampleRate,
+                request.decodeMode,
+                DECODE_STAGE_FULL,
+                request.expectedSamples,
+                false,
+                false,
+                false,
+                buildDecodeProfile(request.decodeMode, DECODE_STAGE_FULL, true)
+        ));
+    }
+
+    private void enqueueDecodeRequest(DecodeRequest request) {
+        if (request.liveFullSessionRequest) {
+            markScheduledLiveFullDecode(request.decodeMode, request.utc);
+        }
+
+        decodeExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                long ft8Decoder = 0L;
+                try {
+                    if (shouldSkipScheduledDecode(request)) {
+                        Log.d(TAG, String.format(Locale.US,
+                                "skip stale decode stage=%s mode=%s utc=%d latestLiveUtc=%d",
+                                request.profile.stageName,
+                                FT8Common.modeToString(request.decodeMode),
+                                request.utc,
+                                getLatestScheduledLiveFullDecodeUtc(request.decodeMode)));
+                        return;
+                    }
+
+                    ft8Decoder = executeDecodeRequest(request);
+                } finally {
+                    if (ft8Decoder != 0L) {
+                        DeleteDecoder(ft8Decoder);
+                    }
+                    if (request.liveFullSessionRequest) {
+                        finishLiveFullDecode(request.decodeMode, request.utc);
+                    }
+                }
+            }
+        });
+    }
+
+    private long executeDecodeRequest(DecodeRequest request) {
+        long ft8Decoder = 0L;
+        long time = System.currentTimeMillis();
+        final int slotTimeM = FT8Common.getSlotTimeM(request.decodeMode);
+        final boolean isFt8 = (request.decodeMode == FT8Common.FT8_MODE);
+
+        if (request.notifyBefore && onFt8Listen != null) {
+            onFt8Listen.beforeListen(request.utc);
+        }
+
+        final float[] decoderInput = resampleForDecoder(
+                request.voiceData,
+                request.sourceSampleRate,
+                request.decodeMode,
+                request.decodeStage
+        );
+        if (decoderInput == null || decoderInput.length == 0) {
+            Log.w(TAG, String.format(
+                    "瑙ｇ爜杈撳叆涓虹┖锛岃烦杩囨湰杞? mode=%s, stage=%s, srcRate=%d",
+                    FT8Common.modeToString(request.decodeMode),
+                    request.profile.stageName,
+                    request.sourceSampleRate
+            ));
+            return 0L;
+        }
+
+        maybeDumpDecoderInput(decoderInput,
+                request.utc,
+                request.sourceSampleRate,
+                request.decodeMode,
+                request.decodeStage,
+                request.expectedSamples);
+        ft8Decoder = InitDecoder(
+                request.utc,
+                FT8Common.SAMPLE_RATE,
+                request.expectedSamples,
+                isFt8
+        );
+        if (ft8Decoder == 0L) {
+            Log.e(TAG, String.format(Locale.US,
+                    "init decoder failed mode=%s stage=%s utc=%d",
+                    FT8Common.modeToString(request.decodeMode),
+                    request.profile.stageName,
+                    request.utc));
+            return 0L;
+        }
+
+        String[][] apHints = buildDecoderApHints();
+        DecoderSetApHints(
+                ft8Decoder,
+                GeneralVariables.getShortCallsign(GeneralVariables.myCallsign).toUpperCase().trim(),
+                apHints[0],
+                apHints[1]
+        );
+        DecoderSetWsjtOptions(
+                ft8Decoder,
+                request.profile.decodePassCount,
+                request.profile.multiDecodeRoundCount,
+                request.profile.qsoFreqSensitivity,
+                request.profile.decodeSensitivity,
+                request.profile.enableEarlyDecode,
+                request.profile.enableWidebandDxSearch
+        );
+        DecoderMonitorPressFloat(decoderInput, ft8Decoder);
+
+        Log.d(TAG, String.format(Locale.US,
+                "decode start stage=%s mode=%s utc=%d samples=%d profile[pass=%d round=%d qso=%d sens=%d early=%s wide=%s deep=%s]",
+                request.profile.stageName,
+                FT8Common.modeToString(request.decodeMode),
+                request.utc,
+                decoderInput.length,
+                request.profile.decodePassCount,
+                request.profile.multiDecodeRoundCount,
+                request.profile.qsoFreqSensitivity,
+                request.profile.decodeSensitivity,
+                request.profile.enableEarlyDecode ? "Y" : "N",
+                request.profile.enableWidebandDxSearch ? "Y" : "N",
+                request.profile.useDeepSession ? "Y" : "N"));
+
+        boolean nativeOwnsSessionFlow = DecoderOwnsSessionFlow(ft8Decoder);
+        long deadlineMs = getDecodeDeadlineMs(request.decodeMode, request.profile);
+
+        if (nativeOwnsSessionFlow) {
+            ArrayList<Ft8Message> sessionMsgs = runDecode(
+                    ft8Decoder,
+                    request.utc,
+                    request.profile.useDeepSession,
+                    request.profile.markWeakSignal,
+                    request.decodeMode,
+                    deadlineMs
+            );
+
+            timeSec = System.currentTimeMillis() - time;
+            int publishedCount = publishDecodeMessages(
+                    request.utc,
+                    slotTimeM,
+                    request.decodeMode,
+                    sessionMsgs,
+                    sessionMsgs,
+                    request.profile.publishAsDeep,
+                    request.profile.publishEmptyWhenSlotIsNew
+            );
+
+            if (request.notifyFinished) {
+                decodeTimeSec.postValue(timeSec);
+                if (onFt8Listen != null) {
+                    onFt8Listen.afterDecodeFinished(request.utc, timeSec);
+                }
+            }
+
+            Log.d(TAG, String.format(Locale.US,
+                    "decode done stage=%s mode=%s rawNativeCount=%d javaPublishedCount=%d durationMs=%d",
+                    request.profile.stageName,
+                    FT8Common.modeToString(request.decodeMode),
+                    sessionMsgs.size(),
+                    publishedCount,
+                    timeSec));
+
+            DeleteDecoder(ft8Decoder);
+            ft8Decoder = 0L;
+            maybeScheduleDeepSupplement(request, nativeOwnsSessionFlow);
+            return 0L;
+        }
+
+        ArrayList<Ft8Message> allMsg = new ArrayList<>();
+        ArrayList<Ft8Message> msgs = runDecode(
+                ft8Decoder,
+                request.utc,
+                request.profile.useDeepSession,
+                request.profile.markWeakSignal,
+                request.decodeMode,
+                deadlineMs
+        );
+        addMsgToList(allMsg, msgs);
+
+        timeSec = System.currentTimeMillis() - time;
+        int publishedCount = publishDecodeMessages(
+                request.utc,
+                slotTimeM,
+                request.decodeMode,
+                msgs,
+                allMsg,
+                request.profile.publishAsDeep,
+                request.profile.publishEmptyWhenSlotIsNew
+        );
+
+        if (request.notifyFinished) {
+            decodeTimeSec.postValue(timeSec);
+            if (onFt8Listen != null) {
+                onFt8Listen.afterDecodeFinished(request.utc, timeSec);
+            }
+        }
+
+        Log.d(TAG, String.format(Locale.US,
+                "decode done stage=%s mode=%s rawNativeCount=%d javaPublishedCount=%d durationMs=%d",
+                request.profile.stageName,
+                FT8Common.modeToString(request.decodeMode),
+                msgs.size(),
+                publishedCount,
+                timeSec));
+
+        DeleteDecoder(ft8Decoder);
+        return 0L;
+    }
+
     private void decodeFt8(long utc,
                            float[] voiceData,
                            int sourceSampleRate,
@@ -570,6 +976,23 @@ public class FT8SignalListener {
                     FT8Common.modeToString(decodeMode),
                     utc,
                     getLiveFullDecodeUtc(decodeMode)
+            ));
+            return;
+        }
+
+        // 新链路统一走单 worker 队列；后面的旧线程路径暂时保留作回退，便于分阶段重构。
+        if (decodeExecutor != null) {
+            enqueueDecodeRequest(new DecodeRequest(
+                    utc,
+                    voiceData,
+                    sourceSampleRate,
+                    decodeMode,
+                    decodeStage,
+                    expectedSamples,
+                    notifyBefore,
+                    notifyFinished,
+                    liveFullSessionRequest,
+                    buildDecodeProfile(decodeMode, decodeStage, false)
             ));
             return;
         }
@@ -829,7 +1252,11 @@ public class FT8SignalListener {
         synchronized (liveFullDecodeLock) {
             int modeIndex = getLiveDecodeModeIndex(decodeMode);
             if (liveFullDecodeRunning[modeIndex]) {
-                return false;
+                if (utc <= liveFullDecodeUtc[modeIndex]) {
+                    return false;
+                }
+                liveFullDecodeUtc[modeIndex] = utc;
+                return true;
             }
             liveFullDecodeRunning[modeIndex] = true;
             liveFullDecodeUtc[modeIndex] = utc;
