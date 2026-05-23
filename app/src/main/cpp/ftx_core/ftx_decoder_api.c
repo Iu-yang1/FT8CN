@@ -132,15 +132,11 @@ ftx_decoder_t *ftx_decoder_create(ftx_mode_t mode,
                                   int num_samples,
                                   long long utc_time) {
     ftx_decoder_t *decoder;
-    int is_ft8;
 
     if (sample_rate <= 0 || num_samples <= 0) {
         return NULL;
     }
     if (mode != FTX_MODE_FT8 && mode != FTX_MODE_FT4 && mode != FTX_MODE_Q65) {
-        return NULL;
-    }
-    if (mode == FTX_MODE_Q65) {
         return NULL;
     }
 
@@ -155,8 +151,7 @@ ftx_decoder_t *ftx_decoder_create(ftx_mode_t mode,
     decoder->utc_time = utc_time;
     load_default_options(&decoder->options);
 
-    is_ft8 = (mode == FTX_MODE_FT8);
-    decoder->impl = (decoder_t *) init_decoder((int64_t) utc_time, sample_rate, num_samples, is_ft8);
+    decoder->impl = (decoder_t *) init_decoder((int64_t) utc_time, sample_rate, num_samples, (int) mode);
     if (decoder->impl == NULL) {
         free(decoder);
         return NULL;

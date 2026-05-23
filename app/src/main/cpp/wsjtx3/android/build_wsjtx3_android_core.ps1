@@ -265,7 +265,7 @@ $probeSo = Join-Path $probeDir 'libandroid_wsjtx3_probe.so'
 #include "app/src/main/cpp/wsjtx3/wsjtx3_bridge.h"
 int wsjtx3_android_probe(int handle, const float *samples, int count) {
     wsjtx3_bridge_decode_result_t result;
-    int created = wsjtx3_bridge_create(1, 12000, count, 0);
+    int created = wsjtx3_bridge_create(0, 12000, count, 0);
     wsjtx3_bridge_process_float(handle, samples, count);
     wsjtx3_bridge_get_result(created, 0, &result);
     wsjtx3_bridge_destroy(created);

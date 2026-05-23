@@ -43,10 +43,15 @@ void signalToFFT(decoder_t *decoder, float signal[], int sample_rate) {
     free(window);
 }
 
-void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8) {
+void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, int mode) {
     decoder_t *decoder = (decoder_t *) malloc(sizeof(decoder_t));
+    ftx_protocol_t monitor_protocol = PROTO_FT8;
     if (decoder == NULL) {
         return NULL;
+    }
+
+    if (mode == FTX_MODE_FT4) {
+        monitor_protocol = PROTO_FT4;
     }
 
     memset(decoder, 0, sizeof(decoder_t));
@@ -60,10 +65,10 @@ void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft
             .sample_rate = sample_rate,
             .time_osr = kTime_osr,
             .freq_osr = kFreq_osr,
-            .protocol = is_ft8 ? PROTO_FT8 : PROTO_FT4
+            .protocol = monitor_protocol
     };
 
-    if (!wsjtx3_backend_init_decoder(decoder, utcTime, sample_rate, num_samples, is_ft8)) {
+    if (!wsjtx3_backend_init_decoder(decoder, utcTime, sample_rate, num_samples, mode)) {
         free(decoder);
         return NULL;
     }

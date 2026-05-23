@@ -6,6 +6,7 @@
 #include "../ft8/pack.h"
 #include "../ft8/text.h"
 #include "../ft8/unpack.h"
+#include "../ftx_core/include/ftx_types.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -35,7 +36,11 @@
 enum {
     kWsjtDefaultQsoFrequencyHz = 1000,
     kWsjtDefaultTxFrequencyHz = 1000,
-    kFtxPayloadBytes = 10
+    kFtxPayloadBytes = 10,
+    kQ65DecodeMaxHz = 5000,
+    kQ65DefaultTrPeriodSeconds = 60,
+    kQ65DefaultSubmode = 0,
+    kQ65MaxSeconds = 300
 };
 
 typedef struct {
@@ -49,7 +54,9 @@ typedef struct {
     int qso_frequency_hz;
     int tx_frequency_hz;
     int bridge_handle;
-    bool is_ft8;
+    int mode;
+    int q65_submode;
+    int q65_tr_period_seconds;
     wsjtx_decoder_options_t options;
     ap_hints_t ap_hints;
     float *raw_samples;
@@ -96,13 +103,13 @@ static void wsjtx3_bridge_unlock(void) {
 }
 #endif
 
-static int bridge_create_locked(int is_ft8,
+static int bridge_create_locked(int mode,
                                 int sample_rate,
                                 int expected_samples,
                                 int64_t utc_time) {
     int handle;
     wsjtx3_bridge_lock();
-    handle = wsjtx3_bridge_create(is_ft8, sample_rate, expected_samples, utc_time);
+    handle = wsjtx3_bridge_create(mode, sample_rate, expected_samples, utc_time);
     wsjtx3_bridge_unlock();
     return handle;
 }
@@ -178,6 +185,50 @@ static wsjtx3_backend_state_t *get_state(decoder_t *decoder) {
     return (decoder == NULL) ? NULL : (wsjtx3_backend_state_t *) decoder->backend_state;
 }
 
+static bool is_ft8_mode(int mode) {
+    return mode == FTX_MODE_FT8;
+}
+
+static bool is_ft4_mode(int mode) {
+    return mode == FTX_MODE_FT4;
+}
+
+static bool is_q65_mode(int mode) {
+    return mode == FTX_MODE_Q65;
+}
+
+static const char *backend_mode_label(int mode) {
+    switch (mode) {
+        case FTX_MODE_FT8:
+            return "FT8";
+        case FTX_MODE_FT4:
+            return "FT4";
+        case FTX_MODE_Q65:
+            return "Q65";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static int backend_default_expected_samples(int mode) {
+    switch (mode) {
+        case FTX_MODE_FT4:
+            return FT8_SAMPLE_RATE * 8;
+        case FTX_MODE_Q65:
+            return FT8_SAMPLE_RATE * kQ65DefaultTrPeriodSeconds;
+        case FTX_MODE_FT8:
+        default:
+            return FT8_SAMPLE_RATE * 15;
+    }
+}
+
+static int backend_decode_max_hz(int mode) {
+    if (is_q65_mode(mode)) {
+        return kQ65DecodeMaxHz;
+    }
+    return 3000;
+}
+
 static int clamp_i16(int value) {
     if (value > 32767) {
         return 32767;
@@ -189,7 +240,16 @@ static int clamp_i16(int value) {
 }
 
 static float backend_symbol_period(const wsjtx3_backend_state_t *state) {
-    return (state != NULL && !state->is_ft8) ? FT4_SYMBOL_PERIOD : FT8_SYMBOL_PERIOD;
+    if (state == NULL) {
+        return FT8_SYMBOL_PERIOD;
+    }
+    if (is_ft4_mode(state->mode)) {
+        return FT4_SYMBOL_PERIOD;
+    }
+    if (is_q65_mode(state->mode)) {
+        return 1.0f;
+    }
+    return FT8_SYMBOL_PERIOD;
 }
 
 static int score_from_sync(float sync_value) {
@@ -260,6 +320,14 @@ static void populate_candidate_from_bridge_result(const wsjtx3_backend_state_t *
     memset(candidate, 0, sizeof(*candidate));
     candidate->score = (int16_t) score_from_sync(bridge_result->sync);
     candidate->snr = bridge_result->snr;
+
+    if (state != NULL && is_q65_mode(state->mode)) {
+        candidate->freq_offset = (int16_t) clamp_i16((int) lroundf(bridge_result->freq));
+        candidate->freq_sub = 0;
+        candidate->time_offset = (int16_t) clamp_i16((int) lroundf(bridge_result->dt * 10.0f));
+        candidate->time_sub = 0;
+        return;
+    }
 
     symbol_period = backend_symbol_period(state);
     quantized_freq = bridge_result->freq * symbol_period * (float) kFreq_osr;
@@ -433,7 +501,7 @@ static int ft4_followup_round_budget(const wsjtx3_backend_state_t *state) {
     return budget;
 }
 
-static void build_storage_a91(bool is_ft8,
+static void build_storage_a91(int mode,
                               const uint8_t payload[kFtxPayloadBytes],
                               uint8_t storage_a91[FTX_LDPC_K_BYTES],
                               uint16_t *out_crc) {
@@ -445,7 +513,7 @@ static void build_storage_a91(bool is_ft8,
     memset(encoded_a91, 0, sizeof(encoded_a91));
     memcpy(encoded_payload, payload, sizeof(encoded_payload));
 
-    if (!is_ft8) {
+    if (is_ft4_mode(mode)) {
         for (int index = 0; index < kFtxPayloadBytes; ++index) {
             encoded_payload[index] ^= kFT4XORSequence[index];
         }
@@ -454,7 +522,7 @@ static void build_storage_a91(bool is_ft8,
     ftx_add_crc(encoded_payload, encoded_a91);
     memcpy(storage_a91, encoded_a91, sizeof(encoded_a91));
 
-    if (!is_ft8) {
+    if (is_ft4_mode(mode)) {
         for (int index = 0; index < kFtxPayloadBytes; ++index) {
             storage_a91[index] ^= kFT4XORSequence[index];
         }
@@ -472,7 +540,7 @@ static void fill_message_fallback(message_t *message, const char *decoded_text) 
     message->hash = (uint16_t) (fallback_text_hash(decoded_text) & 0xFFFFu);
 }
 
-static void build_message_from_text(bool is_ft8,
+static void build_message_from_text(int mode,
                                     const char *decoded_text,
                                     message_t *message) {
     uint8_t payload[kFtxPayloadBytes];
@@ -488,12 +556,20 @@ static void build_message_from_text(bool is_ft8,
 
     if (unpackToMessage_t(payload, message) < 0 || !has_visible_text(message->text)) {
         fill_message_fallback(message, decoded_text);
-        build_storage_a91(is_ft8, payload, message->a91, &crc_value);
-        message->hash = crc_value;
+        if (!is_q65_mode(mode)) {
+            build_storage_a91(mode, payload, message->a91, &crc_value);
+            message->hash = crc_value;
+        }
         return;
     }
 
-    build_storage_a91(is_ft8, payload, message->a91, &crc_value);
+    if (is_q65_mode(mode)) {
+        memset(message->a91, 0, sizeof(message->a91));
+        message->hash = (uint16_t) (fallback_text_hash(decoded_text) & 0xFFFFu);
+        return;
+    }
+
+    build_storage_a91(mode, payload, message->a91, &crc_value);
     message->hash = crc_value;
 }
 
@@ -650,7 +726,7 @@ static void merge_bridge_results(wsjtx3_backend_state_t *state, int bridge_count
         decoded.time_sec = bridge_result.dt;
         decoded.freq_hz = bridge_result.freq;
         populate_candidate_from_bridge_result(state, &bridge_result, &decoded.candidate);
-        build_message_from_text(state->is_ft8, bridge_result.decoded, &decoded.message);
+        build_message_from_text(state->mode, bridge_result.decoded, &decoded.message);
 
         {
             const int duplicate_index = find_duplicate_index(state, &decoded);
@@ -801,6 +877,30 @@ static int run_ft4_session(decoder_t *decoder,
     return total_bridge_count;
 }
 
+static int run_q65_session(decoder_t *decoder,
+                           wsjtx3_backend_state_t *state,
+                           int sample_count) {
+    char his_call[FTX_AP_CALLSIGN_MAX];
+    char his_grid[FTX_AP_GRID_MAX];
+
+    (void) decoder;
+    if (state == NULL) {
+        return 0;
+    }
+
+    his_call[0] = '\0';
+    his_grid[0] = '\0';
+    push_bridge_options(state, &state->options, his_call, his_grid);
+    return run_bridge_pass(state,
+                           sample_count,
+                           &state->options,
+                           his_call,
+                           his_grid,
+                           "q65-main",
+                           1,
+                           1);
+}
+
 static int run_wsjtx3_session(decoder_t *decoder,
                               wsjtx3_backend_state_t *state,
                               int sample_count) {
@@ -808,10 +908,16 @@ static int run_wsjtx3_session(decoder_t *decoder,
         return 0;
     }
 
-    if (state->is_ft8) {
+    if (is_ft8_mode(state->mode)) {
         return run_ft8_session(decoder, state, sample_count);
     }
-    return run_ft4_session(decoder, state, sample_count);
+    if (is_ft4_mode(state->mode)) {
+        return run_ft4_session(decoder, state, sample_count);
+    }
+    if (is_q65_mode(state->mode)) {
+        return run_q65_session(decoder, state, sample_count);
+    }
+    return 0;
 }
 
 static int finalize_wsjtx3_session(decoder_t *decoder,
@@ -829,7 +935,7 @@ static int finalize_wsjtx3_session(decoder_t *decoder,
     state->last_merged_count = state->session_result_count;
 
     WSJTX3_LOGI("find_sync session mode=%s rawBridgeCount=%d mergedCount=%d",
-                state->is_ft8 ? "FT8" : "FT4",
+                backend_mode_label(state->mode),
                 total_bridge_count,
                 state->session_result_count);
 
@@ -862,8 +968,12 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
                                  int64_t utcTime,
                                  int sample_rate,
                                  int num_samples,
-                                 bool is_ft8) {
+                                 int mode) {
     if (decoder == NULL) {
+        return false;
+    }
+    if (!is_ft8_mode(mode) && !is_ft4_mode(mode) && !is_q65_mode(mode)) {
+        WSJTX3_LOGE("init failed: unsupported mode=%d", mode);
         return false;
     }
 
@@ -881,8 +991,10 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
     state->ldpc_iterations = fast_kLDPC_iterations;
     state->qso_frequency_hz = kWsjtDefaultQsoFrequencyHz;
     state->tx_frequency_hz = kWsjtDefaultTxFrequencyHz;
-    state->is_ft8 = is_ft8;
-    state->raw_capacity = (num_samples > 0) ? num_samples : (is_ft8 ? FT8_SAMPLE_RATE * 15 : FT8_SAMPLE_RATE * 8);
+    state->mode = mode;
+    state->q65_submode = kQ65DefaultSubmode;
+    state->q65_tr_period_seconds = kQ65DefaultTrPeriodSeconds;
+    state->raw_capacity = (num_samples > 0) ? num_samples : backend_default_expected_samples(mode);
     state->raw_samples = (float *) calloc((size_t) state->raw_capacity, sizeof(float));
     if (state->raw_samples == NULL) {
         WSJTX3_LOGE("init failed: calloc raw_samples returned null capacity=%d", state->raw_capacity);
@@ -890,11 +1002,11 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
         return false;
     }
 
-    state->bridge_handle = bridge_create_locked(is_ft8 ? 1 : 0, sample_rate, num_samples, utcTime);
+    state->bridge_handle = bridge_create_locked(mode, sample_rate, num_samples, utcTime);
     if (state->bridge_handle <= 0) {
-        WSJTX3_LOGE("init failed: wsjtx3_bridge_create returned %d isFt8=%d sampleRate=%d numSamples=%d utc=%lld",
+        WSJTX3_LOGE("init failed: wsjtx3_bridge_create returned %d mode=%s sampleRate=%d numSamples=%d utc=%lld",
                     state->bridge_handle,
-                    is_ft8 ? 1 : 0,
+                    backend_mode_label(mode),
                     sample_rate,
                     num_samples,
                     (long long) utcTime);
@@ -906,9 +1018,9 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
     decoder->backend_state = state;
     reset_backend_results(decoder, state);
     sync_bridge_options(state);
-    WSJTX3_LOGI("init ok: handle=%d isFt8=%d sampleRate=%d numSamples=%d",
+    WSJTX3_LOGI("init ok: handle=%d mode=%s sampleRate=%d numSamples=%d",
                 state->bridge_handle,
-                is_ft8 ? 1 : 0,
+                backend_mode_label(mode),
                 sample_rate,
                 num_samples);
     return true;
@@ -916,7 +1028,7 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
     (void) utcTime;
     (void) sample_rate;
     (void) num_samples;
-    (void) is_ft8;
+    (void) mode;
     WSJTX3_LOGE("init failed: FT8CN_ENABLE_WSJTX3_BACKEND is disabled at compile time");
     return false;
 #endif

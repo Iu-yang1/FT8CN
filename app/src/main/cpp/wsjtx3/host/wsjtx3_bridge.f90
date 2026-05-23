@@ -2,18 +2,27 @@ module wsjtx3_bridge
   use iso_c_binding
   use ft8_decode, only: ft8_decoder
   use ft4_decode, only: ft4_decoder
+  use q65_decode, only: q65_decoder
+  use prog_args, only: temp_dir
   implicit none
 
   integer, parameter :: WSJTX3_MAX_CONTEXTS = 4
   integer, parameter :: WSJTX3_MAX_RESULTS = 100
+  integer, parameter :: WSJTX3_MODE_FT8 = 0
+  integer, parameter :: WSJTX3_MODE_FT4 = 1
+  integer, parameter :: WSJTX3_MODE_Q65 = 2
   integer, parameter :: FT8_BRIDGE_NPTS = 15 * 12000
   integer, parameter :: FT4_BRIDGE_NMAX = 21 * 3456
+  integer, parameter :: Q65_BRIDGE_NMAX = 300 * 12000
   integer, parameter :: FT8_PHASE_EARLY = 41
   integer, parameter :: FT8_PHASE_LATE = 47
   integer, parameter :: FT8_PHASE_FULL = 50
   integer, parameter :: FTX_DECODE_MIN_HZ = 0
   integer, parameter :: FT8_DECODE_MAX_HZ = 3000
   integer, parameter :: FT4_DECODE_MAX_HZ = 3000
+  integer, parameter :: Q65_DECODE_MAX_HZ = 5000
+  integer, parameter :: Q65_DEFAULT_TR_PERIOD = 60
+  integer, parameter :: Q65_DEFAULT_SUBMODE = 0
 
   type :: wsjtx3_result_t
      real(c_float) :: sync = 0.0
@@ -37,7 +46,7 @@ module wsjtx3_bridge
 
   type :: wsjtx3_context_t
      logical :: active = .false.
-     logical :: is_ft8 = .true.
+     integer(c_int) :: mode = WSJTX3_MODE_FT8
      integer(c_int) :: sample_rate = 12000
      integer(c_int) :: expected_samples = 0
      integer(c_long_long) :: utc_time = 0
@@ -50,6 +59,8 @@ module wsjtx3_bridge
      integer(c_int) :: ldpc_iterations = 20
      integer(c_int) :: qso_frequency_hz = 1000
      integer(c_int) :: tx_frequency_hz = 1000
+     integer(c_int) :: q65_submode = Q65_DEFAULT_SUBMODE
+     integer(c_int) :: q65_tr_period = Q65_DEFAULT_TR_PERIOD
      character(len=12) :: my_call = ''
      character(len=12) :: his_call = ''
      character(len=6) :: his_grid = ''
@@ -60,6 +71,7 @@ module wsjtx3_bridge
   type(wsjtx3_context_t), save :: g_contexts(WSJTX3_MAX_CONTEXTS)
   type(ft8_decoder), save :: g_ft8_decoders(WSJTX3_MAX_CONTEXTS)
   type(ft4_decoder), save :: g_ft4_decoders(WSJTX3_MAX_CONTEXTS)
+  type(q65_decoder), save :: g_q65_decoders(WSJTX3_MAX_CONTEXTS)
   integer, save :: g_active_context = 0
 
 contains
@@ -72,6 +84,43 @@ contains
     end if
     context_valid = g_contexts(handle)%active
   end function context_valid
+
+  logical function context_is_ft8(context)
+    type(wsjtx3_context_t), intent(in) :: context
+    context_is_ft8 = context%mode == WSJTX3_MODE_FT8
+  end function context_is_ft8
+
+  logical function context_is_ft4(context)
+    type(wsjtx3_context_t), intent(in) :: context
+    context_is_ft4 = context%mode == WSJTX3_MODE_FT4
+  end function context_is_ft4
+
+  logical function context_is_q65(context)
+    type(wsjtx3_context_t), intent(in) :: context
+    context_is_q65 = context%mode == WSJTX3_MODE_Q65
+  end function context_is_q65
+
+  integer(c_int) function mode_max_samples(context)
+    type(wsjtx3_context_t), intent(in) :: context
+    if (context_is_q65(context)) then
+       mode_max_samples = min(max(context%expected_samples, context%q65_tr_period * 12000), Q65_BRIDGE_NMAX)
+    else if (context_is_ft4(context)) then
+       mode_max_samples = FT4_BRIDGE_NMAX
+    else
+       mode_max_samples = FT8_BRIDGE_NPTS
+    end if
+  end function mode_max_samples
+
+  integer(c_int) function mode_max_frequency(context)
+    type(wsjtx3_context_t), intent(in) :: context
+    if (context_is_q65(context)) then
+       mode_max_frequency = Q65_DECODE_MAX_HZ
+    else if (context_is_ft4(context)) then
+       mode_max_frequency = FT4_DECODE_MAX_HZ
+    else
+       mode_max_frequency = FT8_DECODE_MAX_HZ
+    end if
+  end function mode_max_frequency
 
   subroutine reset_context_results(handle)
     integer(c_int), intent(in) :: handle
@@ -97,7 +146,7 @@ contains
        return
     end if
     g_contexts(handle)%active = .false.
-    g_contexts(handle)%is_ft8 = .true.
+    g_contexts(handle)%mode = WSJTX3_MODE_FT8
     g_contexts(handle)%sample_rate = 12000
     g_contexts(handle)%expected_samples = 0
     g_contexts(handle)%utc_time = 0
@@ -110,6 +159,8 @@ contains
     g_contexts(handle)%ldpc_iterations = 20
     g_contexts(handle)%qso_frequency_hz = 1000
     g_contexts(handle)%tx_frequency_hz = 1000
+    g_contexts(handle)%q65_submode = Q65_DEFAULT_SUBMODE
+    g_contexts(handle)%q65_tr_period = Q65_DEFAULT_TR_PERIOD
     g_contexts(handle)%my_call = ''
     g_contexts(handle)%his_call = ''
     g_contexts(handle)%his_grid = ''
@@ -239,6 +290,42 @@ contains
     ft4_ndepth_from_context = clamp_int(depth, 1_c_int, 3_c_int)
   end function ft4_ndepth_from_context
 
+  integer(c_int) function q65_ndepth_from_context(context)
+    type(wsjtx3_context_t), intent(in) :: context
+    integer(c_int) :: depth
+
+    depth = 1_c_int
+    if (context%decode_pass_count >= 2_c_int .or. context%decode_sensitivity >= 2_c_int) then
+       depth = 2_c_int
+    end if
+    if (context%decode_pass_count >= 3_c_int .and. context%ldpc_iterations > 20_c_int) then
+       depth = 3_c_int
+    end if
+    q65_ndepth_from_context = clamp_int(depth, 1_c_int, 3_c_int)
+  end function q65_ndepth_from_context
+
+  integer(c_int) function q65_ntol_from_context(context)
+    type(wsjtx3_context_t), intent(in) :: context
+
+    select case (context%qso_freq_sensitivity)
+    case (0)
+       q65_ntol_from_context = 2500_c_int
+    case (2)
+       q65_ntol_from_context = 200_c_int
+    case default
+       q65_ntol_from_context = 1000_c_int
+    end select
+  end function q65_ntol_from_context
+
+  real function q65_emedelay_from_context(context)
+    type(wsjtx3_context_t), intent(in) :: context
+
+    q65_emedelay_from_context = 0.0
+    if (context%q65_tr_period == 60_c_int) then
+       q65_emedelay_from_context = 2.5
+    end if
+  end function q65_emedelay_from_context
+
   integer(c_int) function ft8_phase_from_context(context, sample_count)
     type(wsjtx3_context_t), intent(in) :: context
     integer(c_int), intent(in) :: sample_count
@@ -353,6 +440,23 @@ contains
     call append_active_result(sync, snr, dt, freq, decoded, nap, qual)
   end subroutine wsjtx3_ft4_callback
 
+  subroutine wsjtx3_q65_callback(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
+    class(q65_decoder), intent(inout) :: this
+    integer, intent(in) :: nutc
+    real, intent(in) :: snr1
+    integer, intent(in) :: nsnr
+    real, intent(in) :: dt
+    real, intent(in) :: freq
+    character(len=37), intent(in) :: decoded
+    integer, intent(in) :: idec
+    integer, intent(in) :: nused
+    integer, intent(in) :: ntrperiod
+    real :: qual
+
+    qual = real(nused)
+    call append_active_result(snr1, nsnr, dt, freq, decoded, idec, qual)
+  end subroutine wsjtx3_q65_callback
+
   logical function ft8_allow_followup_rounds(context, phase)
     type(wsjtx3_context_t), intent(in) :: context
     integer(c_int), intent(in) :: phase
@@ -466,22 +570,63 @@ contains
     call run_ft8_followup_rounds(handle, context, iwave, followup_budget)
   end subroutine run_ft8_decode_pipeline
 
-  integer(c_int) function wsjtx3_bridge_create(is_ft8, sample_rate, expected_samples, utc_time) &
+  subroutine run_q65_decode_pipeline(handle, context, iwave, sample_count)
+    integer(c_int), intent(in) :: handle
+    type(wsjtx3_context_t), intent(in) :: context
+    integer(c_int16_t), intent(in) :: iwave(:)
+    integer(c_int), intent(in) :: sample_count
+    integer(c_int) :: full_samples
+    integer(c_int) :: navg0
+    integer(c_int) :: nqd
+    integer(c_int) :: nutc
+    integer(c_int) :: nqf(20)
+
+    full_samples = context%q65_tr_period * 12000
+    if (sample_count < full_samples) then
+       return
+    end if
+
+    open(17, file=trim(temp_dir)//'/red.dat', status='unknown')
+    open(14, file=trim(temp_dir)//'/avemsg.txt', status='unknown')
+
+    navg0 = 0
+    nqd = 1
+    nqf = 0
+    nutc = utc_millis_to_hhmmss(context%utc_time)
+    g_active_context = handle
+    call g_q65_decoders(handle)%decode(wsjtx3_q65_callback, iwave, nqd, nutc, context%q65_tr_period, &
+         context%q65_submode, context%qso_frequency_hz, q65_ntol_from_context(context), &
+         q65_ndepth_from_context(context), FTX_DECODE_MIN_HZ, Q65_DECODE_MAX_HZ, .true., .true., .true., &
+         0_c_int, .true., q65_emedelay_from_context(context), context%my_call, context%his_call, &
+         context%his_grid, qso_progress_from_context(context), 0_c_int, .false., navg0, nqf)
+    g_active_context = 0
+
+    close(17)
+    close(14)
+  end subroutine run_q65_decode_pipeline
+
+  integer(c_int) function wsjtx3_bridge_create(mode, sample_rate, expected_samples, utc_time) &
        bind(C, name="wsjtx3_bridge_create")
-    integer(c_int), value :: is_ft8
+    integer(c_int), value :: mode
     integer(c_int), value :: sample_rate
     integer(c_int), value :: expected_samples
     integer(c_long_long), value :: utc_time
     integer :: handle
     wsjtx3_bridge_create = 0
+    if (mode /= WSJTX3_MODE_FT8 .and. mode /= WSJTX3_MODE_FT4 .and. mode /= WSJTX3_MODE_Q65) then
+       return
+    end if
     do handle = 1, WSJTX3_MAX_CONTEXTS
        if (.not. g_contexts(handle)%active) then
           call clear_context(handle)
           g_contexts(handle)%active = .true.
-          g_contexts(handle)%is_ft8 = (is_ft8 /= 0)
+          g_contexts(handle)%mode = mode
           g_contexts(handle)%sample_rate = sample_rate
           g_contexts(handle)%expected_samples = expected_samples
           g_contexts(handle)%utc_time = utc_time
+          if (mode == WSJTX3_MODE_Q65 .and. expected_samples > 0) then
+             g_contexts(handle)%q65_tr_period = max(1_c_int, expected_samples / 12000)
+          end if
           wsjtx3_bridge_create = handle
           return
        end if
@@ -503,6 +648,9 @@ contains
     end if
     g_contexts(handle)%utc_time = utc_time
     g_contexts(handle)%expected_samples = expected_samples
+    if (g_contexts(handle)%mode == WSJTX3_MODE_Q65 .and. expected_samples > 0) then
+       g_contexts(handle)%q65_tr_period = max(1_c_int, expected_samples / 12000)
+    end if
     call reset_context_results(handle)
   end subroutine wsjtx3_bridge_reset
 
@@ -552,10 +700,12 @@ contains
        return
     end if
     if (qso_frequency_hz >= FTX_DECODE_MIN_HZ) then
-       g_contexts(handle)%qso_frequency_hz = clamp_int(qso_frequency_hz, FTX_DECODE_MIN_HZ, FT8_DECODE_MAX_HZ)
+       g_contexts(handle)%qso_frequency_hz = clamp_int(qso_frequency_hz, FTX_DECODE_MIN_HZ, &
+            mode_max_frequency(g_contexts(handle)))
     end if
     if (tx_frequency_hz >= FTX_DECODE_MIN_HZ) then
-       g_contexts(handle)%tx_frequency_hz = clamp_int(tx_frequency_hz, FTX_DECODE_MIN_HZ, FT8_DECODE_MAX_HZ)
+       g_contexts(handle)%tx_frequency_hz = clamp_int(tx_frequency_hz, FTX_DECODE_MIN_HZ, &
+            mode_max_frequency(g_contexts(handle)))
     end if
   end subroutine wsjtx3_bridge_set_qso_frequencies
 
@@ -582,7 +732,7 @@ contains
        return
     end if
 
-    max_samples = merge(FT8_BRIDGE_NPTS, FT4_BRIDGE_NMAX, context%is_ft8)
+    max_samples = mode_max_samples(context)
     copy_count = min(sample_count, max_samples)
     if (copy_count <= 0) then
        return
@@ -595,15 +745,17 @@ contains
             kind=c_int16_t)
     end do
 
-    if (context%is_ft8) then
+    if (context_is_ft8(context)) then
        call run_ft8_decode_pipeline(handle, context, iwave, sample_count)
-    else
+    else if (context_is_ft4(context)) then
        g_active_context = handle
        call g_ft4_decoders(handle)%decode(wsjtx3_ft4_callback, iwave, qso_progress_from_context(context), &
             context%qso_frequency_hz, FTX_DECODE_MIN_HZ, FT4_DECODE_MAX_HZ, &
             ft4_ndepth_from_context(context, sample_count), .false., 0, &
             context%my_call, context%his_call)
        g_active_context = 0
+    else if (context_is_q65(context)) then
+       call run_q65_decode_pipeline(handle, context, iwave, sample_count)
     end if
 
     wsjtx3_bridge_process_float = g_contexts(handle)%result_count

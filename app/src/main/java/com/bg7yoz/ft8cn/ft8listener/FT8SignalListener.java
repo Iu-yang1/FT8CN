@@ -69,13 +69,13 @@ public class FT8SignalListener {
     private long slotDedupeUtc = Long.MIN_VALUE;
     private int slotDedupeMode = -1;
     private final Object liveFullDecodeLock = new Object();
-    private final boolean[] liveFullDecodeRunning = new boolean[]{false, false};
-    private final long[] liveFullDecodeUtc = new long[]{Long.MIN_VALUE, Long.MIN_VALUE};
+    private final boolean[] liveFullDecodeRunning = new boolean[]{false, false, false};
+    private final long[] liveFullDecodeUtc = new long[]{Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE};
     private final Object decodeScheduleLock = new Object();
-    private final long[] latestScheduledFullDecodeUtc = new long[]{Long.MIN_VALUE, Long.MIN_VALUE};
+    private final long[] latestScheduledFullDecodeUtc = new long[]{Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE};
     private final Object nativeDecoderHandleLock = new Object();
-    private final long[] nativeDecoderHandles = new long[]{0L, 0L};
-    private final int[] nativeDecoderExpectedSamples = new int[]{0, 0};
+    private final long[] nativeDecoderHandles = new long[]{0L, 0L, 0L};
+    private final int[] nativeDecoderExpectedSamples = new int[]{0, 0, 0};
     private static final class NativeBatchDecodeResult {
         final ArrayList<Ft8Message> messages = new ArrayList<>();
         int bridgeRawCount;
@@ -904,7 +904,7 @@ public class FT8SignalListener {
             long handle = InitBatchDecoder(
                     FT8Common.SAMPLE_RATE,
                     expectedSamples,
-                    decodeMode == FT8Common.FT8_MODE
+                    decodeMode
             );
             if (handle != 0L) {
                 nativeDecoderHandles[modeIndex] = handle;
@@ -1231,7 +1231,13 @@ public class FT8SignalListener {
     }
 
     private int getLiveDecodeModeIndex(int decodeMode) {
-        return decodeMode == FT8Common.FT4_MODE ? 1 : 0;
+        if (decodeMode == FT8Common.FT4_MODE) {
+            return 1;
+        }
+        if (decodeMode == FT8Common.Q65_MODE) {
+            return 2;
+        }
+        return 0;
     }
 
     private boolean isLiveFullDecodeRunning(int decodeMode) {
@@ -1717,7 +1723,7 @@ public class FT8SignalListener {
                                              int decodeSensitivity,
                                              boolean enableEarlyDecode,
                                              boolean enableWidebandDxSearch);
-    public native long InitBatchDecoder(int sampleRate, int numSamples, boolean isFt8);
+    public native long InitBatchDecoder(int sampleRate, int numSamples, int decodeMode);
     public native void DeleteBatchDecoder(long decoderHandle);
     public native int DecoderGetLastBridgeRawCount(long decoderHandle);
     public native int DecoderGetLastMergedCount(long decoderHandle);

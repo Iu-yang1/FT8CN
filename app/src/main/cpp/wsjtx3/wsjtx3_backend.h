@@ -11,7 +11,7 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
                                  int64_t utcTime,
                                  int sample_rate,
                                  int num_samples,
-                                 bool is_ft8);
+                                 int mode);
 void wsjtx3_backend_free_decoder(decoder_t *decoder);
 void wsjtx3_backend_monitor_press(decoder_t *decoder, const float *signal, int sample_count);
 int wsjtx3_backend_find_sync(decoder_t *decoder);

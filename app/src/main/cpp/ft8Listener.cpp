@@ -21,6 +21,7 @@ extern "C" {
 
 static const int SIGNAL_MODE_FT8 = 0;
 static const int SIGNAL_MODE_FT4 = 1;
+static const int SIGNAL_MODE_Q65 = 2;
 
 typedef struct {
     jclass messageClass;
@@ -53,6 +54,8 @@ typedef struct {
     jfieldID callToHash10;
     jfieldID callToHash12;
     jfieldID callToHash22;
+    jfieldID txRawText;
+    jfieldID useTxRawText;
 } ft8_message_jni_cache_t;
 
 static ft8_message_jni_cache_t g_ft8_message_jni_cache = {};
@@ -138,7 +141,22 @@ static bool ensure_ft8_message_jni_cache(JNIEnv *env) {
     g_ft8_message_jni_cache.callToHash10 = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "callToHash10", "J");
     g_ft8_message_jni_cache.callToHash12 = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "callToHash12", "J");
     g_ft8_message_jni_cache.callToHash22 = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "callToHash22", "J");
+    g_ft8_message_jni_cache.txRawText = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "txRawText", "Ljava/lang/String;");
+    g_ft8_message_jni_cache.useTxRawText = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "useTxRawText", "Z");
     return true;
+}
+
+static bool should_use_raw_decoded_text(int signalMode, const ftx_decode_result_t *result) {
+    if (signalMode == SIGNAL_MODE_Q65) {
+        return true;
+    }
+    if (result == nullptr) {
+        return false;
+    }
+    return result->text[0] != '\0'
+           && result->call_to[0] == '\0'
+           && result->call_de[0] == '\0'
+           && result->extra[0] == '\0';
 }
 
 static void populate_ft8_message_fields(JNIEnv *env,
@@ -189,6 +207,15 @@ static void populate_ft8_message_fields(JNIEnv *env,
     env->SetObjectField(ft8Message, g_ft8_message_jni_cache.rttyState, rttyState);
     env->SetObjectField(ft8Message, g_ft8_message_jni_cache.arrlRac, arrlRac);
     env->SetObjectField(ft8Message, g_ft8_message_jni_cache.arrlClass, arrlClass);
+
+    if (g_ft8_message_jni_cache.txRawText != nullptr && g_ft8_message_jni_cache.useTxRawText != nullptr) {
+        jstring txRawText = newJStringOrEmpty(env, should_use_raw_decoded_text(signalMode, result) ? result->text : "");
+        env->SetObjectField(ft8Message, g_ft8_message_jni_cache.txRawText, txRawText);
+        env->SetBooleanField(ft8Message,
+                             g_ft8_message_jni_cache.useTxRawText,
+                             should_use_raw_decoded_text(signalMode, result) ? JNI_TRUE : JNI_FALSE);
+        env->DeleteLocalRef(txRawText);
+    }
 
     env->DeleteLocalRef(callsignFrom);
     env->DeleteLocalRef(callsignTo);
@@ -463,11 +490,26 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_InitBatchDecoder(JNIEnv *env
                                                                      jobject thiz,
                                                                      jint sampleRate,
                                                                      jint num_samples,
-                                                                     jboolean isFt8) {
+                                                                     jint mode) {
     (void) env;
     (void) thiz;
-    ftx_mode_t mode = isFt8 ? FTX_MODE_FT8 : FTX_MODE_FT4;
-    return (jlong) ftx_decoder_create(mode, sampleRate, num_samples, 0LL);
+    ftx_mode_t decoderMode;
+
+    switch (mode) {
+        case SIGNAL_MODE_FT8:
+            decoderMode = FTX_MODE_FT8;
+            break;
+        case SIGNAL_MODE_FT4:
+            decoderMode = FTX_MODE_FT4;
+            break;
+        case SIGNAL_MODE_Q65:
+            decoderMode = FTX_MODE_Q65;
+            break;
+        default:
+            return 0L;
+    }
+
+    return (jlong) ftx_decoder_create(decoderMode, sampleRate, num_samples, 0LL);
 }
 
 extern "C"

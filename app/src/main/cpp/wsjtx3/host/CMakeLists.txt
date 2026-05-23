@@ -69,6 +69,8 @@ set(WSJTX3_VENDOR_FORTRAN_SOURCES
         ${WSJTX3_VENDOR_LIB}/four2a.f90
         ${WSJTX3_VENDOR_LIB}/peakup.f90
         ${WSJTX3_VENDOR_LIB}/platanh.f90
+        ${WSJTX3_VENDOR_LIB}/sec0.f90
+        ${WSJTX3_VENDOR_LIB}/ana64.f90
         ${WSJTX3_VENDOR_LIB}/ft2/gfsk_pulse.f90
         ${WSJTX3_VENDOR_LIB}/77bit/packjt77.f90
 
@@ -106,6 +108,7 @@ set(WSJTX3_VENDOR_FORTRAN_SOURCES
         ${WSJTX3_VENDOR_LIB}/ft4/sync4d.f90
 
         # Q65 decode / encode 所需最小链路
+        ${WSJTX3_VENDOR_LIB}/q65_decode.f90
         ${WSJTX3_VENDOR_LIB}/q65_decode.f90
         ${WSJTX3_VENDOR_LIB}/spec64.f90
         ${WSJTX3_VENDOR_LIB}/twkfreq.f90

@@ -3,6 +3,7 @@
 
 #include "ft8/constants.h"
 #include "ft8/decode.h"
+#include "ftx_core/include/ftx_types.h"
 #include "monitor_opr.h"
 
 #include <time.h>
@@ -63,7 +64,7 @@ static const int kFreq_osr = 2;
 static const int kTime_osr = 2;
 
 void signalToFFT(decoder_t *decoder, float signal[], int sample_rate);
-void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8);
+void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, int mode);
 void delete_decoder(decoder_t *decoder);
 void decoder_monitor_press(float signal[], decoder_t *decoder);
 void decoder_monitor_press_samples(float signal[], decoder_t *decoder, int sample_count);

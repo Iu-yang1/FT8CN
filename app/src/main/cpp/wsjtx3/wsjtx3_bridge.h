@@ -17,7 +17,7 @@ typedef struct {
     char decoded[38];
 } wsjtx3_bridge_decode_result_t;
 
-int wsjtx3_bridge_create(int is_ft8,
+int wsjtx3_bridge_create(int mode,
                          int sample_rate,
                          int expected_samples,
                          long long utc_time);
