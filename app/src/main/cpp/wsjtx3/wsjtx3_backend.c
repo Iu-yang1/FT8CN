@@ -12,6 +12,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 
 #if defined(ANDROID)
 #include <android/log.h>
@@ -51,6 +56,121 @@ typedef struct {
     int session_result_count;
     uint8_t current_a91[FTX_LDPC_K_BYTES];
 } wsjtx3_backend_state_t;
+
+#if defined(_WIN32)
+static INIT_ONCE g_wsjtx3_bridge_lock_once = INIT_ONCE_STATIC_INIT;
+static CRITICAL_SECTION g_wsjtx3_bridge_lock;
+
+static BOOL CALLBACK init_wsjtx3_bridge_lock(PINIT_ONCE init_once,
+                                             PVOID parameter,
+                                             PVOID *context) {
+    (void) init_once;
+    (void) parameter;
+    (void) context;
+    InitializeCriticalSection(&g_wsjtx3_bridge_lock);
+    return TRUE;
+}
+
+static void wsjtx3_bridge_lock(void) {
+    InitOnceExecuteOnce(&g_wsjtx3_bridge_lock_once,
+                        init_wsjtx3_bridge_lock,
+                        NULL,
+                        NULL);
+    EnterCriticalSection(&g_wsjtx3_bridge_lock);
+}
+
+static void wsjtx3_bridge_unlock(void) {
+    LeaveCriticalSection(&g_wsjtx3_bridge_lock);
+}
+#else
+static pthread_mutex_t g_wsjtx3_bridge_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void wsjtx3_bridge_lock(void) {
+    pthread_mutex_lock(&g_wsjtx3_bridge_lock);
+}
+
+static void wsjtx3_bridge_unlock(void) {
+    pthread_mutex_unlock(&g_wsjtx3_bridge_lock);
+}
+#endif
+
+static int bridge_create_locked(int is_ft8,
+                                int sample_rate,
+                                int expected_samples,
+                                int64_t utc_time) {
+    int handle;
+    wsjtx3_bridge_lock();
+    handle = wsjtx3_bridge_create(is_ft8, sample_rate, expected_samples, utc_time);
+    wsjtx3_bridge_unlock();
+    return handle;
+}
+
+static void bridge_destroy_locked(int handle) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_destroy(handle);
+    wsjtx3_bridge_unlock();
+}
+
+static void bridge_reset_locked(int handle, int64_t utc_time, int expected_samples) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_reset(handle, utc_time, expected_samples);
+    wsjtx3_bridge_unlock();
+}
+
+static void bridge_set_options_locked(int handle,
+                                      int decode_pass_count,
+                                      int multi_decode_round_count,
+                                      int qso_freq_sensitivity,
+                                      int decode_sensitivity,
+                                      int enable_early_decode,
+                                      int enable_wideband_dx_search,
+                                      int ldpc_iterations) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_set_options(handle,
+                              decode_pass_count,
+                              multi_decode_round_count,
+                              qso_freq_sensitivity,
+                              decode_sensitivity,
+                              enable_early_decode,
+                              enable_wideband_dx_search,
+                              ldpc_iterations);
+    wsjtx3_bridge_unlock();
+}
+
+static void bridge_set_ap_hints_locked(int handle,
+                                       const char *my_call,
+                                       const char *his_call,
+                                       const char *his_grid) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_set_ap_hints(handle, my_call, his_call, his_grid);
+    wsjtx3_bridge_unlock();
+}
+
+static void bridge_set_qso_frequencies_locked(int handle,
+                                              int qso_frequency_hz,
+                                              int tx_frequency_hz) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_set_qso_frequencies(handle, qso_frequency_hz, tx_frequency_hz);
+    wsjtx3_bridge_unlock();
+}
+
+static int bridge_process_float_locked(int handle, const float *samples, int sample_count) {
+    int bridge_count;
+    wsjtx3_bridge_lock();
+    bridge_count = wsjtx3_bridge_process_float(handle, samples, sample_count);
+    wsjtx3_bridge_unlock();
+    return bridge_count;
+}
+
+static int bridge_get_result_locked(int handle,
+                                    int index,
+                                    wsjtx3_bridge_decode_result_t *out_result) {
+    int ok;
+    wsjtx3_bridge_lock();
+    ok = wsjtx3_bridge_get_result(handle, index, out_result);
+    wsjtx3_bridge_unlock();
+    return ok;
+}
 
 static wsjtx3_backend_state_t *get_state(decoder_t *decoder) {
     return (decoder == NULL) ? NULL : (wsjtx3_backend_state_t *) decoder->backend_state;
@@ -447,7 +567,7 @@ static void sync_bridge_options(wsjtx3_backend_state_t *state) {
     }
 
     select_primary_ap_hint(&state->ap_hints, his_call, his_grid);
-    wsjtx3_bridge_set_options(state->bridge_handle,
+    bridge_set_options_locked(state->bridge_handle,
                               state->options.decode_pass_count,
                               state->options.multi_decode_round_count,
                               state->options.qso_freq_sensitivity,
@@ -455,8 +575,8 @@ static void sync_bridge_options(wsjtx3_backend_state_t *state) {
                               state->options.enable_early_decode ? 1 : 0,
                               state->options.enable_wideband_dx_search ? 1 : 0,
                               state->ldpc_iterations);
-    wsjtx3_bridge_set_ap_hints(state->bridge_handle, state->ap_hints.my_call, his_call, his_grid);
-    wsjtx3_bridge_set_qso_frequencies(state->bridge_handle,
+    bridge_set_ap_hints_locked(state->bridge_handle, state->ap_hints.my_call, his_call, his_grid);
+    bridge_set_qso_frequencies_locked(state->bridge_handle,
                                       state->qso_frequency_hz,
                                       state->tx_frequency_hz);
 #else
@@ -479,7 +599,7 @@ static void push_bridge_options(const wsjtx3_backend_state_t *state,
         effective_options = &default_options;
     }
 
-    wsjtx3_bridge_set_options(state->bridge_handle,
+    bridge_set_options_locked(state->bridge_handle,
                               effective_options->decode_pass_count,
                               effective_options->multi_decode_round_count,
                               effective_options->qso_freq_sensitivity,
@@ -487,11 +607,11 @@ static void push_bridge_options(const wsjtx3_backend_state_t *state,
                               effective_options->enable_early_decode ? 1 : 0,
                               effective_options->enable_wideband_dx_search ? 1 : 0,
                               state->ldpc_iterations);
-    wsjtx3_bridge_set_ap_hints(state->bridge_handle,
+    bridge_set_ap_hints_locked(state->bridge_handle,
                                state->ap_hints.my_call,
                                his_call == NULL ? "" : his_call,
                                his_grid == NULL ? "" : his_grid);
-    wsjtx3_bridge_set_qso_frequencies(state->bridge_handle,
+    bridge_set_qso_frequencies_locked(state->bridge_handle,
                                       state->qso_frequency_hz,
                                       state->tx_frequency_hz);
 #else
@@ -514,7 +634,7 @@ static void merge_bridge_results(wsjtx3_backend_state_t *state, int bridge_count
         ft8_message decoded;
 
         memset(&bridge_result, 0, sizeof(bridge_result));
-        if (!wsjtx3_bridge_get_result(state->bridge_handle, index, &bridge_result) ||
+        if (!bridge_get_result_locked(state->bridge_handle, index, &bridge_result) ||
             !has_visible_text(bridge_result.decoded)) {
             continue;
         }
@@ -554,7 +674,8 @@ static int run_bridge_pass(wsjtx3_backend_state_t *state,
                            int pass_index,
                            int pass_total) {
 #if FT8CN_ENABLE_WSJTX3_BACKEND
-    const int bridge_count = wsjtx3_bridge_process_float(state->bridge_handle,
+    const int merged_before = state->session_result_count;
+    const int bridge_count = bridge_process_float_locked(state->bridge_handle,
                                                          state->raw_samples,
                                                          sample_count);
 
@@ -573,6 +694,12 @@ static int run_bridge_pass(wsjtx3_backend_state_t *state,
                 his_call == NULL ? "" : his_call);
 
     merge_bridge_results(state, bridge_count);
+    WSJTX3_LOGI("find_sync merge pass=%s handle=%d rawBridgeCount=%d mergedCount=%d totalMerged=%d",
+                pass_label == NULL ? "default" : pass_label,
+                state->bridge_handle,
+                bridge_count,
+                state->session_result_count - merged_before,
+                state->session_result_count);
     return bridge_count;
 #else
     (void) state;
@@ -706,7 +833,7 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
         return false;
     }
 
-    state->bridge_handle = wsjtx3_bridge_create(is_ft8 ? 1 : 0, sample_rate, num_samples, utcTime);
+    state->bridge_handle = bridge_create_locked(is_ft8 ? 1 : 0, sample_rate, num_samples, utcTime);
     if (state->bridge_handle <= 0) {
         WSJTX3_LOGE("init failed: wsjtx3_bridge_create returned %d isFt8=%d sampleRate=%d numSamples=%d utc=%lld",
                     state->bridge_handle,
@@ -745,7 +872,7 @@ void wsjtx3_backend_free_decoder(decoder_t *decoder) {
     }
 #if FT8CN_ENABLE_WSJTX3_BACKEND
     if (state->bridge_handle > 0) {
-        wsjtx3_bridge_destroy(state->bridge_handle);
+        bridge_destroy_locked(state->bridge_handle);
     }
 #endif
     free(state->raw_samples);
@@ -783,7 +910,7 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
 
 #if FT8CN_ENABLE_WSJTX3_BACKEND
     const int sample_count = state->last_sample_count > 0 ? state->last_sample_count : state->expected_samples;
-    const int bridge_count = wsjtx3_bridge_process_float(state->bridge_handle,
+    const int bridge_count = bridge_process_float_locked(state->bridge_handle,
                                                          state->raw_samples,
                                                          sample_count);
     WSJTX3_LOGI("find_sync bridge handle=%d samples=%d bridgeCount=%d ldpc=%d passes=%d rounds=%d early=%d wideband=%d",
@@ -805,7 +932,7 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
         wsjtx3_bridge_decode_result_t bridge_result;
         ft8_message decoded;
         memset(&bridge_result, 0, sizeof(bridge_result));
-        if (!wsjtx3_bridge_get_result(state->bridge_handle, index, &bridge_result) ||
+        if (!bridge_get_result_locked(state->bridge_handle, index, &bridge_result) ||
             !has_visible_text(bridge_result.decoded)) {
             continue;
         }
@@ -840,7 +967,10 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
           sizeof(state->session_results[0]),
           compare_session_results);
 
-    WSJTX3_LOGI("find_sync sessionResults=%d after bridgeCount=%d", state->session_result_count, bridge_count);
+    WSJTX3_LOGI("find_sync sessionResults=%d after bridgeCount=%d mergedCount=%d",
+                state->session_result_count,
+                bridge_count,
+                state->session_result_count);
     publish_session_results_to_decoder(decoder, state);
     return state->session_result_count;
 #else
@@ -880,7 +1010,7 @@ void wsjtx3_backend_reset(decoder_t *decoder, long utcTime, int num_samples) {
     reset_backend_results(decoder, state);
 #if FT8CN_ENABLE_WSJTX3_BACKEND
     if (state->bridge_handle > 0) {
-        wsjtx3_bridge_reset(state->bridge_handle, utcTime, num_samples);
+        bridge_reset_locked(state->bridge_handle, utcTime, num_samples);
         sync_bridge_options(state);
     }
 #endif
