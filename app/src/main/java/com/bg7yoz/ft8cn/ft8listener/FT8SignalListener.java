@@ -1061,7 +1061,22 @@ public class FT8SignalListener {
                 request.profile.enableWidebandDxSearch ? "Y" : "N",
                 request.profile.useDeepSession ? "Y" : "N"));
 
-        NativeBatchDecodeResult nativeResult = batchDecodeMessages(request, decoderInput);
+        NativeBatchDecodeResult nativeResult;
+        if (request.decodeStage == DECODE_STAGE_EARLY && !earlyPhaseThresholdReached) {
+            Log.d(TAG, String.format(Locale.US,
+                    "decode early-guard listener=%d request=%d trigger=%d mode=%s utc=%d inputSamples=%d expectedSamples=%d sampleDurationMs=%d reason=insufficient-early-samples",
+                    listenerInstanceId,
+                    request.requestSequence,
+                    request.triggerSequence,
+                    FT8Common.modeToString(request.decodeMode),
+                    request.utc,
+                    decoderInput.length,
+                    request.expectedSamples,
+                    decoderInputDurationMs));
+            nativeResult = new NativeBatchDecodeResult();
+        } else {
+            nativeResult = batchDecodeMessages(request, decoderInput);
+        }
         ArrayList<Ft8Message> msgs = nativeResult.messages;
         ArrayList<Ft8Message> allMsg = new ArrayList<>(msgs);
 
