@@ -24,6 +24,13 @@ void wsjtx3_backend_set_ldpc_iterations(decoder_t *decoder, int iterations);
 void wsjtx3_backend_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
 void wsjtx3_backend_set_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
 void wsjtx3_backend_configure_runtime_dirs(const char *temp_dir, const char *data_dir);
+int wsjtx3_backend_generate_q65_wave(const char *message,
+                                     int q65_submode,
+                                     int q65_tr_period,
+                                     int sample_rate,
+                                     float base_frequency_hz,
+                                     float *out_wave,
+                                     int out_capacity);
 bool wsjtx3_backend_owns_session_flow(decoder_t *decoder);
 void wsjtx3_backend_subtract_signal(decoder_t *decoder,
                                     const uint8_t *payload,

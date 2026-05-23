@@ -21,9 +21,17 @@ extern "C" {
 #include "ft8/encode.h"
 #include "ft8/hash22.h"
 #include "ft8/constants.h"
+#include "wsjtx3/wsjtx3_backend.h"
 }
 
 #define GFSK_CONST_K 5.336446f ///< 等于 pi * sqrt(2 / log(2))
+
+static constexpr jint SIGNAL_MODE_FT8 = 0;
+static constexpr jint SIGNAL_MODE_FT4 = 1;
+static constexpr jint SIGNAL_MODE_Q65 = 2;
+static constexpr int Q65_DEFAULT_SUBMODE = 0;
+static constexpr int Q65_DEFAULT_TR_PERIOD_SECONDS = 60;
+static constexpr int Q65_SYMBOL_COUNT = 85;
 
 char *Jstring2CStr(JNIEnv *env, jstring jstr) {
     char *rtn = nullptr;
@@ -64,6 +72,57 @@ static void buildMessageText(JNIEnv *env, jobject msgObj, char *outText, int out
     if (text != nullptr) {
         env->ReleaseStringUTFChars(textObj, text);
     }
+}
+
+static jfloatArray generateQ65Wave(JNIEnv *env,
+                                   const char *messageText,
+                                   jfloat frequency,
+                                   jint sampleRate) {
+    if (messageText == nullptr || messageText[0] == '\0' || sampleRate <= 0) {
+        return nullptr;
+    }
+
+    const int baseNsps12k = 7200;
+    int scaledNsps = static_cast<int>(std::lround(
+            static_cast<double>(baseNsps12k) * static_cast<double>(sampleRate) / 12000.0));
+    if (scaledNsps < 1) {
+        scaledNsps = 1;
+    }
+
+    const int capacity = Q65_SYMBOL_COUNT * scaledNsps;
+    float *signal = static_cast<float *>(malloc(sizeof(float) * capacity));
+    if (signal == nullptr) {
+        return nullptr;
+    }
+    memset(signal, 0, sizeof(float) * capacity);
+
+    const int generated = wsjtx3_backend_generate_q65_wave(
+            messageText,
+            Q65_DEFAULT_SUBMODE,
+            Q65_DEFAULT_TR_PERIOD_SECONDS,
+            sampleRate,
+            frequency,
+            signal,
+            capacity
+    );
+    if (generated <= 0 || generated > capacity) {
+        LOGE("Q65 TX waveform generation failed: generated=%d capacity=%d sampleRate=%d freq=%.1f text=%s",
+             generated, capacity, sampleRate, frequency, messageText);
+        free(signal);
+        return nullptr;
+    }
+
+    jfloatArray result = env->NewFloatArray(generated);
+    if (result == nullptr) {
+        free(signal);
+        return nullptr;
+    }
+
+    env->SetFloatArrayRegion(result, 0, generated, signal);
+    LOGI("Q65 TX waveform generated: submode=A trPeriod=%ds sampleRate=%d freq=%.1f samples=%d text=%s",
+         Q65_DEFAULT_TR_PERIOD_SECONDS, sampleRate, frequency, generated, messageText);
+    free(signal);
+    return result;
 }
 
 extern "C"
@@ -169,6 +228,15 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
         return nullptr;
     }
 
+    if (mode == SIGNAL_MODE_Q65) {
+        return generateQ65Wave(env, text, frequency, sampleRate);
+    }
+
+    if (mode != SIGNAL_MODE_FT8 && mode != SIGNAL_MODE_FT4) {
+        LOGE("Unsupported TX mode in generateFtXNative: mode=%d text=%s", mode, text);
+        return nullptr;
+    }
+
     // 打包 77 位消息
     uint8_t packed[FTX_LDPC_K_BYTES];
     memset(packed, 0, sizeof(packed));
@@ -183,7 +251,7 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
     float symbolPeriod;
     float symbolBt;
 
-    if (mode == 1) {
+    if (mode == SIGNAL_MODE_FT4) {
         nn = FT4_NN;
         symbolPeriod = FT4_SYMBOL_PERIOD;
         symbolBt = 1.0f;
@@ -200,7 +268,7 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
     }
     memset(tones, 0, nn);
 
-    if (mode == 1) {
+    if (mode == SIGNAL_MODE_FT4) {
         ft4_encode(packed, tones);
     } else {
         ft8_encode(packed, tones);

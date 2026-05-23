@@ -112,6 +112,7 @@ set(WSJTX3_VENDOR_FORTRAN_SOURCES
         ${WSJTX3_VENDOR_LIB}/q65_decode.f90
         ${WSJTX3_VENDOR_LIB}/spec64.f90
         ${WSJTX3_VENDOR_LIB}/twkfreq.f90
+        ${WSJTX3_VENDOR_LIB}/genwave.f90
         ${WSJTX3_VENDOR_LIB}/qra/q65/genq65.f90
         ${WSJTX3_VENDOR_LIB}/qra/q65/q65.f90
         ${WSJTX3_VENDOR_LIB}/qra/q65/q65_ap.f90

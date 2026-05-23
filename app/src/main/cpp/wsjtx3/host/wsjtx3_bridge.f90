@@ -74,6 +74,30 @@ module wsjtx3_bridge
   type(q65_decoder), save :: g_q65_decoders(WSJTX3_MAX_CONTEXTS)
   integer, save :: g_active_context = 0
 
+  interface
+     subroutine genq65(msg0, ichk, msgsent, itone, i3, n3)
+       character(len=37), intent(in) :: msg0
+       integer, intent(in) :: ichk
+       character(len=37), intent(out) :: msgsent
+       integer, intent(out) :: itone(85)
+       integer, intent(out) :: i3
+       integer, intent(out) :: n3
+     end subroutine genq65
+
+     subroutine genwave(itone, nsym, nsps, nwave, fsample, tonespacing, f0, icmplx, cwave, wave)
+       integer, intent(in) :: nsym
+       integer, intent(in) :: nsps
+       integer, intent(in) :: nwave
+       integer, intent(in) :: icmplx
+       integer, intent(in) :: itone(nsym)
+       real(8), intent(in) :: fsample
+       real(8), intent(in) :: tonespacing
+       real(8), intent(in) :: f0
+       complex, intent(out) :: cwave(nwave)
+       real, intent(out) :: wave(nwave)
+     end subroutine genwave
+  end interface
+
 contains
 
   logical function context_valid(handle)
@@ -316,6 +340,35 @@ contains
        q65_ntol_from_context = 1000_c_int
     end select
   end function q65_ntol_from_context
+
+  integer(c_int) function q65_base_nsps_for_period_12k(tr_period)
+    integer(c_int), intent(in) :: tr_period
+
+    select case (tr_period)
+    case (15_c_int)
+       q65_base_nsps_for_period_12k = 1800_c_int
+    case (30_c_int)
+       q65_base_nsps_for_period_12k = 3600_c_int
+    case (60_c_int)
+       q65_base_nsps_for_period_12k = 7200_c_int
+    case (120_c_int)
+       q65_base_nsps_for_period_12k = 16000_c_int
+    case (300_c_int)
+       q65_base_nsps_for_period_12k = 41472_c_int
+    case default
+       q65_base_nsps_for_period_12k = 0_c_int
+    end select
+  end function q65_base_nsps_for_period_12k
+
+  integer(c_int) function q65_mode_factor_from_submode(q65_submode)
+    integer(c_int), intent(in) :: q65_submode
+
+    if (q65_submode < 0_c_int .or. q65_submode > 5_c_int) then
+       q65_mode_factor_from_submode = 0_c_int
+       return
+    end if
+    q65_mode_factor_from_submode = 2_c_int ** q65_submode
+  end function q65_mode_factor_from_submode
 
   real function q65_emedelay_from_context(context)
     type(wsjtx3_context_t), intent(in) :: context
@@ -620,6 +673,76 @@ contains
     close(17)
     close(14)
   end subroutine run_q65_decode_pipeline
+
+  integer(c_int) function wsjtx3_bridge_generate_q65_wave(message, q65_submode, q65_tr_period, &
+       sample_rate, base_frequency_hz, out_wave, out_capacity) &
+       bind(C, name="wsjtx3_bridge_generate_q65_wave")
+    character(kind=c_char), dimension(*), intent(in) :: message
+    integer(c_int), value :: q65_submode
+    integer(c_int), value :: q65_tr_period
+    integer(c_int), value :: sample_rate
+    real(c_float), value :: base_frequency_hz
+    real(c_float), intent(out) :: out_wave(*)
+    integer(c_int), value :: out_capacity
+
+    integer(c_int) :: base_nsps
+    integer(c_int) :: scaled_nsps
+    integer(c_int) :: nwave
+    integer(c_int) :: mode_factor
+    integer :: index
+    integer :: itone(85)
+    integer :: i3
+    integer :: n3
+    character(len=37) :: message_text
+    character(len=37) :: msgsent
+    complex, allocatable :: cwave(:)
+    real, allocatable :: wave(:)
+    real(8) :: fsample
+    real(8) :: tonespacing
+    real(8) :: f0
+
+    wsjtx3_bridge_generate_q65_wave = 0_c_int
+    if (sample_rate <= 0_c_int .or. out_capacity <= 0_c_int) then
+       return
+    end if
+
+    base_nsps = q65_base_nsps_for_period_12k(q65_tr_period)
+    mode_factor = q65_mode_factor_from_submode(q65_submode)
+    if (base_nsps <= 0_c_int .or. mode_factor <= 0_c_int) then
+        return
+    end if
+
+    message_text = ''
+    call copy_c_string(message, message_text)
+    if (len_trim(message_text) == 0) then
+       return
+    end if
+
+    scaled_nsps = max(1_c_int, nint(real(base_nsps, kind=8) * real(sample_rate, kind=8) / 12000.0_8))
+    nwave = 85_c_int * scaled_nsps
+    if (nwave > out_capacity) then
+       return
+    end if
+
+    itone = 0
+    i3 = -1
+    n3 = -1
+    call genq65(message_text, 0, msgsent, itone, i3, n3)
+
+    allocate(cwave(nwave))
+    allocate(wave(nwave))
+    fsample = real(sample_rate, kind=8)
+    tonespacing = (fsample / real(scaled_nsps, kind=8)) * real(mode_factor, kind=8)
+    f0 = real(base_frequency_hz, kind=8)
+    call genwave(itone, 85, scaled_nsps, nwave, fsample, tonespacing, f0, 0, cwave, wave)
+
+    do index = 1, nwave
+       out_wave(index) = real(wave(index), kind=c_float)
+    end do
+    deallocate(cwave)
+    deallocate(wave)
+    wsjtx3_bridge_generate_q65_wave = nwave
+  end function wsjtx3_bridge_generate_q65_wave
 
   integer(c_int) function wsjtx3_bridge_create(mode, sample_rate, expected_samples, utc_time) &
        bind(C, name="wsjtx3_bridge_create")

@@ -169,6 +169,26 @@ static void bridge_set_runtime_dirs_locked(const char *temp_dir, const char *dat
     wsjtx3_bridge_unlock();
 }
 
+static int bridge_generate_q65_wave_locked(const char *message,
+                                           int q65_submode,
+                                           int q65_tr_period,
+                                           int sample_rate,
+                                           float base_frequency_hz,
+                                           float *out_wave,
+                                           int out_capacity) {
+    int sample_count;
+    wsjtx3_bridge_lock();
+    sample_count = wsjtx3_bridge_generate_q65_wave(message,
+                                                   q65_submode,
+                                                   q65_tr_period,
+                                                   sample_rate,
+                                                   base_frequency_hz,
+                                                   out_wave,
+                                                   out_capacity);
+    wsjtx3_bridge_unlock();
+    return sample_count;
+}
+
 static int bridge_process_float_locked(int handle, const float *samples, int sample_count) {
     int bridge_count;
     wsjtx3_bridge_lock();
@@ -1197,6 +1217,22 @@ void wsjtx3_backend_set_options(decoder_t *decoder, const wsjtx_decoder_options_
 
 void wsjtx3_backend_configure_runtime_dirs(const char *temp_dir, const char *data_dir) {
     bridge_set_runtime_dirs_locked(temp_dir, data_dir);
+}
+
+int wsjtx3_backend_generate_q65_wave(const char *message,
+                                     int q65_submode,
+                                     int q65_tr_period,
+                                     int sample_rate,
+                                     float base_frequency_hz,
+                                     float *out_wave,
+                                     int out_capacity) {
+    return bridge_generate_q65_wave_locked(message,
+                                           q65_submode,
+                                           q65_tr_period,
+                                           sample_rate,
+                                           base_frequency_hz,
+                                           out_wave,
+                                           out_capacity);
 }
 
 bool wsjtx3_backend_owns_session_flow(decoder_t *decoder) {
