@@ -12,6 +12,7 @@ public final class FT8Common {
 
     public static final int FT8_MODE = 0;
     public static final int FT4_MODE = 1;
+    public static final int Q65_MODE = 2;
 
     public static final int SAMPLE_RATE = 12000;
 
@@ -155,7 +156,13 @@ public final class FT8Common {
      * 模式转字符串。
      */
     public static String modeToString(int mode) {
-        return mode == FT4_MODE ? "FT4" : "FT8";
+        if (mode == FT4_MODE) {
+            return "FT4";
+        }
+        if (mode == Q65_MODE) {
+            return "Q65";
+        }
+        return "FT8";
     }
 
     /**

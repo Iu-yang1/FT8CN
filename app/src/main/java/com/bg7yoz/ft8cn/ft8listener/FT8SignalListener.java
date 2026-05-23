@@ -19,6 +19,7 @@ import androidx.lifecycle.MutableLiveData;
 import com.bg7yoz.ft8cn.BuildConfig;
 import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
+import com.bg7yoz.ft8cn.FtxModeSpec;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
 import com.bg7yoz.ft8cn.experimental.ExperimentalCodecBridge;
@@ -289,8 +290,12 @@ public class FT8SignalListener {
 
         if (onWaveDataListener != null) {
             final int recordMode = GeneralVariables.getSignalMode();
-            final int duration = FT8Common.getSlotTimeMillisecond(recordMode);
-            final int expectedSamples = FT8Common.getSamplesPerSlot(recordMode);
+            final FtxModeSpec modeSpec = requireSupportedModeSpec(recordMode, "runRecorde");
+            if (modeSpec == null) {
+                return;
+            }
+            final int duration = modeSpec.slotDurationMs;
+            final int expectedSamples = modeSpec.samplesPerSlot();
             final int sourceSampleRate = normalizeInputSampleRate(onWaveDataListener.getCurrentSampleRate());
             final long now = System.currentTimeMillis();
             final long triggerSequence = decodeTriggerSequence.getAndIncrement();
@@ -376,13 +381,17 @@ public class FT8SignalListener {
     }
 
     public void decodeFt8(long utc, float[] voiceData, int sourceSampleRate, int decodeMode) {
+        FtxModeSpec modeSpec = requireSupportedModeSpec(decodeMode, "directDecode");
+        if (modeSpec == null) {
+            return;
+        }
         decodeFt8(
                 utc,
                 voiceData,
                 sourceSampleRate,
                 decodeMode,
                 DECODE_STAGE_FULL,
-                FT8Common.getSamplesPerSlot(decodeMode),
+                modeSpec.samplesPerSlot(),
                 true,
                 true,
                 "direct",
@@ -442,10 +451,26 @@ public class FT8SignalListener {
     }
 
     private boolean shouldRunEarlyDecodeStage(int decodeMode) {
+        FtxModeSpec modeSpec = FtxModeSpec.forMode(decodeMode);
         return GeneralVariables.wsjtxEnableEarlyDecode
-                && FT8Common.supportsEarlyDecodeStage(decodeMode)
+                && modeSpec != null
+                && modeSpec.supportsEarlyDecode
                 && ReBuildSignal.supportSubtract(decodeMode)
                 && !GeneralVariables.isExperimentalCodecEnabled();
+    }
+
+    private FtxModeSpec requireSupportedModeSpec(int decodeMode, String entryPoint) {
+        FtxModeSpec modeSpec = FtxModeSpec.forMode(decodeMode);
+        if (modeSpec == null || !modeSpec.supportedInCurrentBuild) {
+            Log.w(TAG, String.format(Locale.US,
+                    "unsupported decode mode listener=%d entry=%s mode=%d name=%s",
+                    listenerInstanceId,
+                    entryPoint,
+                    decodeMode,
+                    modeSpec == null ? "unknown" : modeSpec.name));
+            return null;
+        }
+        return modeSpec;
     }
 
     /**
