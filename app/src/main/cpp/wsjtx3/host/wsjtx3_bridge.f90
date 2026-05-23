@@ -3,7 +3,7 @@ module wsjtx3_bridge
   use ft8_decode, only: ft8_decoder
   use ft4_decode, only: ft4_decoder
   use q65_decode, only: q65_decoder
-  use prog_args, only: temp_dir
+  use prog_args, only: temp_dir, data_dir
   implicit none
 
   integer, parameter :: WSJTX3_MAX_CONTEXTS = 4
@@ -374,6 +374,22 @@ contains
       dst(index:index) = achar(iachar(src(index)))
     end do
   end subroutine copy_c_string
+
+  subroutine wsjtx3_bridge_set_runtime_dirs(temp_dir_path, data_dir_path) &
+       bind(C, name="wsjtx3_bridge_set_runtime_dirs")
+    character(kind=c_char), dimension(*), intent(in) :: temp_dir_path
+    character(kind=c_char), dimension(*), intent(in) :: data_dir_path
+
+    call copy_c_string(temp_dir_path, temp_dir)
+    call copy_c_string(data_dir_path, data_dir)
+
+    if (len_trim(temp_dir) == 0) then
+       temp_dir = '.'
+    end if
+    if (len_trim(data_dir) == 0) then
+       data_dir = temp_dir
+    end if
+  end subroutine wsjtx3_bridge_set_runtime_dirs
 
   subroutine copy_fortran_string(src, dst)
     character(len=*), intent(in) :: src

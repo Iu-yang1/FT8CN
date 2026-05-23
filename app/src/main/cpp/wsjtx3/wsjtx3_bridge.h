@@ -36,6 +36,7 @@ void wsjtx3_bridge_set_ap_hints(int handle,
                                 const char *his_call,
                                 const char *his_grid);
 void wsjtx3_bridge_set_qso_frequencies(int handle, int qso_frequency_hz, int tx_frequency_hz);
+void wsjtx3_bridge_set_runtime_dirs(const char *temp_dir, const char *data_dir);
 int wsjtx3_bridge_process_float(int handle, const float *samples, int sample_count);
 int wsjtx3_bridge_get_result_count(int handle);
 int wsjtx3_bridge_get_result(int handle,

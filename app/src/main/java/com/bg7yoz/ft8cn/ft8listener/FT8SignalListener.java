@@ -76,6 +76,8 @@ public class FT8SignalListener {
     private final Object nativeDecoderHandleLock = new Object();
     private final long[] nativeDecoderHandles = new long[]{0L, 0L, 0L};
     private final int[] nativeDecoderExpectedSamples = new int[]{0, 0, 0};
+    private final Object nativeRuntimeDirLock = new Object();
+    private boolean nativeRuntimeDirsConfigured = false;
     private static final class NativeBatchDecodeResult {
         final ArrayList<Ft8Message> messages = new ArrayList<>();
         int bridgeRawCount;
@@ -461,13 +463,15 @@ public class FT8SignalListener {
 
     private FtxModeSpec requireSupportedModeSpec(int decodeMode, String entryPoint) {
         FtxModeSpec modeSpec = FtxModeSpec.forMode(decodeMode);
-        if (modeSpec == null || !modeSpec.supportedInCurrentBuild) {
+        if (modeSpec == null || !modeSpec.supportsRx) {
             Log.w(TAG, String.format(Locale.US,
-                    "unsupported decode mode listener=%d entry=%s mode=%d name=%s",
+                    "unsupported decode mode listener=%d entry=%s mode=%d name=%s supportsRx=%s buildSupported=%s",
                     listenerInstanceId,
                     entryPoint,
                     decodeMode,
-                    modeSpec == null ? "unknown" : modeSpec.name));
+                    modeSpec == null ? "unknown" : modeSpec.name,
+                    modeSpec != null && modeSpec.supportsRx ? "Y" : "N",
+                    modeSpec != null && modeSpec.supportedInCurrentBuild ? "Y" : "N"));
             return null;
         }
         return modeSpec;
@@ -890,6 +894,7 @@ public class FT8SignalListener {
 
     private long acquirePersistentNativeDecoder(int decodeMode, int expectedSamples) {
         synchronized (nativeDecoderHandleLock) {
+            ensureNativeRuntimeDirectoriesConfigured();
             int modeIndex = getLiveDecodeModeIndex(decodeMode);
             long existingHandle = nativeDecoderHandles[modeIndex];
             if (existingHandle != 0L && nativeDecoderExpectedSamples[modeIndex] == expectedSamples) {
@@ -911,6 +916,40 @@ public class FT8SignalListener {
                 nativeDecoderExpectedSamples[modeIndex] = expectedSamples;
             }
             return handle;
+        }
+    }
+
+    private void ensureNativeRuntimeDirectoriesConfigured() {
+        synchronized (nativeRuntimeDirLock) {
+            if (nativeRuntimeDirsConfigured) {
+                return;
+            }
+
+            Context context = GeneralVariables.getMainContext();
+            if (context == null) {
+                Log.w(TAG, "native runtime dirs skipped: main context is null");
+                return;
+            }
+
+            File tempDir = new File(context.getCacheDir(), "wsjtx3");
+            File dataDir = new File(context.getFilesDir(), "wsjtx3");
+            if (!tempDir.exists() && !tempDir.mkdirs()) {
+                Log.w(TAG, "native runtime temp dir mkdirs failed: " + tempDir.getAbsolutePath());
+            }
+            if (!dataDir.exists() && !dataDir.mkdirs()) {
+                Log.w(TAG, "native runtime data dir mkdirs failed: " + dataDir.getAbsolutePath());
+            }
+
+            ConfigureNativeRuntimeDirectories(
+                    tempDir.getAbsolutePath(),
+                    dataDir.getAbsolutePath()
+            );
+            nativeRuntimeDirsConfigured = true;
+            Log.i(TAG, String.format(Locale.US,
+                    "native runtime dirs configured listener=%d temp=%s data=%s",
+                    listenerInstanceId,
+                    tempDir.getAbsolutePath(),
+                    dataDir.getAbsolutePath()));
         }
     }
 
@@ -1724,6 +1763,7 @@ public class FT8SignalListener {
                                              boolean enableEarlyDecode,
                                              boolean enableWidebandDxSearch);
     public native long InitBatchDecoder(int sampleRate, int numSamples, int decodeMode);
+    public native void ConfigureNativeRuntimeDirectories(String tempDir, String dataDir);
     public native void DeleteBatchDecoder(long decoderHandle);
     public native int DecoderGetLastBridgeRawCount(long decoderHandle);
     public native int DecoderGetLastMergedCount(long decoderHandle);

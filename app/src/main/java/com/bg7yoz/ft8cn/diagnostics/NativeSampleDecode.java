@@ -12,12 +12,15 @@ public final class NativeSampleDecode {
     private NativeSampleDecode() {
     }
 
+    public static native void configureRuntimeDirectories(String tempDir,
+                                                          String dataDir);
+
     public static native String inspectWavFile(String wavPath,
-                                               boolean isFt8,
+                                               int decodeMode,
                                                long utcTime);
 
     public static native String decodeWavFile(String wavPath,
-                                              boolean isFt8,
+                                              int decodeMode,
                                               long utcTime,
                                               String myCall,
                                               int decodePassCount,

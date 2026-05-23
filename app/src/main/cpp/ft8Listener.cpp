@@ -485,6 +485,21 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetApHints(JNIEnv *en
  * 把频率幅度置零
  */
 extern "C"
+JNIEXPORT void JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_ConfigureNativeRuntimeDirectories(JNIEnv *env,
+                                                                                       jobject thiz,
+                                                                                       jstring tempDir,
+                                                                                       jstring dataDir) {
+    (void) thiz;
+
+    char tempPath[512] = {};
+    char dataPath[512] = {};
+    copyJStringToBuffer(env, tempDir, tempPath, sizeof(tempPath));
+    copyJStringToBuffer(env, dataDir, dataPath, sizeof(dataPath));
+    decoder_configure_runtime_dirs(tempPath, dataPath);
+}
+
+extern "C"
 JNIEXPORT jlong JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_InitBatchDecoder(JNIEnv *env,
                                                                      jobject thiz,

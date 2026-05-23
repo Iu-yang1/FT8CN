@@ -78,6 +78,7 @@ void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep);
 void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations);
 void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
 void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
+void decoder_configure_runtime_dirs(const char *temp_dir, const char *data_dir);
 bool decoder_owns_session_flow(decoder_t *decoder);
 void decoder_subtract_signal(decoder_t *decoder,
                              const uint8_t *payload,

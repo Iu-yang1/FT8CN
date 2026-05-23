@@ -14,6 +14,10 @@ import com.bg7yoz.ft8cn.ft8listener.OnFt8Listen;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 import com.bg7yoz.ft8cn.wave.WaveFileReader;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -52,29 +56,36 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
                     engine = "listener";
                 }
 
-                boolean isFt8 = mode == null || !"ft4".equalsIgnoreCase(mode.trim());
+                int decodeMode = parseDecodeMode(mode);
                 long utcTime = intent.getLongExtra("utc", 1800000000000L);
                 int passCount = intent.getIntExtra("passes", 3);
                 int roundCount = intent.getIntExtra("rounds", 3);
                 int qsoSensitivity = intent.getIntExtra("qso_sensitivity", 1);
                 int decodeSensitivity = intent.getIntExtra("decode_sensitivity", 1);
-                boolean earlyDecodeEnabled = intent.getBooleanExtra("early_decode", true);
+                boolean earlyDecodeEnabled = intent.getBooleanExtra(
+                        "early_decode",
+                        FT8Common.supportsEarlyDecodeStage(decodeMode)
+                );
                 boolean wideband = intent.getBooleanExtra("wideband", true);
                 boolean deepDecodeEnabled = intent.getBooleanExtra("deep", true);
                 int nativeTimeoutMs = intent.getIntExtra("native_timeout_ms", 15000);
                 final String finalMyCall = myCall;
 
+                String stagedPath = stageSampleForNative(context, path);
+                configureNativeRuntime(context);
+
                 Log.i(TAG, "sample decode begin");
                 Log.i(TAG, String.format(Locale.US,
-                        "request engine=%s mode=%s path=%s myCall=%s passes=%d rounds=%d deep=%s",
+                        "request engine=%s mode=%s path=%s stagedPath=%s myCall=%s passes=%d rounds=%d deep=%s",
                         engine,
-                        isFt8 ? "FT8" : "FT4",
+                        FT8Common.modeToString(decodeMode),
                         path,
+                        stagedPath,
                         myCall,
                         passCount,
                         roundCount,
                         deepDecodeEnabled ? "Y" : "N"));
-                String inspect = NativeSampleDecode.inspectWavFile(path, isFt8, utcTime);
+                String inspect = NativeSampleDecode.inspectWavFile(stagedPath, decodeMode, utcTime);
                 if (resultHasText(inspect)) {
                     for (String line : inspect.split("\\n")) {
                         if (!line.trim().isEmpty()) {
@@ -84,19 +95,19 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
                 }
 
                 if ("native".equalsIgnoreCase(engine) || "both".equalsIgnoreCase(engine)) {
-                    runNativeDecode(path, isFt8, utcTime, finalMyCall, passCount, roundCount,
+                    runNativeDecode(stagedPath, decodeMode, utcTime, finalMyCall, passCount, roundCount,
                             qsoSensitivity, decodeSensitivity, earlyDecodeEnabled, wideband,
                             deepDecodeEnabled, nativeTimeoutMs);
                 }
 
                 if ("listener".equalsIgnoreCase(engine) || "both".equalsIgnoreCase(engine)) {
-                    runDirectListenerDecode(context, path, isFt8, utcTime, myCall,
+                    runDirectListenerDecode(context, path, decodeMode, utcTime, myCall,
                             passCount, roundCount, qsoSensitivity, decodeSensitivity,
                             earlyDecodeEnabled, wideband, deepDecodeEnabled);
                 }
 
                 if ("entry".equalsIgnoreCase(engine) || "all".equalsIgnoreCase(engine)) {
-                    runEntryListenerDecode(context, path, isFt8, myCall,
+                    runEntryListenerDecode(context, path, decodeMode, myCall,
                             passCount, roundCount, qsoSensitivity, decodeSensitivity,
                             earlyDecodeEnabled, wideband, deepDecodeEnabled);
                 }
@@ -111,7 +122,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
     }
 
     private static void runNativeDecode(String path,
-                                        boolean isFt8,
+                                        int decodeMode,
                                         long utcTime,
                                         String myCall,
                                         int passCount,
@@ -130,7 +141,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
             try {
                 nativeResult[0] = NativeSampleDecode.decodeWavFile(
                         path,
-                        isFt8,
+                        decodeMode,
                         utcTime,
                         myCall,
                         passCount,
@@ -167,9 +178,28 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
         }
     }
 
+    private static void configureNativeRuntime(Context context) {
+        File tempDir = new File(context.getCacheDir(), "wsjtx3");
+        File dataDir = new File(context.getFilesDir(), "wsjtx3");
+        if (!tempDir.exists() && !tempDir.mkdirs()) {
+            Log.w(TAG, "native runtime temp dir mkdirs failed: " + tempDir.getAbsolutePath());
+        }
+        if (!dataDir.exists() && !dataDir.mkdirs()) {
+            Log.w(TAG, "native runtime data dir mkdirs failed: " + dataDir.getAbsolutePath());
+        }
+        NativeSampleDecode.configureRuntimeDirectories(
+                tempDir.getAbsolutePath(),
+                dataDir.getAbsolutePath()
+        );
+        Log.i(TAG, String.format(Locale.US,
+                "native runtime dirs temp=%s data=%s",
+                tempDir.getAbsolutePath(),
+                dataDir.getAbsolutePath()));
+    }
+
     private static void runDirectListenerDecode(Context context,
                                                 String path,
-                                                boolean isFt8,
+                                                int decodeMode,
                                                 long utcTime,
                                                 String myCall,
                                                 int passCount,
@@ -184,7 +214,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
             return;
         }
 
-        applyDecoderConfig(context, myCall, isFt8, passCount, roundCount,
+        applyDecoderConfig(context, myCall, decodeMode, passCount, roundCount,
                 qsoSensitivity, decodeSensitivity, earlyDecodeEnabled, wideband, deepDecodeEnabled);
 
         CountDownLatch finishedLatch = new CountDownLatch(1);
@@ -193,14 +223,14 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
 
         DatabaseOpr databaseOpr = DatabaseOpr.getInstance(context.getApplicationContext(), "data.db");
         FT8SignalListener signalListener = new FT8SignalListener(databaseOpr, buildCollector("[listener]",
-                isFt8 ? FT8Common.FT8_MODE : FT8Common.FT4_MODE, collected, decodeDurationMs, finishedLatch));
+                decodeMode, collected, decodeDurationMs, finishedLatch));
 
         try {
             signalListener.decodeFt8(
                     utcTime,
                     sampleAudio.voice,
                     sampleAudio.sampleRate,
-                    isFt8 ? FT8Common.FT8_MODE : FT8Common.FT4_MODE
+                    decodeMode
             );
 
             boolean finished = finishedLatch.await(20, TimeUnit.SECONDS);
@@ -213,7 +243,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
 
     private static void runEntryListenerDecode(Context context,
                                                String path,
-                                               boolean isFt8,
+                                               int decodeMode,
                                                String myCall,
                                                int passCount,
                                                int roundCount,
@@ -227,8 +257,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
             return;
         }
 
-        final int decodeMode = isFt8 ? FT8Common.FT8_MODE : FT8Common.FT4_MODE;
-        applyDecoderConfig(context, myCall, isFt8, passCount, roundCount,
+        applyDecoderConfig(context, myCall, decodeMode, passCount, roundCount,
                 qsoSensitivity, decodeSensitivity, earlyDecodeEnabled, wideband, deepDecodeEnabled);
 
         CountDownLatch finishedLatch = new CountDownLatch(1);
@@ -259,7 +288,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
         try {
             signalListener.startListen();
             boolean finished = finishedLatch.await(
-                    isFt8 ? ENTRY_DECODE_TIMEOUT_FT8_MS : ENTRY_DECODE_TIMEOUT_FT4_MS,
+                    getEntryDecodeTimeoutMs(decodeMode),
                     TimeUnit.MILLISECONDS
             );
             signalListener.stopListen();
@@ -365,7 +394,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
 
     private static void applyDecoderConfig(Context context,
                                            String myCall,
-                                           boolean isFt8,
+                                           int decodeMode,
                                            int passCount,
                                            int roundCount,
                                            int qsoSensitivity,
@@ -376,7 +405,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
         GeneralVariables.getInstance().setMainContext(context.getApplicationContext());
         GeneralVariables.myCallsign = myCall == null ? "" : myCall.trim().toUpperCase(Locale.US);
         GeneralVariables.deepDecodeMode = deepDecodeEnabled;
-        GeneralVariables.signalMode = isFt8 ? FT8Common.FT8_MODE : FT8Common.FT4_MODE;
+        GeneralVariables.signalMode = decodeMode;
         GeneralVariables.wsjtxDecodePassCount = passCount;
         GeneralVariables.wsjtxMultiDecodeRoundCount = roundCount;
         GeneralVariables.wsjtxQsoFreqSensitivity = qsoSensitivity;
@@ -416,6 +445,65 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
 
     private static boolean resultHasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private static String stageSampleForNative(Context context, String originalPath) throws IOException {
+        if (context == null || originalPath == null || originalPath.trim().isEmpty()) {
+            return originalPath;
+        }
+
+        File source = new File(originalPath);
+        if (!source.exists() || !source.isFile()) {
+            return originalPath;
+        }
+
+        File dir = new File(context.getCacheDir(), "sample_decode");
+        if (!dir.exists() && !dir.mkdirs()) {
+            return originalPath;
+        }
+
+        File target = new File(dir, source.getName());
+        copyFile(source, target);
+        return target.getAbsolutePath();
+    }
+
+    private static void copyFile(File source, File target) throws IOException {
+        try (FileInputStream inputStream = new FileInputStream(source);
+             FileOutputStream outputStream = new FileOutputStream(target, false)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = inputStream.read(buffer)) >= 0) {
+                if (read == 0) {
+                    continue;
+                }
+                outputStream.write(buffer, 0, read);
+            }
+            outputStream.flush();
+        }
+    }
+
+    private static int parseDecodeMode(String modeText) {
+        if (modeText == null) {
+            return FT8Common.FT8_MODE;
+        }
+        String normalized = modeText.trim().toLowerCase(Locale.US);
+        if ("ft4".equals(normalized)) {
+            return FT8Common.FT4_MODE;
+        }
+        if ("q65".equals(normalized)) {
+            return FT8Common.Q65_MODE;
+        }
+        return FT8Common.FT8_MODE;
+    }
+
+    private static int getEntryDecodeTimeoutMs(int decodeMode) {
+        if (decodeMode == FT8Common.FT4_MODE) {
+            return ENTRY_DECODE_TIMEOUT_FT4_MS;
+        }
+        if (decodeMode == FT8Common.Q65_MODE) {
+            return 90000;
+        }
+        return ENTRY_DECODE_TIMEOUT_FT8_MS;
     }
 
     private static final class SampleAudio {

@@ -163,6 +163,12 @@ static void bridge_set_qso_frequencies_locked(int handle,
     wsjtx3_bridge_unlock();
 }
 
+static void bridge_set_runtime_dirs_locked(const char *temp_dir, const char *data_dir) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_set_runtime_dirs(temp_dir, data_dir);
+    wsjtx3_bridge_unlock();
+}
+
 static int bridge_process_float_locked(int handle, const float *samples, int sample_count) {
     int bridge_count;
     wsjtx3_bridge_lock();
@@ -1187,6 +1193,10 @@ void wsjtx3_backend_set_options(decoder_t *decoder, const wsjtx_decoder_options_
         memcpy(&state->options, options, sizeof(state->options));
     }
     sync_bridge_options(state);
+}
+
+void wsjtx3_backend_configure_runtime_dirs(const char *temp_dir, const char *data_dir) {
+    bridge_set_runtime_dirs_locked(temp_dir, data_dir);
 }
 
 bool wsjtx3_backend_owns_session_flow(decoder_t *decoder) {

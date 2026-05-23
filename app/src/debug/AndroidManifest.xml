@@ -7,6 +7,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.bg7yoz.ft8cn.ft4.DEBUG_DECODE_SAMPLE" />
+                <action android:name="com.bg7yoz.ft8cn.action.DEBUG_SAMPLE_DECODE" />
             </intent-filter>
         </receiver>
     </application>

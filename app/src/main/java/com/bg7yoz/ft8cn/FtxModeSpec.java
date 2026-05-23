@@ -109,18 +109,18 @@ public final class FtxModeSpec {
             "Q65",
             FT8Common.SAMPLE_RATE,
             FT8Common.Q65_SLOT_TIME_MILLISECOND,
-            0,
-            0,
+            FT8Common.Q65_SLOT_TIME_MILLISECOND,
+            FT8Common.Q65_SLOT_TIME_MILLISECOND,
             false,
             false,
             false,
             false,
             true,
             true,
-            "unsupported",
+            "live",
             "unsupported",
             new DecodeFrequencyRange(0, 5000),
-            false
+            true
     );
 
     public int samplesPerSlot() {

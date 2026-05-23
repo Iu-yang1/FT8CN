@@ -193,6 +193,10 @@ void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t
     wsjtx3_backend_set_options(decoder, options);
 }
 
+void decoder_configure_runtime_dirs(const char *temp_dir, const char *data_dir) {
+    wsjtx3_backend_configure_runtime_dirs(temp_dir, data_dir);
+}
+
 bool decoder_owns_session_flow(decoder_t *decoder) {
     if (decoder == NULL) {
         return false;
