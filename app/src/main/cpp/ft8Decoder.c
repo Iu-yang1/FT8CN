@@ -132,6 +132,20 @@ void decoder_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]) {
     wsjtx3_backend_get_a91(decoder, out);
 }
 
+int decoder_get_last_bridge_raw_count(decoder_t *decoder) {
+    if (decoder == NULL) {
+        return 0;
+    }
+    return wsjtx3_backend_get_last_bridge_raw_count(decoder);
+}
+
+int decoder_get_last_merged_count(decoder_t *decoder) {
+    if (decoder == NULL) {
+        return 0;
+    }
+    return wsjtx3_backend_get_last_merged_count(decoder);
+}
+
 void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep) {
     if (decoder == NULL) {
         return;

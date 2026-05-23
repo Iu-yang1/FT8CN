@@ -481,6 +481,26 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DeleteBatchDecoder(JNIEnv *e
 }
 
 extern "C"
+JNIEXPORT jint JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetLastBridgeRawCount(JNIEnv *env,
+                                                                                  jobject thiz,
+                                                                                  jlong decoderHandle) {
+    (void) env;
+    (void) thiz;
+    return (jint) ftx_decoder_get_last_bridge_raw_count((ftx_decoder_t *) decoderHandle);
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetLastMergedCount(JNIEnv *env,
+                                                                               jobject thiz,
+                                                                               jlong decoderHandle) {
+    (void) env;
+    (void) thiz;
+    return (jint) ftx_decoder_get_last_merged_count((ftx_decoder_t *) decoderHandle);
+}
+
+extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *env,
                                                                         jobject thiz,

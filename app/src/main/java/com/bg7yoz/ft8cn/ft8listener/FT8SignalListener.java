@@ -69,6 +69,11 @@ public class FT8SignalListener {
     private final Object nativeDecoderHandleLock = new Object();
     private final long[] nativeDecoderHandles = new long[]{0L, 0L};
     private final int[] nativeDecoderExpectedSamples = new int[]{0, 0};
+    private static final class NativeBatchDecodeResult {
+        final ArrayList<Ft8Message> messages = new ArrayList<>();
+        int bridgeRawCount;
+        int mergedCount;
+    }
     private final ExecutorService decodeExecutor = Executors.newSingleThreadExecutor(new ThreadFactory() {
         @Override
         public Thread newThread(Runnable runnable) {
@@ -785,7 +790,8 @@ public class FT8SignalListener {
         }
     }
 
-    private ArrayList<Ft8Message> batchDecodeMessages(DecodeRequest request, float[] decoderInput) {
+    private NativeBatchDecodeResult batchDecodeMessages(DecodeRequest request, float[] decoderInput) {
+        NativeBatchDecodeResult result = new NativeBatchDecodeResult();
         long nativeHandle = acquirePersistentNativeDecoder(request.decodeMode, request.expectedSamples);
         if (nativeHandle == 0L) {
             Log.e(TAG, String.format(Locale.US,
@@ -793,7 +799,7 @@ public class FT8SignalListener {
                     FT8Common.modeToString(request.decodeMode),
                     request.profile.stageName,
                     request.expectedSamples));
-            return new ArrayList<>();
+            return result;
         }
 
         String[][] apHints = buildDecoderApHints();
@@ -814,10 +820,10 @@ public class FT8SignalListener {
                 apHints[0],
                 apHints[1]
         );
-
-        ArrayList<Ft8Message> messages = new ArrayList<>();
+        result.bridgeRawCount = DecoderGetLastBridgeRawCount(nativeHandle);
+        result.mergedCount = DecoderGetLastMergedCount(nativeHandle);
         if (nativeMessages == null) {
-            return messages;
+            return result;
         }
 
         for (Ft8Message message : nativeMessages) {
@@ -828,9 +834,9 @@ public class FT8SignalListener {
             message.utcTime = request.utc;
             message.band = GeneralVariables.band;
             message.isWeakSignal = request.profile.markWeakSignal;
-            messages.add(message);
+            result.messages.add(message);
         }
-        return messages;
+        return result;
     }
 
     private void enqueueDecodeRequest(DecodeRequest request) {
@@ -907,7 +913,8 @@ public class FT8SignalListener {
                 request.profile.enableWidebandDxSearch ? "Y" : "N",
                 request.profile.useDeepSession ? "Y" : "N"));
 
-        ArrayList<Ft8Message> msgs = batchDecodeMessages(request, decoderInput);
+        NativeBatchDecodeResult nativeResult = batchDecodeMessages(request, decoderInput);
+        ArrayList<Ft8Message> msgs = nativeResult.messages;
         ArrayList<Ft8Message> allMsg = new ArrayList<>(msgs);
 
         timeSec = System.currentTimeMillis() - time;
@@ -929,9 +936,11 @@ public class FT8SignalListener {
         }
 
         Log.d(TAG, String.format(Locale.US,
-                "decode done stage=%s mode=%s rawNativeCount=%d javaPublishedCount=%d durationMs=%d",
+                "decode done stage=%s mode=%s bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d javaPublishedCount=%d durationMs=%d",
                 request.profile.stageName,
                 FT8Common.modeToString(request.decodeMode),
+                nativeResult.bridgeRawCount,
+                nativeResult.mergedCount,
                 msgs.size(),
                 publishedCount,
                 timeSec));
@@ -1486,6 +1495,8 @@ public class FT8SignalListener {
                                              boolean enableWidebandDxSearch);
     public native long InitBatchDecoder(int sampleRate, int numSamples, boolean isFt8);
     public native void DeleteBatchDecoder(long decoderHandle);
+    public native int DecoderGetLastBridgeRawCount(long decoderHandle);
+    public native int DecoderGetLastMergedCount(long decoderHandle);
     public native Ft8Message[] DecoderProcessBatch(long decoderHandle,
                                                    long utcTime,
                                                    int expectedSamples,

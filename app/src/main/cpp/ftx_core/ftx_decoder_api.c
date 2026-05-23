@@ -273,6 +273,20 @@ int ftx_decoder_get_result_count(const ftx_decoder_t *decoder) {
     return decoder->result_count;
 }
 
+int ftx_decoder_get_last_bridge_raw_count(const ftx_decoder_t *decoder) {
+    if (decoder == NULL || decoder->impl == NULL) {
+        return -1;
+    }
+    return decoder_get_last_bridge_raw_count(decoder->impl);
+}
+
+int ftx_decoder_get_last_merged_count(const ftx_decoder_t *decoder) {
+    if (decoder == NULL || decoder->impl == NULL) {
+        return -1;
+    }
+    return decoder_get_last_merged_count(decoder->impl);
+}
+
 int ftx_decoder_get_result(const ftx_decoder_t *decoder, int index, ftx_decode_result_t *out) {
     if (decoder == NULL || out == NULL) {
         return -1;

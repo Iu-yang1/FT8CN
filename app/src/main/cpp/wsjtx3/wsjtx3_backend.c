@@ -43,6 +43,8 @@ typedef struct {
     int sample_rate;
     int expected_samples;
     int last_sample_count;
+    int last_bridge_raw_count;
+    int last_merged_count;
     int ldpc_iterations;
     int qso_frequency_hz;
     int tx_frequency_hz;
@@ -302,6 +304,8 @@ static void reset_backend_results(decoder_t *decoder, wsjtx3_backend_state_t *st
         return;
     }
     state->session_result_count = 0;
+    state->last_bridge_raw_count = 0;
+    state->last_merged_count = 0;
     memset(state->session_results, 0, sizeof(state->session_results));
     memset(state->current_a91, 0, sizeof(state->current_a91));
     clear_decoder_result_view(decoder);
@@ -769,6 +773,8 @@ static int run_ft4_session(decoder_t *decoder,
           (size_t) state->session_result_count,
           sizeof(state->session_results[0]),
           compare_session_results);
+    state->last_bridge_raw_count = total_bridge_count;
+    state->last_merged_count = state->session_result_count;
     publish_session_results_to_decoder(decoder, state);
     sync_bridge_options(state);
 
@@ -925,6 +931,8 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
 
     reset_backend_results(decoder, state);
     if (bridge_count <= 0) {
+        state->last_bridge_raw_count = bridge_count;
+        state->last_merged_count = 0;
         return 0;
     }
 
@@ -966,6 +974,8 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
           (size_t) state->session_result_count,
           sizeof(state->session_results[0]),
           compare_session_results);
+    state->last_bridge_raw_count = bridge_count;
+    state->last_merged_count = state->session_result_count;
 
     WSJTX3_LOGI("find_sync sessionResults=%d after bridgeCount=%d mergedCount=%d",
                 state->session_result_count,
@@ -1022,6 +1032,22 @@ void wsjtx3_backend_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]) {
         return;
     }
     memcpy(out, state->current_a91, FTX_LDPC_K_BYTES);
+}
+
+int wsjtx3_backend_get_last_bridge_raw_count(decoder_t *decoder) {
+    wsjtx3_backend_state_t *state = get_state(decoder);
+    if (state == NULL) {
+        return 0;
+    }
+    return state->last_bridge_raw_count;
+}
+
+int wsjtx3_backend_get_last_merged_count(decoder_t *decoder) {
+    wsjtx3_backend_state_t *state = get_state(decoder);
+    if (state == NULL) {
+        return 0;
+    }
+    return state->last_merged_count;
 }
 
 void wsjtx3_backend_set_ldpc_iterations(decoder_t *decoder, int iterations) {

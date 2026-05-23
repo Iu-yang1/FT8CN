@@ -59,6 +59,14 @@ int ftx_decoder_get_result_count(
         const ftx_decoder_t *decoder
 );
 
+int ftx_decoder_get_last_bridge_raw_count(
+        const ftx_decoder_t *decoder
+);
+
+int ftx_decoder_get_last_merged_count(
+        const ftx_decoder_t *decoder
+);
+
 int ftx_decoder_get_result(
         const ftx_decoder_t *decoder,
         int index,
