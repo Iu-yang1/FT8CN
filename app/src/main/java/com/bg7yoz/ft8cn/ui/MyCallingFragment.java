@@ -79,6 +79,121 @@ public class MyCallingFragment extends Fragment {
         return GeneralVariables.getActiveModeLabel();
     }
 
+    private String getQ65ConfigLabel() {
+        return FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode())
+                + "/" + GeneralVariables.getQ65TrPeriodSeconds() + "s";
+    }
+
+    private void updateQ65ConfigUi() {
+        if (binding == null) {
+            return;
+        }
+        boolean q65Active = GeneralVariables.getSignalMode() == FT8Common.Q65_MODE;
+        binding.q65ConfigButton.setVisibility(q65Active ? View.VISIBLE : View.GONE);
+        binding.q65ConfigButton.setEnabled(q65Active);
+        binding.q65ConfigButton.setAlpha(q65Active ? 1.0f : 0.45f);
+        binding.q65ConfigButton.setText(getQ65ConfigLabel());
+    }
+
+    private void restartForModeRuntimeChange() {
+        if (mainViewModel.ft8SignalListener != null) {
+            mainViewModel.ft8SignalListener.restartByCurrentMode();
+        }
+        if (mainViewModel.ft8TransmitSignal != null) {
+            mainViewModel.ft8TransmitSignal.restartByCurrentMode();
+            mainViewModel.ft8TransmitSignal.setActivated(false);
+            mainViewModel.ft8TransmitSignal.setTransmitting(false);
+            mainViewModel.ft8TransmitSignal.resetToCQ();
+        }
+        mainViewModel.clearTransmittingMessage();
+    }
+
+    private void applyQ65Configuration(int submode, int trPeriodSeconds) {
+        String nextLabel = FT8Common.getQ65ModeLabel(submode, trPeriodSeconds);
+        boolean changed = GeneralVariables.setQ65Configuration(submode, trPeriodSeconds);
+        updateQ65ConfigUi();
+        if (!changed) {
+            return;
+        }
+
+        if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+            restartForModeRuntimeChange();
+            updateSignalModeUI();
+            ToastMessage.show(getString(R.string.q65_config_applied, nextLabel));
+            return;
+        }
+
+        ToastMessage.show(getString(R.string.q65_config_saved, nextLabel));
+    }
+
+    private void showQ65ConfigDialog() {
+        if (getContext() == null) {
+            return;
+        }
+
+        ArrayList<String> submodeLabels = new ArrayList<>();
+        for (String label : FT8Common.Q65_SUBMODE_LABELS) {
+            submodeLabels.add("Q65" + label);
+        }
+        ArrayList<String> periodLabels = new ArrayList<>();
+        for (int period : FT8Common.Q65_SUPPORTED_TR_PERIODS) {
+            periodLabels.add(period + "s");
+        }
+
+        LinearLayout root = new LinearLayout(requireContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        int padding = Math.round(getResources().getDisplayMetrics().density * 20.0f);
+        root.setPadding(padding, padding, padding, padding / 2);
+
+        TextView submodeTitle = new TextView(requireContext());
+        submodeTitle.setText(R.string.q65_config_submode);
+        root.addView(submodeTitle);
+
+        Spinner submodeSpinner = new Spinner(requireContext());
+        submodeSpinner.setAdapter(new ArrayAdapter<>(
+                requireContext(),
+                android.R.layout.simple_spinner_dropdown_item,
+                submodeLabels
+        ));
+        submodeSpinner.setSelection(GeneralVariables.getQ65Submode());
+        root.addView(submodeSpinner);
+
+        TextView periodTitle = new TextView(requireContext());
+        periodTitle.setText(R.string.q65_config_tr_period);
+        periodTitle.setPadding(0, padding / 2, 0, 0);
+        root.addView(periodTitle);
+
+        Spinner periodSpinner = new Spinner(requireContext());
+        periodSpinner.setAdapter(new ArrayAdapter<>(
+                requireContext(),
+                android.R.layout.simple_spinner_dropdown_item,
+                periodLabels
+        ));
+        int selectedPeriodIndex = 0;
+        for (int index = 0; index < FT8Common.Q65_SUPPORTED_TR_PERIODS.length; ++index) {
+            if (FT8Common.Q65_SUPPORTED_TR_PERIODS[index] == GeneralVariables.getQ65TrPeriodSeconds()) {
+                selectedPeriodIndex = index;
+                break;
+            }
+        }
+        periodSpinner.setSelection(selectedPeriodIndex);
+        root.addView(periodSpinner);
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.q65_config_title)
+                .setView(root)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    int selectedSubmode = submodeSpinner.getSelectedItemPosition();
+                    int selectedTrPeriod = FT8Common.Q65_SUPPORTED_TR_PERIODS[
+                            Math.max(0, Math.min(periodSpinner.getSelectedItemPosition(),
+                                    FT8Common.Q65_SUPPORTED_TR_PERIODS.length - 1))
+                            ];
+                    applyQ65Configuration(selectedSubmode, selectedTrPeriod);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
     private void updateDxpeditionManualUi() {
         if (binding == null) {
             return;
@@ -735,6 +850,14 @@ public class MyCallingFragment extends Fragment {
             return;
         }
 
+        if (mode >= 0) {
+            GeneralVariables.setSignalMode(mode);
+            restartForModeRuntimeChange();
+            updateSignalModeUI();
+            ToastMessage.show("鍒囨崲鍒?" + getCurrentModeLabel());
+            return;
+        }
+
         GeneralVariables.setSignalMode(mode);
 
         // 切换模式时，重建接收与发射时钟
@@ -772,6 +895,10 @@ public class MyCallingFragment extends Fragment {
         } else {
             binding.rbFt8.setChecked(true);
         }
+        if (mode == FT8Common.Q65_MODE) {
+            binding.rbQ65.setChecked(true);
+        }
+        updateQ65ConfigUi();
 
         // 更新发射频率标题
         binding.baseFrequencyTextView.setText(String.format(
@@ -831,10 +958,26 @@ public class MyCallingFragment extends Fragment {
         } else {
             binding.rbFt8.setChecked(true);
         }
+        if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+            binding.rbQ65.setChecked(true);
+        }
+        updateQ65ConfigUi();
 
         binding.rgSignalMode.setOnCheckedChangeListener((group, checkedId) -> {
-            int mode = checkedId == R.id.rbFt4 ? FT8Common.FT4_MODE : FT8Common.FT8_MODE;
+            int mode;
+            if (checkedId == R.id.rbFt4) {
+                mode = FT8Common.FT4_MODE;
+            } else if (checkedId == R.id.rbQ65) {
+                mode = FT8Common.Q65_MODE;
+            } else {
+                mode = FT8Common.FT8_MODE;
+            }
             switchSignalMode(mode);
+        });
+        binding.q65ConfigButton.setOnClickListener(view -> showQ65ConfigDialog());
+        binding.rbQ65.setOnLongClickListener(view -> {
+            showQ65ConfigDialog();
+            return true;
         });
 
         binding.dxpeditionManualCheckBox.setOnCheckedChangeListener(null);

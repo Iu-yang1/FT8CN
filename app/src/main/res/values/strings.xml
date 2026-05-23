@@ -648,5 +648,11 @@
     <string name="alc_switch_on" translatable="false">ALC On</string>
     <string name="alc_switch_off" translatable="false">ALC Off</string>
     <string name="config_enable_pskreporter" translatable="false">PSKReporter</string> <!-- PSK -->
+    <string name="q65_config_button_default">A/60s</string>
+    <string name="q65_config_title">Q65 参数</string>
+    <string name="q65_config_submode">Q65 子模式</string>
+    <string name="q65_config_tr_period">TR 周期</string>
+    <string name="q65_config_applied">Q65 配置已切换到 %1$s</string>
+    <string name="q65_config_saved">Q65 配置已保存为 %1$s</string>
 
 </resources>
