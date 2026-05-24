@@ -100,6 +100,7 @@ public class FT8TransmitSignal {
     public MutableLiveData<ArrayList<CqCallEntry>> mutableCqQueue = new MutableLiveData<>();
     private final OnDoTransmitted onDoTransmitted;
     private final ExecutorService doTransmitThreadPool = Executors.newCachedThreadPool();
+    private volatile String lastTransmitStatusSummary = "";
     private final Observer<Float> volumePercentObserver = new Observer<Float>() {
         @Override
         public void onChanged(Float aFloat) {
@@ -138,23 +139,31 @@ public class FT8TransmitSignal {
 
     private boolean isDxpeditionHoundAutoEnabled() {
         return GeneralVariables.autoDxpeditionHound
-                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && AutoSessionUiPolicy.supportsDxpedition(GeneralVariables.getSignalMode())
                 && !transmitFreeText
                 && !isExperimentalManualTxMode();
     }
 
     private boolean isManualDxpeditionHoundEnabled() {
         return GeneralVariables.manualDxpeditionHoundMode
-                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && AutoSessionUiPolicy.supportsDxpedition(GeneralVariables.getSignalMode())
                 && !transmitFreeText
                 && !isExperimentalManualTxMode();
     }
 
     private boolean isManualDxpeditionFoxEnabled() {
         return GeneralVariables.manualDxpeditionFoxMode
-                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && AutoSessionUiPolicy.supportsDxpedition(GeneralVariables.getSignalMode())
                 && !transmitFreeText
                 && !isExperimentalManualTxMode();
+    }
+
+    public String getLastTransmitStatusSummary() {
+        return lastTransmitStatusSummary;
+    }
+
+    private void updateLastTransmitStatus(String status) {
+        lastTransmitStatusSummary = status == null ? "" : status;
     }
 
     private static final class DxpeditionFoxCandidate {
@@ -416,6 +425,9 @@ public class FT8TransmitSignal {
     }
 
     private AutoSessionType resolveBoundSessionType(TransmitCallsign transmitCallsign) {
+        if (!AutoSessionUiPolicy.supportsAutomaticQso(GeneralVariables.getSignalMode())) {
+            return AutoSessionType.STANDARD;
+        }
         if (transmitCallsign == null) {
             return AutoSessionType.STANDARD;
         }
@@ -1199,8 +1211,24 @@ public class FT8TransmitSignal {
                 plan.size(),
                 primaryItem == null ? 0.0f : primaryItem.frequencyHz,
                 primaryMessage == null ? "" : primaryMessage.getMessageText()));
+        updateLastTransmitStatus(String.format(java.util.Locale.US,
+                "%s tx-build sub=%s/%ds sr=%d freq=%.1f text=%s",
+                FT8Common.modeToString(currentMode),
+                FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                GeneralVariables.getQ65TrPeriodSeconds(),
+                currentSampleRate,
+                primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                primaryMessage == null ? "" : primaryMessage.getMessageText()));
         float[] buffer = MultiSlotAudioMixer.build(plan, GeneralVariables.audioSampleRate);
         if (buffer == null) {
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "%s tx-fail mixer-null sub=%s/%ds sr=%d freq=%.1f text=%s",
+                    FT8Common.modeToString(currentMode),
+                    FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                    GeneralVariables.getQ65TrPeriodSeconds(),
+                    currentSampleRate,
+                    primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                    primaryMessage == null ? "" : primaryMessage.getMessageText()));
             Log.e(TAG, String.format(java.util.Locale.US,
                     "playTransmitPlan failed: reason=mixer-returned-null, mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, freq=%.1f, text=%s",
                     FT8Common.modeToString(currentMode),
@@ -1220,6 +1248,10 @@ public class FT8TransmitSignal {
                 currentSampleRate,
                 primaryItem == null ? 0.0f : primaryItem.frequencyHz,
                 GeneralVariables.volumePercent,
+                buildBufferStats(buffer, currentSampleRate)));
+        updateLastTransmitStatus(String.format(java.util.Locale.US,
+                "%s tx-wave %s",
+                FT8Common.modeToString(currentMode),
                 buildBufferStats(buffer, currentSampleRate)));
 
         Log.d(TAG, String.format("playFT8Signal: prepare audio playback, mode=%s, format=%s, sampleRate=%d",
@@ -1250,6 +1282,12 @@ public class FT8TransmitSignal {
                 AudioTrack.MODE_STATIC,
                 mySession);
         if (audioTrack.getState() == AudioTrack.STATE_UNINITIALIZED) {
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "%s tx-fail audio-init sr=%d state=%d %s",
+                    FT8Common.modeToString(currentMode),
+                    currentSampleRate,
+                    audioTrack.getState(),
+                    buildBufferStats(buffer, currentSampleRate)));
             Log.e(TAG, String.format(java.util.Locale.US,
                     "audio track init failed: mode=%s, format=%s, sampleRate=%d, trackState=%d, bufferBytes=%d, %s",
                     FT8Common.modeToString(currentMode),
@@ -1288,6 +1326,11 @@ public class FT8TransmitSignal {
                 || writeResult == AudioTrack.ERROR_BAD_VALUE
                 || writeResult == AudioTrack.ERROR_DEAD_OBJECT
                 || writeResult == AudioTrack.ERROR) {
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "%s tx-fail audio-write result=%d %s",
+                    FT8Common.modeToString(currentMode),
+                    writeResult,
+                    buildBufferStats(buffer, currentSampleRate)));
             Log.e(TAG, String.format("audio write failed: %d", writeResult));
             afterPlayAudio();
             return;
@@ -1308,6 +1351,12 @@ public class FT8TransmitSignal {
         if (audioTrack != null) {
             audioTrack.setVolume(GeneralVariables.volumePercent);
             audioTrack.play();
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "%s tx-playing sr=%d volume=%.2f %s",
+                    FT8Common.modeToString(currentMode),
+                    currentSampleRate,
+                    GeneralVariables.volumePercent,
+                    buildBufferStats(buffer, currentSampleRate)));
             Log.d(TAG, String.format(java.util.Locale.US,
                     "audio playback started: mode=%s, playState=%d, marker=%d, volume=%.2f",
                     FT8Common.modeToString(currentMode),
@@ -1476,6 +1525,9 @@ public class FT8TransmitSignal {
     }
 
     public String getAutoSessionStatusText() {
+        if (!AutoSessionUiPolicy.supportsAutomaticQso(GeneralVariables.getSignalMode())) {
+            return GeneralVariables.getStringFromResource(R.string.q65_manual_only_status);
+        }
         if (isManualDxpeditionFoxEnabled()) {
             return GeneralVariables.getStringFromResource(R.string.dxpedition_fox_status)
                     + " / " + foxSlotScheduler.getStatusText();
@@ -1547,8 +1599,9 @@ public class FT8TransmitSignal {
     }
 
     public void refreshSessionModeByCurrentTarget() {
+        int currentMode = GeneralVariables.getSignalMode();
         if (toCallsign == null) {
-            autoSession.resetToCq(GeneralVariables.getSignalMode(), GeneralVariables.band);
+            autoSession.resetToCq(currentMode, GeneralVariables.band);
             foxSlotScheduler.clear();
             updateDxpeditionFoxSlotStatus();
             resetDxpeditionCountersForNewTarget(AutoSessionType.STANDARD, null, 6);
@@ -1558,9 +1611,24 @@ public class FT8TransmitSignal {
             return;
         }
 
+        if (!AutoSessionUiPolicy.supportsAutomaticQso(currentMode)) {
+            autoSession.bindTarget(
+                    toCallsign.callsign,
+                    currentMode,
+                    GeneralVariables.band,
+                    AutoSessionType.STANDARD
+            );
+            foxSlotScheduler.clear();
+            updateDxpeditionFoxSlotStatus();
+            resetDxpeditionCountersForNewTarget(AutoSessionType.STANDARD, toCallsign, functionOrder);
+            generateFun();
+            mutableFunctionOrder.postValue(functionOrder);
+            return;
+        }
+
         autoSession.bindTarget(
                 toCallsign.callsign,
-                GeneralVariables.getSignalMode(),
+                currentMode,
                 GeneralVariables.band,
                 resolveBoundSessionType(toCallsign)
         );
@@ -2130,6 +2198,9 @@ public class FT8TransmitSignal {
 
     public void parseMessageToFunction(ArrayList<Ft8Message> msgList) {
         if (isExperimentalManualTxMode()) {
+            return;
+        }
+        if (!AutoSessionUiPolicy.supportsAutomaticQso(GeneralVariables.getSignalMode())) {
             return;
         }
         if (GeneralVariables.myCallsign.length() < 3) {

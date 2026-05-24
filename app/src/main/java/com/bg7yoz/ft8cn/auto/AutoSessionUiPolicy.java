@@ -1,5 +1,7 @@
 package com.bg7yoz.ft8cn.auto;
 
+import com.bg7yoz.ft8cn.FT8Common;
+
 public final class AutoSessionUiPolicy {
     private static final int[] CQ_ONLY = new int[]{6};
     private static final int[] STANDARD = new int[]{1, 2, 3, 4, 5, 6};
@@ -7,6 +9,14 @@ public final class AutoSessionUiPolicy {
     private static final int[] DXPEDITION_FOX = new int[]{2, 4, 6};
 
     private AutoSessionUiPolicy() {
+    }
+
+    public static boolean supportsAutomaticQso(int signalMode) {
+        return signalMode != FT8Common.Q65_MODE;
+    }
+
+    public static boolean supportsDxpedition(int signalMode) {
+        return signalMode == FT8Common.FT8_MODE;
     }
 
     public static int[] getAvailableFunctionOrders(AutoSessionType sessionType, int currentFunctionOrder) {

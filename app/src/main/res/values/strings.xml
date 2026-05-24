@@ -165,6 +165,10 @@
     <string name="dxpedition_manual_toggle">DXP</string>
     <string name="dxpedition_fox_toggle">FOX</string>
     <string name="dxpedition_fox_status">DXpedition Fox</string>
+    <string name="q65_manual_only_status">Q65 manual TX only</string>
+    <string name="q65_status_line">Mode: %1$s  RX:%2$s  TX:%3$s  Early:%4$s  Full:%5$s</string>
+    <string name="q65_status_rx_line">RX: %1$s</string>
+    <string name="q65_status_tx_line">TX: %1$s</string>
     <string name="dxpedition_macro_armed">macro armed</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">DXpedition replies</string>

@@ -84,6 +84,7 @@ public class FT8SignalListener {
     // Keep the batch decoder path serialized on the Java side until native callback routing
     // is made context-safe end to end.
     private final Object nativeBatchDecodeLock = new Object();
+    private volatile String lastDecodeStatusSummary = "";
     private final DecodeScheduler decodeScheduler = new DecodeScheduler(
             "ft8-native-decode-worker",
             NATIVE_DECODE_THREAD_STACK_BYTES,
@@ -886,6 +887,31 @@ public class FT8SignalListener {
             return;
         }
 
+        long latestLiveUtc = getLatestScheduledLiveFullDecodeUtc(request.decodeMode);
+        if (request.utc < latestLiveUtc) {
+            Log.d(TAG, String.format(Locale.US,
+                    "decode deep-skip listener=%d request=%d trigger=%d mode=%s utc=%d latestLiveUtc=%d reason=stale-deep-before-enqueue",
+                    listenerInstanceId,
+                    request.requestSequence,
+                    request.triggerSequence,
+                    FT8Common.modeToString(request.decodeMode),
+                    request.utc,
+                    latestLiveUtc));
+            return;
+        }
+        if (decodeScheduler.getPendingJobCount() >= Math.max(1, decodeScheduler.getWorkerCount())) {
+            Log.d(TAG, String.format(Locale.US,
+                    "decode deep-skip listener=%d request=%d trigger=%d mode=%s utc=%d pending=%d workers=%d reason=deep-backlog-before-enqueue",
+                    listenerInstanceId,
+                    request.requestSequence,
+                    request.triggerSequence,
+                    FT8Common.modeToString(request.decodeMode),
+                    request.utc,
+                    decodeScheduler.getPendingJobCount(),
+                    decodeScheduler.getWorkerCount()));
+            return;
+        }
+
         Log.d(TAG, String.format(Locale.US,
                 "decode deep-schedule listener=%d request=%d trigger=%d mode=%s utc=%d expectedSamples=%d source=%s",
                 listenerInstanceId,
@@ -1170,6 +1196,10 @@ public class FT8SignalListener {
         return decodeScheduler.getConcurrencyPolicy();
     }
 
+    public String getLastDecodeStatusSummary() {
+        return lastDecodeStatusSummary;
+    }
+
     public void setDecodeConcurrencyPolicy(DecodeConcurrencyPolicy concurrencyPolicy) {
         if (concurrencyPolicy == null) {
             return;
@@ -1297,6 +1327,16 @@ public class FT8SignalListener {
                     request.sourceTag,
                     request.enqueueReason));
         }
+
+        lastDecodeStatusSummary = String.format(Locale.US,
+                "%s %s raw=%d merged=%d batch=%d pub=%d reason=%s",
+                FT8Common.modeToString(request.decodeMode),
+                request.profile.stageName,
+                nativeResult.bridgeRawCount,
+                nativeResult.mergedCount,
+                msgs.size(),
+                publishedCount,
+                buildDecodeDiagnosticReason(request, decoderInput, nativeResult, publishedCount));
 
         if (request.notifyFinished) {
             decodeTimeSec.postValue(timeSec);

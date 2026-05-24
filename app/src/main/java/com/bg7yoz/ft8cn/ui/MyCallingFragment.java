@@ -680,7 +680,39 @@ public class MyCallingFragment extends Fragment {
             binding.autoSessionTextView.setText("");
             return;
         }
+        if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+            binding.autoSessionTextView.setMaxLines(3);
+            binding.autoSessionTextView.setText(buildQ65StatusText());
+            return;
+        }
+        binding.autoSessionTextView.setMaxLines(1);
         binding.autoSessionTextView.setText(mainViewModel.ft8TransmitSignal.getAutoSessionStatusText());
+    }
+
+    private String buildQ65StatusText() {
+        String rxSummary = mainViewModel.ft8SignalListener == null
+                ? ""
+                : mainViewModel.ft8SignalListener.getLastDecodeStatusSummary();
+        String txSummary = mainViewModel.ft8TransmitSignal == null
+                ? ""
+                : mainViewModel.ft8TransmitSignal.getLastTransmitStatusSummary();
+        if (rxSummary == null || rxSummary.trim().length() == 0) {
+            rxSummary = "-";
+        }
+        if (txSummary == null || txSummary.trim().length() == 0) {
+            txSummary = "-";
+        }
+        return getString(
+                R.string.q65_status_line,
+                GeneralVariables.getActiveModeLabel(),
+                "on",
+                "on",
+                "off",
+                "yes")
+                + "\n"
+                + getString(R.string.q65_status_rx_line, rxSummary)
+                + "\n"
+                + getString(R.string.q65_status_tx_line, txSummary);
     }
 
     private void initCqQueuePanel() {

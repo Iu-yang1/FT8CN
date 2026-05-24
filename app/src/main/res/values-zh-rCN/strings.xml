@@ -578,6 +578,10 @@
     <string name="dxpedition_manual_toggle">DXP</string>
     <string name="dxpedition_fox_toggle">FOX</string>
     <string name="dxpedition_fox_status">远征 Fox</string>
+    <string name="q65_manual_only_status">Q65 仅手动发射</string>
+    <string name="q65_status_line">模式:%1$s  RX:%2$s  TX:%3$s  Early:%4$s  整槽:%5$s</string>
+    <string name="q65_status_rx_line">接收: %1$s</string>
+    <string name="q65_status_tx_line">发射: %1$s</string>
     <string name="dxpedition_macro_armed">宏已待发</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">远征快捷回复</string>
