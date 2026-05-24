@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.media.AudioFormat;
 import android.util.Log;
 
+import androidx.core.content.ContextCompat;
+
 import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
@@ -36,7 +38,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class SampleDecodeReceiver extends BroadcastReceiver {
     private static final String TAG = "SampleDecodeReceiver";
-    private static final long NATIVE_DECODE_THREAD_STACK_BYTES = 16L * 1024L * 1024L;
+    static final long DECODE_THREAD_STACK_BYTES = 16L * 1024L * 1024L;
     private static final int ENTRY_DECODE_TIMEOUT_FT8_MS = 40000;
     private static final int ENTRY_DECODE_TIMEOUT_FT4_MS = 25000;
     private static final float DEFAULT_GENERATED_BASE_FREQUENCY_HZ = 1500.0f;
@@ -44,100 +46,109 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (intent == null) {
+        if (context == null || intent == null) {
             return;
         }
+        try {
+            ContextCompat.startForegroundService(
+                    context.getApplicationContext(),
+                    SampleDecodeForegroundService.buildStartIntent(context.getApplicationContext(), intent)
+            );
+            Log.i(TAG, "sample decode request forwarded to foreground service");
+        } catch (Throwable throwable) {
+            Log.e(TAG, "failed to start sample decode foreground service", throwable);
+        }
+    }
 
-        final PendingResult pendingResult = goAsync();
-        new Thread(null, () -> {
-            try {
-                String path = intent.getStringExtra("path");
-                String mode = intent.getStringExtra("mode");
-                String messageText = normalizeMessageExtra(intent.getStringExtra("message"));
-                String myCall = intent.getStringExtra("my_call");
-                String engine = intent.getStringExtra("engine");
-                if (myCall == null || myCall.trim().isEmpty()) {
-                    myCall = "K1JT";
-                }
-                if (engine == null || engine.trim().isEmpty()) {
-                    engine = "listener";
-                }
+    static void runDecodeRequest(Context context, Intent intent) {
+        if (context == null || intent == null) {
+            return;
+        }
+        try {
+            String path = intent.getStringExtra("path");
+            String mode = intent.getStringExtra("mode");
+            String messageText = normalizeMessageExtra(intent.getStringExtra("message"));
+            String myCall = intent.getStringExtra("my_call");
+            String engine = intent.getStringExtra("engine");
+            if (myCall == null || myCall.trim().isEmpty()) {
+                myCall = "K1JT";
+            }
+            if (engine == null || engine.trim().isEmpty()) {
+                engine = "listener";
+            }
 
-                int decodeMode = parseDecodeMode(mode);
-                int q65Submode = intent.getIntExtra("q65_submode", FT8Common.Q65_SUBMODE_A);
-                int q65TrPeriodSeconds = intent.getIntExtra("q65_tr_period", FT8Common.Q65_DEFAULT_TR_PERIOD_SECONDS);
-                long utcTime = intent.getLongExtra("utc", 1800000000000L);
-                int passCount = intent.getIntExtra("passes", 3);
-                int roundCount = intent.getIntExtra("rounds", 3);
-                int qsoSensitivity = intent.getIntExtra("qso_sensitivity", 1);
-                int decodeSensitivity = intent.getIntExtra("decode_sensitivity", 1);
-                boolean earlyDecodeEnabled = intent.getBooleanExtra(
-                        "early_decode",
-                        FT8Common.supportsEarlyDecodeStage(decodeMode)
-                );
-                boolean wideband = intent.getBooleanExtra("wideband", true);
-                boolean deepDecodeEnabled = intent.getBooleanExtra("deep", true);
-                int nativeTimeoutMs = intent.getIntExtra("native_timeout_ms", 15000);
-                float baseFrequencyHz = intent.getFloatExtra("base_frequency_hz", DEFAULT_GENERATED_BASE_FREQUENCY_HZ);
-                int generatedSampleRate = intent.getIntExtra("sample_rate", DEFAULT_GENERATED_SAMPLE_RATE);
-                final String finalMyCall = myCall;
+            int decodeMode = parseDecodeMode(mode);
+            int q65Submode = intent.getIntExtra("q65_submode", FT8Common.Q65_SUBMODE_A);
+            int q65TrPeriodSeconds = intent.getIntExtra("q65_tr_period", FT8Common.Q65_DEFAULT_TR_PERIOD_SECONDS);
+            long utcTime = intent.getLongExtra("utc", 1800000000000L);
+            int passCount = intent.getIntExtra("passes", 3);
+            int roundCount = intent.getIntExtra("rounds", 3);
+            int qsoSensitivity = intent.getIntExtra("qso_sensitivity", 1);
+            int decodeSensitivity = intent.getIntExtra("decode_sensitivity", 1);
+            boolean earlyDecodeEnabled = intent.getBooleanExtra(
+                    "early_decode",
+                    FT8Common.supportsEarlyDecodeStage(decodeMode)
+            );
+            boolean wideband = intent.getBooleanExtra("wideband", true);
+            boolean deepDecodeEnabled = intent.getBooleanExtra("deep", true);
+            int nativeTimeoutMs = intent.getIntExtra("native_timeout_ms", 15000);
+            float baseFrequencyHz = intent.getFloatExtra("base_frequency_hz", DEFAULT_GENERATED_BASE_FREQUENCY_HZ);
+            int generatedSampleRate = intent.getIntExtra("sample_rate", DEFAULT_GENERATED_SAMPLE_RATE);
+            final String finalMyCall = myCall;
 
-                applyDecoderConfig(context, myCall, decodeMode, passCount, roundCount,
-                        qsoSensitivity, decodeSensitivity, earlyDecodeEnabled, wideband,
-                        deepDecodeEnabled, q65Submode, q65TrPeriodSeconds);
-                path = resolveSamplePath(context, path, messageText, decodeMode, baseFrequencyHz, generatedSampleRate);
-                String stagedPath = stageSampleForNative(context, path);
-                configureNativeRuntime(context);
+            applyDecoderConfig(context, myCall, decodeMode, passCount, roundCount,
+                    qsoSensitivity, decodeSensitivity, earlyDecodeEnabled, wideband,
+                    deepDecodeEnabled, q65Submode, q65TrPeriodSeconds);
+            path = resolveSamplePath(context, path, messageText, decodeMode, baseFrequencyHz, generatedSampleRate);
+            String stagedPath = stageSampleForNative(context, path);
+            configureNativeRuntime(context);
 
-                Log.i(TAG, "sample decode begin");
-                Log.i(TAG, String.format(Locale.US,
-                        "request engine=%s mode=%s q65Submode=%s q65TrPeriod=%d path=%s stagedPath=%s myCall=%s passes=%d rounds=%d deep=%s",
-                        engine,
-                        FT8Common.modeToString(decodeMode),
-                        FT8Common.getQ65SubmodeLabel(q65Submode),
-                        q65TrPeriodSeconds,
-                        path,
-                        stagedPath,
-                        myCall,
-                        passCount,
-                        roundCount,
-                        deepDecodeEnabled ? "Y" : "N"));
-                String inspect = NativeSampleDecode.inspectWavFile(stagedPath, decodeMode, utcTime);
-                if (resultHasText(inspect)) {
-                    for (String line : inspect.split("\\n")) {
-                        if (!line.trim().isEmpty()) {
-                            Log.i(TAG, "[inspect] " + line);
-                        }
+            Log.i(TAG, "sample decode begin");
+            Log.i(TAG, String.format(Locale.US,
+                    "request engine=%s mode=%s q65Submode=%s q65TrPeriod=%d path=%s stagedPath=%s myCall=%s passes=%d rounds=%d deep=%s",
+                    engine,
+                    FT8Common.modeToString(decodeMode),
+                    FT8Common.getQ65SubmodeLabel(q65Submode),
+                    q65TrPeriodSeconds,
+                    path,
+                    stagedPath,
+                    myCall,
+                    passCount,
+                    roundCount,
+                    deepDecodeEnabled ? "Y" : "N"));
+            String inspect = NativeSampleDecode.inspectWavFile(stagedPath, decodeMode, utcTime);
+            if (resultHasText(inspect)) {
+                for (String line : inspect.split("\\n")) {
+                    if (!line.trim().isEmpty()) {
+                        Log.i(TAG, "[inspect] " + line);
                     }
                 }
-
-                if ("native".equalsIgnoreCase(engine) || "both".equalsIgnoreCase(engine)) {
-                    runNativeDecode(stagedPath, decodeMode, utcTime, finalMyCall, passCount, roundCount,
-                            qsoSensitivity, decodeSensitivity, earlyDecodeEnabled, wideband,
-                            deepDecodeEnabled, q65Submode, q65TrPeriodSeconds, nativeTimeoutMs);
-                }
-
-                if ("listener".equalsIgnoreCase(engine) || "both".equalsIgnoreCase(engine)) {
-                    runDirectListenerDecode(context, path, decodeMode, utcTime, myCall,
-                            passCount, roundCount, qsoSensitivity, decodeSensitivity,
-                            earlyDecodeEnabled, wideband, deepDecodeEnabled,
-                            q65Submode, q65TrPeriodSeconds);
-                }
-
-                if ("entry".equalsIgnoreCase(engine) || "all".equalsIgnoreCase(engine)) {
-                    runEntryListenerDecode(context, path, decodeMode, myCall,
-                            passCount, roundCount, qsoSensitivity, decodeSensitivity,
-                            earlyDecodeEnabled, wideband, deepDecodeEnabled,
-                            q65Submode, q65TrPeriodSeconds);
-                }
-
-                Log.i(TAG, "sample decode end");
-            } catch (Throwable throwable) {
-                Log.e(TAG, "sample decode failed", throwable);
-            } finally {
-                pendingResult.finish();
             }
-        }, "sample-decode-debug", NATIVE_DECODE_THREAD_STACK_BYTES).start();
+
+            if ("native".equalsIgnoreCase(engine) || "both".equalsIgnoreCase(engine)) {
+                runNativeDecode(stagedPath, decodeMode, utcTime, finalMyCall, passCount, roundCount,
+                        qsoSensitivity, decodeSensitivity, earlyDecodeEnabled, wideband,
+                        deepDecodeEnabled, q65Submode, q65TrPeriodSeconds, nativeTimeoutMs);
+            }
+
+            if ("listener".equalsIgnoreCase(engine) || "both".equalsIgnoreCase(engine)) {
+                runDirectListenerDecode(context, path, decodeMode, utcTime, myCall,
+                        passCount, roundCount, qsoSensitivity, decodeSensitivity,
+                        earlyDecodeEnabled, wideband, deepDecodeEnabled,
+                        q65Submode, q65TrPeriodSeconds);
+            }
+
+            if ("entry".equalsIgnoreCase(engine) || "all".equalsIgnoreCase(engine)) {
+                runEntryListenerDecode(context, path, decodeMode, myCall,
+                        passCount, roundCount, qsoSensitivity, decodeSensitivity,
+                        earlyDecodeEnabled, wideband, deepDecodeEnabled,
+                        q65Submode, q65TrPeriodSeconds);
+            }
+
+            Log.i(TAG, "sample decode end");
+        } catch (Throwable throwable) {
+            Log.e(TAG, "sample decode failed", throwable);
+        }
     }
 
     private static void runNativeDecode(String path,
@@ -180,7 +191,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
             } finally {
                 nativeLatch.countDown();
             }
-        }, "sample-decode-native", NATIVE_DECODE_THREAD_STACK_BYTES).start();
+        }, "sample-decode-native", DECODE_THREAD_STACK_BYTES).start();
 
         if (!nativeLatch.await(nativeTimeoutMs, TimeUnit.MILLISECONDS)) {
             Log.e(TAG, String.format(Locale.US, "[native] timeout after %d ms", nativeTimeoutMs));

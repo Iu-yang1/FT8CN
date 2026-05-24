@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
     <application>
         <receiver
             android:name="com.bg7yoz.ft8cn.diagnostics.SampleDecodeReceiver"
@@ -10,5 +12,10 @@
                 <action android:name="com.bg7yoz.ft8cn.action.DEBUG_SAMPLE_DECODE" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name="com.bg7yoz.ft8cn.diagnostics.SampleDecodeForegroundService"
+            android:enabled="true"
+            android:exported="true" />
     </application>
 </manifest>
