@@ -1,10 +1,10 @@
 package com.bg7yoz.ft8cn.ft8listener;
 /**
- * 鐢ㄤ簬鐩戝惉闊抽骞堕┍鍔?FT8 / FT4 瑙ｇ爜銆傛椂闅欒妭濂忕敱 UtcTimer 鎺у埗锛?
- * 闊抽鏁版嵁閫氳繃 OnWaveDataListener 鎻愪緵銆?
+ * Listen to audio and drive FT8 / FT4 / Q65 decoding.
+ * Slot timing is controlled by UtcTimer, and audio comes from OnWaveDataListener.
  *
- * 1. 姣忎竴杞В鐮侀兘浼氬厛鍥哄畾 decodeMode锛岄伩鍏嶈В鐮佽繃绋嬩腑琚?UI 鍒囨崲 FT8 / FT4 鎵撴柇銆?
- * 2. FT4 涔熷厑璁歌繘鍏ユ繁搴﹁В鐮侊紝浣嗕粛鐒跺彈鏁翠綋瑙ｇ爜棰勭畻绾︽潫銆?
+ * 1. Each decode round freezes decodeMode first so UI mode changes cannot interrupt it.
+ * 2. FT4 may still use deep decode, but it remains under the overall decode budget.
  *
  * @author BGY70Z
  * @date 2023-03-20
@@ -55,15 +55,15 @@ public class FT8SignalListener {
     private final int listenerInstanceId = LISTENER_INSTANCE_COUNTER.getAndIncrement();
     private final AtomicLong decodeTriggerSequence = new AtomicLong(1);
     private final AtomicLong decodeRequestSequence = new AtomicLong(1);
-    private final OnFt8Listen onFt8Listen; // 鐩戝惉寮€濮嬨€佽В鐮佸畬鎴愬悗鐨勫洖璋?
+    private final OnFt8Listen onFt8Listen; // callbacks before listen and after decode finishes
 
-    public MutableLiveData<Long> decodeTimeSec = new MutableLiveData<>(); // 鏈€杩戜竴娆¤В鐮佽€楁椂
-    public long timeSec = 0; // 鏈€杩戜竴娆¤В鐮佽€楁椂缂撳瓨
+    public MutableLiveData<Long> decodeTimeSec = new MutableLiveData<>(); // last decode duration
+    public long timeSec = 0; // cached last decode duration
 
     private OnWaveDataListener onWaveDataListener;
     private DatabaseOpr db;
 
-    private final A91List a91List = new A91List(); // subtract 鎵€闇€鐨?A91 缂撳瓨
+    private final A91List a91List = new A91List(); // cached A91 payloads used by subtract
     private final Object slotDedupeLock = new Object();
     private final ArrayList<SlotDedupeEntry> slotDedupeEntries = new ArrayList<>();
     private long slotDedupeUtc = Long.MIN_VALUE;
@@ -227,7 +227,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 鎸夊綋鍓嶆ā寮忛噸寤?UTC 瀹氭椂鍣ㄣ€?
+     * Rebuild the UTC timer for the current mode.
      */
     private void buildUtcTimer() {
         utcTimer = new UtcTimer(FT8Common.getSlotTimeM(GeneralVariables.getSignalMode()), false, new OnUtcTimer() {
@@ -237,7 +237,7 @@ public class FT8SignalListener {
 
             @Override
             public void doOnSecTimer(long utc) {
-                Log.d(TAG, String.format("瑙﹀彂褰曢煶,utc=%d,mode=%s",
+                Log.d(TAG, String.format("record trigger, utc=%d, mode=%s",
                         utc,
                         FT8Common.modeToString(GeneralVariables.getSignalMode())));
                 runRecorde(utc);
@@ -246,7 +246,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 妯″紡鍒囨崲鍚庨噸寤虹洃鍚懆鏈熴€?
+     * Rebuild the listening cycle after a mode switch.
      */
     public void restartByCurrentMode() {
         boolean running = isListening();
@@ -284,17 +284,17 @@ public class FT8SignalListener {
     }
 
     /**
-     * 杩斿洖褰撳墠鏃堕挓鍋忕Щ锛屽寘鍚湰鍦伴『寤跺拰 NTP 淇銆?
+     * Return the current clock offset including local delay and NTP correction.
      */
     public int time_Offset() {
         return utcTimer.getTime_sec() + UtcTimer.delay;
     }
 
     /**
-     * 鎸夊綋鍓嶆ā寮忔媺鍙栭煶棰戝苟鍚姩鏈疆瑙ｇ爜銆?
+     * Pull audio for the current mode and start the decode round.
      */
     private void runRecorde(long utc) {
-        Log.d(TAG, "寮€濮嬪綍闊?..");
+        Log.d(TAG, "start capture...");
 
         if (onWaveDataListener != null) {
             final int recordMode = GeneralVariables.getSignalMode();
@@ -334,7 +334,7 @@ public class FT8SignalListener {
                         new OnGetVoiceDataDone() {
                             @Override
                             public void onGetDone(float[] data) {
-                                Log.d(TAG, String.format("鏀跺埌鎻愬墠瑙ｇ爜闊抽:samples=%d,mode=%s",
+                                Log.d(TAG, String.format("received early-decode audio: samples=%d, mode=%s",
                                         data.length,
                                         FT8Common.modeToString(recordMode)));
                                 decodeFt8(
@@ -360,7 +360,7 @@ public class FT8SignalListener {
                     new OnGetVoiceDataDone() {
                         @Override
                         public void onGetDone(float[] data) {
-                            Log.d(TAG, String.format("鏀跺埌瀹屾暣瑙ｇ爜闊抽:samples=%d,mode=%s",
+                            Log.d(TAG, String.format("received full-slot audio: samples=%d, mode=%s",
                                     data.length,
                                     FT8Common.modeToString(recordMode)));
                             decodeFt8(
@@ -382,7 +382,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 鍏煎鏃ц皟鐢細澶栭儴鍙粰闊抽鏃讹紝鎸夊綋鍓嶆ā寮忚蛋瀹屾暣瑙ｇ爜銆?
+     * Compatibility path: if the caller only gives audio, run a full decode for the current mode.
      */
     public void decodeFt8(long utc, float[] voiceData) {
         decodeFt8(utc, voiceData, FT8Common.SAMPLE_RATE, GeneralVariables.getSignalMode());
@@ -436,7 +436,7 @@ public class FT8SignalListener {
         );
         if (resampled == null || resampled.length == 0) {
             Log.w(TAG, String.format(
-                    "瑙ｇ爜鍓嶉噸閲囨牱澶辫触锛屽洖閫€鍘熷杈撳叆: src=%d,target=%d,mode=%s,stage=%d,len=%d",
+                    "decode resample failed, fallback raw input: src=%d,target=%d,mode=%s,stage=%d,len=%d",
                     normalizedSourceRate,
                     FT8Common.SAMPLE_RATE,
                     FT8Common.modeToString(decodeMode),
@@ -447,7 +447,7 @@ public class FT8SignalListener {
         }
 
         Log.d(TAG, String.format(
-                "瑙ｇ爜鍓嶉噸閲囨牱: src=%d,target=%d,mode=%s,stage=%d,len=%d->%d",
+                "decode resample: src=%d,target=%d,mode=%s,stage=%d,len=%d->%d",
                 normalizedSourceRate,
                 FT8Common.SAMPLE_RATE,
                 FT8Common.modeToString(decodeMode),
@@ -484,8 +484,8 @@ public class FT8SignalListener {
     }
 
     /**
-     * experimental codec 浠嶅浐瀹氫娇鐢?12k 杈撳叆銆?
-     * 鍦ㄨ繖閲屽畬鎴愰噸閲囨牱锛岄伩鍏?FT8/FT4 澶氶噰鏍风巼鎺ュ叆鐨勫壇浣滅敤鎵╂暎鍒板疄楠岃皟鍒惰В璋冮摼璺€?
+     * The experimental codec still uses fixed 12k input.
+     * Resample here so multi-rate FT8/FT4 input handling does not leak into the experimental chain.
      */
     private float[] prepareExperimentalInput(float[] voiceData, int sampleRate, int decodeMode, String sourceTag) {
         if (voiceData == null) {
@@ -609,7 +609,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * FT4 鐨?subtract 杞暟姣?FT8 鏇翠繚瀹堛€?
+     * FT4 keeps fewer subtract rounds than FT8.
      */
     private int getMaxSubtractRounds(int decodeMode) {
         if (decodeMode == FT8Common.FT4_MODE) {
@@ -666,8 +666,8 @@ public class FT8SignalListener {
     }
 
     /**
-     * 鍒ゆ柇娑堟伅鏄惁鍏佽鍔犲叆 subtract 鍒楄〃銆?
-     * 鏅€氳В鐮佸彲绋嶅锛屾繁搴﹁В鐮佸悗鏇翠弗鏍硷紝閬垮厤璇爜杩涗竴姝ユ墿鏁ｃ€?
+     * Decide whether a message can enter the subtract list.
+     * Normal decode can be looser; deep decode is stricter to avoid amplifying false decodes.
      */
     private boolean shouldAddToSubtractList(Ft8Message msg, boolean isDeep, int decodeMode) {
         if (msg == null || !msg.isValid) {
@@ -690,7 +690,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 褰撳墠杞粨鏋滈噷鏄惁瀛樺湪瓒冲楂樿川閲忕殑娑堟伅锛屽彲浠ョ户缁墽琛?subtract銆?
+     * Whether the current round already contains messages strong enough to keep subtract going.
      */
     private boolean hasQualifiedSubtractMsg(ArrayList<Ft8Message> msgs, int decodeMode) {
         if (msgs == null || msgs.size() == 0) {
@@ -706,11 +706,11 @@ public class FT8SignalListener {
     }
 
     /**
-     * 鏍稿績瑙ｇ爜鍏ュ彛銆?
+     * Core decode entry.
      *
      * @param utc        褰撳墠鏃堕殭 UTC
      * @param voiceData  杈撳叆闊抽鏁版嵁
-     * @param decodeMode 鏈疆鍥哄畾妯″紡锛岄伩鍏嶈В鐮佺嚎绋嬭繍琛岃繃绋嬩腑娣峰叆鍙︿竴绉嶆ā寮?
+     * @param decodeMode fixed mode for this round so another mode cannot leak into the worker
      */
     public void decodeFt8(long utc, float[] voiceData, int decodeMode) {
         decodeFt8(utc, voiceData, FT8Common.SAMPLE_RATE, decodeMode);
@@ -1103,7 +1103,7 @@ public class FT8SignalListener {
         );
         if (decoderInput == null || decoderInput.length == 0) {
             Log.w(TAG, String.format(
-                    "鐟欙絿鐖滄潏鎾冲弳娑撹櫣鈹栭敍宀冪儲鏉╁洦婀版潪? mode=%s, stage=%s, srcRate=%d",
+                    "decode prepare failed: no usable decoder input, mode=%s, stage=%s, srcRate=%d",
                     FT8Common.modeToString(request.decodeMode),
                     request.profile.stageName,
                     request.sourceSampleRate
@@ -1344,8 +1344,8 @@ public class FT8SignalListener {
     }
 
     /**
-     * debug 鏋勫缓涓嬩繚瀛樼湡瀹為€佸叆 native decoder 鐨?12k 闊抽锛?
-     * 渚夸簬澶嶇幇鍓嶇瀹為檯瑙ｇ爜閾捐矾銆?
+     * In debug builds, save the real 12k audio that goes into the native decoder.
+     * This makes it easier to reproduce the exact frontend decode path.
      */
     private void maybeDumpDecoderInput(float[] decoderInput,
                                        long utc,
@@ -1390,13 +1390,13 @@ public class FT8SignalListener {
                     decoderInput.length,
                     wavFile.getAbsolutePath());
             Log.d(TAG, String.format(Locale.US,
-                    "淇濆瓨鐪熷疄瑙ｇ爜杈撳叆 mode=%s stage=%s path=%s samples=%d",
+                    "saved real decoder input mode=%s stage=%s path=%s samples=%d",
                     modeName,
                     stageName,
                     wavFile.getAbsolutePath(),
                     decoderInput.length));
         } catch (IOException exception) {
-            Log.w(TAG, "淇濆瓨瑙ｇ爜杈撳叆澶辫触: " + exception.getMessage());
+            Log.w(TAG, "save decoder input failed: " + exception.getMessage());
         }
     }
 
@@ -1514,11 +1514,11 @@ public class FT8SignalListener {
     }
 
     /**
-     * 鎵ц涓€杞?native 瑙ｇ爜銆?
+     * Execute one native decode round.
      *
-     * @param ft8Decoder 瑙ｇ爜鍣ㄥ彞鏌?
+     * @param ft8Decoder native decoder handle
      * @param utc        褰撳墠 UTC
-     * @param isDeep     鏄惁娣卞害瑙ｇ爜
+     * @param isDeep     whether to use deep decode mode
      * @param decodeMode 褰撳墠鍥哄畾妯″紡
      */
     private ArrayList<Ft8Message> runDecode(long ft8Decoder,
@@ -1536,12 +1536,12 @@ public class FT8SignalListener {
 
         a91List.clear();
 
-        // 璁剧疆褰撳墠瑙ｇ爜妯″紡
+        // Set the active decode mode before pulling sync candidates.
         setDecodeMode(ft8Decoder, useDeepSession);
 
         int num_candidates = DecoderFt8FindSync(ft8Decoder);
         Log.d(TAG, String.format(
-                "瑙ｇ爜杞紑濮? mode=%s deep=%s candidates=%d deadline=%d",
+                "decode round start: mode=%s deep=%s candidates=%d deadline=%d",
                 FT8Common.modeToString(decodeMode),
                 useDeepSession ? "Y" : "N",
                 num_candidates,
@@ -1584,7 +1584,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 璁＄畻鏈疆娑堟伅鐨勫钩鍧囨椂闂村亸绉汇€?
+     * Compute the average time offset for messages from this round.
      */
     private float averageOffset(ArrayList<Ft8Message> messages) {
         if (messages.size() == 0) return 0f;
@@ -1596,7 +1596,7 @@ public class FT8SignalListener {
     }
 
     /**
-     * 灏嗘柊澧炴秷鎭幓閲嶅悗骞跺叆鍒楄〃銆?
+     * Merge new messages into the list after de-duplication.
      */
     private void addMsgToList(ArrayList<Ft8Message> allMsg, ArrayList<Ft8Message> newMsg) {
         for (int i = newMsg.size() - 1; i >= 0; i--) {
@@ -1609,8 +1609,8 @@ public class FT8SignalListener {
     }
 
     /**
-     * 妫€鏌ュ垪琛ㄤ腑鏄惁宸叉湁鐩稿悓娑堟伅銆?
-     * FT8 / FT4 瑙嗕负涓嶅悓妯″紡锛屼笉浜掔浉鍘婚噸銆?
+     * Check whether the list already contains the same decoded message.
+     * FT8 / FT4 / Q65 are treated as different modes and never cross-dedupe.
      */
     private boolean checkMessageSame(ArrayList<Ft8Message> ft8Messages, Ft8Message ft8Message) {
         for (Ft8Message msg : ft8Messages) {
@@ -1735,56 +1735,56 @@ public class FT8SignalListener {
     }
 
     /**
-     * 鍒濆鍖栬В鐮佸櫒骞惰繑鍥?native 鍙ユ焺銆?
+     * Initialize the decoder and return the native handle.
      *
      * @param utcTime     褰撳墠 UTC
-     * @param sampleRat   閲囨牱鐜囷紝鍥哄畾涓?12000
+     * @param sampleRat sample rate, fixed at 12000
      * @param num_samples 鏈疆鏈熸湜閲囨牱鐐规暟
-     * @param isFt8       true 涓?FT8锛宖alse 涓?FT4
-     * @return 瑙ｇ爜鍣ㄥ彞鏌?
+     * @param isFt8 true for FT8, false for FT4
+     * @return native decoder handle
      */
     public native long InitDecoder(long utcTime, int sampleRat, int num_samples, boolean isFt8);
 
     /**
-     * 鍚戣В鐮佸櫒鍠傚叆鏁存 PCM 鏁版嵁銆?
+     * Feed a whole PCM buffer into the decoder.
      *
      * @param buffer  wav 鏁版嵁
-     * @param decoder 瑙ｇ爜鍣ㄥ彞鏌?
+     * @param decoder native decoder handle
      */
     public native void DecoderMonitorPress(int[] buffer, long decoder);
 
     public native void DecoderMonitorPressFloat(float[] buffer, long decoder);
 
     /**
-     * 鎵ц鍚屾鎼滅储骞惰繑鍥炲€欓€夋暟閲忋€?
+     * Run synchronous sync-search and return the candidate count.
      *
-     * @param decoder 瑙ｇ爜鍣ㄥ彞鏌?
-     * @return 鍊欓€夋暟閲?
+     * @param decoder native decoder handle
+     * @return candidate count
      */
     public native int DecoderFt8FindSync(long decoder);
 
     /**
-     * 鍒嗘瀽鍗曚釜鍊欓€夊苟杈撳嚭娑堟伅缁撴灉銆?
+     * Analyze one candidate and write the decoded message fields.
      *
-     * @param idx        鍊欓€夌储寮?
-     * @param decoder    瑙ｇ爜鍣ㄥ彞鏌?
-     * @param ft8Message 杈撳嚭娑堟伅瀵硅薄
-     * @return 鏄惁鎴愬姛瀹屾垚鍒嗘瀽
+     * @param idx candidate index
+     * @param decoder native decoder handle
+     * @param ft8Message output message object
+     * @return whether analysis completed successfully
      */
     public native boolean DecoderFt8Analysis(int idx, long decoder, Ft8Message ft8Message);
 
     /**
-     * 閲婃斁瑙ｇ爜鍣ㄨ祫婧愩€?
+     * Release decoder resources.
      *
-     * @param decoder 瑙ｇ爜鍣ㄥ彞鏌?
+     * @param decoder native decoder handle
      */
     public native void DeleteDecoder(long decoder);
 
     public native void DecoderFt8Reset(long decoder, long utcTime, int num_samples);
 
-    public native byte[] DecoderGetA91(long decoder); // 鑾峰彇褰撳墠娑堟伅鐨?A91 鏁版嵁
+    public native byte[] DecoderGetA91(long decoder); // fetch A91 data for the current message
 
-    public native void setDecodeMode(long decoder, boolean isDeep); // true 涓烘繁搴﹁В鐮侊紝false 涓哄揩閫熻В鐮?
+    public native void setDecodeMode(long decoder, boolean isDeep); // true for deep decode, false for fast decode
 
     public native boolean DecoderOwnsSessionFlow(long decoder);
     public native void DecoderSetApHints(long decoder, String myCall, String[] hintCallsigns, String[] hintGrids);
