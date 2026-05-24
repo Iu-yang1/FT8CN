@@ -36,6 +36,8 @@
 enum {
     kWsjtDefaultQsoFrequencyHz = 1000,
     kWsjtDefaultTxFrequencyHz = 1000,
+    kQ65DefaultQsoFrequencyHz = 2500,
+    kQ65DefaultTxFrequencyHz = 2500,
     kFtxPayloadBytes = 10,
     kQ65DecodeMaxHz = 5000,
     kQ65DefaultTrPeriodSeconds = 60,
@@ -227,6 +229,14 @@ static bool is_ft4_mode(int mode) {
 
 static bool is_q65_mode(int mode) {
     return mode == FTX_MODE_Q65;
+}
+
+static int default_qso_frequency_for_mode(int mode) {
+    return is_q65_mode(mode) ? kQ65DefaultQsoFrequencyHz : kWsjtDefaultQsoFrequencyHz;
+}
+
+static int default_tx_frequency_for_mode(int mode) {
+    return is_q65_mode(mode) ? kQ65DefaultTxFrequencyHz : kWsjtDefaultTxFrequencyHz;
 }
 
 static int sanitize_q65_submode(int q65_submode) {
@@ -1047,8 +1057,8 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
     state->expected_samples = num_samples;
     state->last_sample_count = num_samples;
     state->ldpc_iterations = fast_kLDPC_iterations;
-    state->qso_frequency_hz = kWsjtDefaultQsoFrequencyHz;
-    state->tx_frequency_hz = kWsjtDefaultTxFrequencyHz;
+    state->qso_frequency_hz = default_qso_frequency_for_mode(mode);
+    state->tx_frequency_hz = default_tx_frequency_for_mode(mode);
     state->mode = mode;
     state->q65_submode = kQ65DefaultSubmode;
     state->q65_tr_period_seconds = kQ65DefaultTrPeriodSeconds;

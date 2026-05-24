@@ -335,9 +335,9 @@ contains
     case (0)
        q65_ntol_from_context = 2500_c_int
     case (2)
-       q65_ntol_from_context = 200_c_int
-    case default
        q65_ntol_from_context = 1000_c_int
+    case default
+       q65_ntol_from_context = 2500_c_int
     end select
   end function q65_ntol_from_context
 
