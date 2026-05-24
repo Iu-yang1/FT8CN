@@ -36,9 +36,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -83,15 +80,18 @@ public class FT8SignalListener {
         int bridgeRawCount;
         int mergedCount;
     }
-    private final ExecutorService decodeExecutor = Executors.newSingleThreadExecutor(new ThreadFactory() {
-        @Override
-        public Thread newThread(Runnable runnable) {
-            return new Thread(null,
-                    runnable,
-                    "ft8-native-decode-worker",
-                    NATIVE_DECODE_THREAD_STACK_BYTES);
-        }
-    });
+    private final Object nativeBatchDecodeLock = new Object();
+    private final DecodeScheduler decodeScheduler = new DecodeScheduler(
+            "ft8-native-decode-worker",
+            NATIVE_DECODE_THREAD_STACK_BYTES,
+            DecodeWorkerConfig.conservative(),
+            DecodeConcurrencyPolicy.PARALLEL_PREPARE_SERIAL_NATIVE,
+            new DecodeScheduler.Logger() {
+                @Override
+                public void debug(String text) {
+                    Log.d(TAG, text);
+                }
+            });
 
     static {
         System.loadLibrary("ft8cn");
@@ -276,7 +276,7 @@ public class FT8SignalListener {
             utcTimer.destroy();
         }
         releasePersistentNativeDecoders();
-        decodeExecutor.shutdownNow();
+        decodeScheduler.shutdownNow();
     }
 
     public boolean isListening() {
@@ -999,28 +999,31 @@ public class FT8SignalListener {
             return result;
         }
 
-        String[][] apHints = buildDecoderApHints();
-        Ft8Message[] nativeMessages = DecoderProcessBatch(
-                nativeHandle,
-                request.utc,
-                request.expectedSamples,
-                decoderInput,
-                request.decodeMode,
-                request.profile.decodePassCount,
-                request.profile.multiDecodeRoundCount,
-                request.profile.qsoFreqSensitivity,
-                request.profile.decodeSensitivity,
-                request.profile.enableEarlyDecode,
-                request.profile.enableWidebandDxSearch,
-                request.profile.useDeepSession,
-                request.q65Submode,
-                request.q65TrPeriodSeconds,
-                GeneralVariables.getShortCallsign(GeneralVariables.myCallsign).toUpperCase().trim(),
-                apHints[0],
-                apHints[1]
-        );
-        result.bridgeRawCount = DecoderGetLastBridgeRawCount(nativeHandle);
-        result.mergedCount = DecoderGetLastMergedCount(nativeHandle);
+        Ft8Message[] nativeMessages;
+        synchronized (nativeBatchDecodeLock) {
+            String[][] apHints = buildDecoderApHints();
+            nativeMessages = DecoderProcessBatch(
+                    nativeHandle,
+                    request.utc,
+                    request.expectedSamples,
+                    decoderInput,
+                    request.decodeMode,
+                    request.profile.decodePassCount,
+                    request.profile.multiDecodeRoundCount,
+                    request.profile.qsoFreqSensitivity,
+                    request.profile.decodeSensitivity,
+                    request.profile.enableEarlyDecode,
+                    request.profile.enableWidebandDxSearch,
+                    request.profile.useDeepSession,
+                    request.q65Submode,
+                    request.q65TrPeriodSeconds,
+                    GeneralVariables.getShortCallsign(GeneralVariables.myCallsign).toUpperCase().trim(),
+                    apHints[0],
+                    apHints[1]
+            );
+            result.bridgeRawCount = DecoderGetLastBridgeRawCount(nativeHandle);
+            result.mergedCount = DecoderGetLastMergedCount(nativeHandle);
+        }
         if (nativeMessages == null) {
             return result;
         }
@@ -1038,19 +1041,89 @@ public class FT8SignalListener {
         return result;
     }
 
+    private DecodeStage resolveDecodeStage(DecodeRequest request) {
+        if (request.profile.publishAsDeep) {
+            return DecodeStage.DEEP_SUPPLEMENT;
+        }
+        if (request.decodeStage == DECODE_STAGE_EARLY) {
+            return DecodeStage.EARLY;
+        }
+        if ("direct".equals(request.sourceTag) || "sample".equals(request.sourceTag)) {
+            return DecodeStage.DIAGNOSTIC_SAMPLE;
+        }
+        return DecodeStage.LIVE_FULL;
+    }
+
+    private DecodePriority resolveDecodePriority(DecodeRequest request, DecodeStage stage) {
+        if (stage == DecodeStage.DEEP_SUPPLEMENT) {
+            return DecodePriority.DEEP_SUPPLEMENT;
+        }
+        if (stage == DecodeStage.EARLY) {
+            return DecodePriority.EARLY;
+        }
+        if (stage == DecodeStage.DIAGNOSTIC_SAMPLE) {
+            return DecodePriority.DIAGNOSTIC_SAMPLE;
+        }
+        if (request.decodeMode == FT8Common.Q65_MODE) {
+            return DecodePriority.Q65_FULL;
+        }
+        return DecodePriority.LIVE_FULL;
+    }
+
+    private DecodeJob buildDecodeJob(DecodeRequest request) {
+        DecodeStage stage = resolveDecodeStage(request);
+        DecodePriority priority = resolveDecodePriority(request, stage);
+        return new DecodeJob(
+                request.requestSequence,
+                request.triggerSequence,
+                stage,
+                priority,
+                request.decodeMode,
+                request.utc,
+                request.sourceTag,
+                request.enqueueReason,
+                request.enqueueWallClockMs,
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            if (shouldSkipScheduledDecode(request)) {
+                                Log.d(TAG, String.format(Locale.US,
+                                        "skip stale decode stage=%s mode=%s utc=%d latestLiveUtc=%d",
+                                        request.profile.stageName,
+                                        FT8Common.modeToString(request.decodeMode),
+                                        request.utc,
+                                        getLatestScheduledLiveFullDecodeUtc(request.decodeMode)));
+                                return;
+                            }
+
+                            executeDecodeRequest(request);
+                        } finally {
+                            if (request.liveFullSessionRequest) {
+                                finishLiveFullDecode(request.decodeMode, request.utc);
+                            }
+                        }
+                    }
+                }
+        );
+    }
+
     private void enqueueDecodeRequest(DecodeRequest request) {
         long latestLiveUtcBeforeEnqueue = getLatestScheduledLiveFullDecodeUtc(request.decodeMode);
         if (request.liveFullSessionRequest) {
             markScheduledLiveFullDecode(request.decodeMode, request.utc);
         }
         long latestLiveUtcAfterEnqueue = getLatestScheduledLiveFullDecodeUtc(request.decodeMode);
+        DecodeJob job = buildDecodeJob(request);
 
         Log.d(TAG, String.format(Locale.US,
-                "decode enqueue listener=%d request=%d trigger=%d stage=%s mode=%s utc=%d expectedSamples=%d voiceSamples=%d sourceSampleRate=%d liveFull=%s latestLiveUtcBefore=%d latestLiveUtcAfter=%d liveFullRunning=%s source=%s reason=%s",
+                "decode enqueue listener=%d request=%d trigger=%d stage=%s jobStage=%s priority=%s mode=%s utc=%d expectedSamples=%d voiceSamples=%d sourceSampleRate=%d liveFull=%s latestLiveUtcBefore=%d latestLiveUtcAfter=%d liveFullRunning=%s source=%s reason=%s schedulerWorkers=%d schedulerPending=%d policy=%s",
                 listenerInstanceId,
                 request.requestSequence,
                 request.triggerSequence,
                 request.profile.stageName,
+                job.stage,
+                job.priority,
                 FT8Common.modeToString(request.decodeMode),
                 request.utc,
                 request.expectedSamples,
@@ -1061,30 +1134,45 @@ public class FT8SignalListener {
                 latestLiveUtcAfterEnqueue,
                 isLiveFullDecodeRunning(request.decodeMode) ? "Y" : "N",
                 request.sourceTag,
-                request.enqueueReason));
+                request.enqueueReason,
+                decodeScheduler.getWorkerCount(),
+                decodeScheduler.getPendingJobCount(),
+                decodeScheduler.getConcurrencyPolicy()));
 
-        decodeExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (shouldSkipScheduledDecode(request)) {
-                        Log.d(TAG, String.format(Locale.US,
-                                "skip stale decode stage=%s mode=%s utc=%d latestLiveUtc=%d",
-                                request.profile.stageName,
-                                FT8Common.modeToString(request.decodeMode),
-                                request.utc,
-                                getLatestScheduledLiveFullDecodeUtc(request.decodeMode)));
-                        return;
-                    }
+        if (!decodeScheduler.enqueue(job) && request.liveFullSessionRequest) {
+            finishLiveFullDecode(request.decodeMode, request.utc);
+        }
+    }
 
-                    executeDecodeRequest(request);
-                } finally {
-                    if (request.liveFullSessionRequest) {
-                        finishLiveFullDecode(request.decodeMode, request.utc);
-                    }
-                }
-            }
-        });
+    public void setDecodeWorkerConfig(DecodeWorkerConfig workerConfig) {
+        if (workerConfig == null) {
+            return;
+        }
+        Log.i(TAG, "update decode worker config: " + workerConfig);
+        decodeScheduler.setWorkerConfig(workerConfig);
+    }
+
+    public void setDecodeWorkerPreset(DecodeWorkerConfig.Preset preset) {
+        if (preset == null) {
+            return;
+        }
+        setDecodeWorkerConfig(DecodeWorkerConfig.fromPreset(preset));
+    }
+
+    public DecodeWorkerConfig getDecodeWorkerConfig() {
+        return decodeScheduler.getWorkerConfig();
+    }
+
+    public DecodeConcurrencyPolicy getDecodeConcurrencyPolicy() {
+        return decodeScheduler.getConcurrencyPolicy();
+    }
+
+    public void setDecodeConcurrencyPolicy(DecodeConcurrencyPolicy concurrencyPolicy) {
+        if (concurrencyPolicy == null) {
+            return;
+        }
+        decodeScheduler.setConcurrencyPolicy(concurrencyPolicy);
+        Log.i(TAG, "update decode concurrency policy: " + concurrencyPolicy);
     }
 
     private void executeDecodeRequest(DecodeRequest request) {
