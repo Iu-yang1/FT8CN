@@ -859,27 +859,28 @@ public class MyCallingFragment extends Fragment {
         ToastMessage.show("切换到 " + getCurrentModeLabel());
     }
 
+    private int getSignalModeButtonId(int mode) {
+        if (mode == FT8Common.FT4_MODE) {
+            return R.id.rbFt4;
+        }
+        if (mode == FT8Common.Q65_MODE) {
+            return R.id.rbQ65;
+        }
+        return R.id.rbFt8;
+    }
+
     /**
      * 閸掗攱鏌婂Ο鈥崇础閻╃鍙?UI
      */
     @SuppressLint("DefaultLocale")
     private void updateSignalModeUI() {
         int mode = GeneralVariables.getSignalMode();
+        int targetButtonId = getSignalModeButtonId(mode);
 
         updatingSignalModeUi = true;
         try {
-            binding.rbFt8.setChecked(false);
-            binding.rbFt4.setChecked(false);
-            binding.rbQ65.setChecked(false);
-            if (mode == FT8Common.FT4_MODE) {
-                binding.rbFt4.setChecked(true);
-                binding.rgSignalMode.check(R.id.rbFt4);
-            } else if (mode == FT8Common.Q65_MODE) {
-                binding.rbQ65.setChecked(true);
-                binding.rgSignalMode.check(R.id.rbQ65);
-            } else {
-                binding.rbFt8.setChecked(true);
-                binding.rgSignalMode.check(R.id.rbFt8);
+            if (binding.rgSignalMode.getCheckedRadioButtonId() != targetButtonId) {
+                binding.rgSignalMode.check(targetButtonId);
             }
         } finally {
             updatingSignalModeUi = false;
@@ -941,9 +942,6 @@ public class MyCallingFragment extends Fragment {
         // 閸掓繂顫愰崠鏍佸蹇涒偓澶嬪 UI
         updateSignalModeUI();
 
-        binding.rbFt8.setOnClickListener(view -> switchSignalMode(FT8Common.FT8_MODE));
-        binding.rbFt4.setOnClickListener(view -> switchSignalMode(FT8Common.FT4_MODE));
-        binding.rbQ65.setOnClickListener(view -> switchSignalMode(FT8Common.Q65_MODE));
         binding.rgSignalMode.setOnCheckedChangeListener((group, checkedId) -> {
             if (updatingSignalModeUi) {
                 return;
