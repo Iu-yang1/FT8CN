@@ -90,6 +90,7 @@ public class MyCallingFragment extends Fragment {
             return;
         }
         boolean q65Active = GeneralVariables.getSignalMode() == FT8Common.Q65_MODE;
+        binding.rbQ65.setText("Q65 " + getQ65ConfigLabel());
         binding.q65ConfigButton.setVisibility(q65Active ? View.VISIBLE : View.GONE);
         binding.q65ConfigButton.setEnabled(q65Active);
         binding.q65ConfigButton.setAlpha(q65Active ? 1.0f : 0.45f);
@@ -855,7 +856,7 @@ public class MyCallingFragment extends Fragment {
         Log.i(TAG, "switchSignalMode: mode=" + FT8Common.modeToString(mode));
         restartForModeRuntimeChange();
         updateSignalModeUI();
-        ToastMessage.show("鍒囨崲鍒?" + getCurrentModeLabel());
+        ToastMessage.show("切换到 " + getCurrentModeLabel());
     }
 
     /**
@@ -867,6 +868,7 @@ public class MyCallingFragment extends Fragment {
 
         updatingSignalModeUi = true;
         try {
+            binding.rgSignalMode.clearCheck();
             if (mode == FT8Common.FT4_MODE) {
                 binding.rbFt4.setChecked(true);
             } else if (mode == FT8Common.Q65_MODE) {
@@ -932,19 +934,7 @@ public class MyCallingFragment extends Fragment {
         requireActivity().registerForContextMenu(transmitRecycleView);
 
         // 閸掓繂顫愰崠鏍佸蹇涒偓澶嬪 UI
-        updatingSignalModeUi = true;
-        try {
-            if (GeneralVariables.getSignalMode() == FT8Common.FT4_MODE) {
-                binding.rbFt4.setChecked(true);
-            } else if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
-                binding.rbQ65.setChecked(true);
-            } else {
-                binding.rbFt8.setChecked(true);
-            }
-        } finally {
-            updatingSignalModeUi = false;
-        }
-        updateQ65ConfigUi();
+        updateSignalModeUI();
 
         binding.rgSignalMode.setOnCheckedChangeListener((group, checkedId) -> {
             if (updatingSignalModeUi) {
