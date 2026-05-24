@@ -835,6 +835,56 @@ public class FT8TransmitSignal {
                 rms);
     }
 
+    private int writeAudioTrackFully(AudioTrack track, float[] buffer) {
+        if (track == null || buffer == null) {
+            return AudioTrack.ERROR_BAD_VALUE;
+        }
+        int totalWritten = 0;
+        while (totalWritten < buffer.length) {
+            int written = track.write(
+                    buffer,
+                    totalWritten,
+                    buffer.length - totalWritten,
+                    AudioTrack.WRITE_BLOCKING
+            );
+            if (written <= 0) {
+                Log.e(TAG, String.format(java.util.Locale.US,
+                        "audio float write stopped: offset=%d, remaining=%d, result=%d",
+                        totalWritten,
+                        buffer.length - totalWritten,
+                        written));
+                return written;
+            }
+            totalWritten += written;
+        }
+        return totalWritten;
+    }
+
+    private int writeAudioTrackFully(AudioTrack track, short[] buffer) {
+        if (track == null || buffer == null) {
+            return AudioTrack.ERROR_BAD_VALUE;
+        }
+        int totalWritten = 0;
+        while (totalWritten < buffer.length) {
+            int written = track.write(
+                    buffer,
+                    totalWritten,
+                    buffer.length - totalWritten,
+                    AudioTrack.WRITE_BLOCKING
+            );
+            if (written <= 0) {
+                Log.e(TAG, String.format(java.util.Locale.US,
+                        "audio short write stopped: offset=%d, remaining=%d, result=%d",
+                        totalWritten,
+                        buffer.length - totalWritten,
+                        written));
+                return written;
+            }
+            totalWritten += written;
+        }
+        return totalWritten;
+    }
+
     private void updateMessageStartTimeForOrder(int order) {
         if (order == 1 || order == 2) {
             messageStartTime = UtcTimer.getSystemTime();
@@ -1215,10 +1265,10 @@ public class FT8TransmitSignal {
 
         int writeResult;
         if (GeneralVariables.audioOutput32Bit) {
-            writeResult = audioTrack.write(buffer, 0, buffer.length, AudioTrack.WRITE_NON_BLOCKING);
+            writeResult = writeAudioTrackFully(audioTrack, buffer);
         } else {
             short[] audio_data = float2Short(buffer);
-            writeResult = audioTrack.write(audio_data, 0, audio_data.length, AudioTrack.WRITE_NON_BLOCKING);
+            writeResult = writeAudioTrackFully(audioTrack, audio_data);
         }
 
         if (buffer.length > writeResult) {
