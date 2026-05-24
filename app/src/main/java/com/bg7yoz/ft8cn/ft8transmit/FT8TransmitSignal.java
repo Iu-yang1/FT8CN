@@ -1249,7 +1249,7 @@ public class FT8TransmitSignal {
                 bufferSize,
                 AudioTrack.MODE_STATIC,
                 mySession);
-        if (audioTrack.getState() != AudioTrack.STATE_INITIALIZED) {
+        if (audioTrack.getState() == AudioTrack.STATE_UNINITIALIZED) {
             Log.e(TAG, String.format(java.util.Locale.US,
                     "audio track init failed: mode=%s, format=%s, sampleRate=%d, trackState=%d, bufferBytes=%d, %s",
                     FT8Common.modeToString(currentMode),

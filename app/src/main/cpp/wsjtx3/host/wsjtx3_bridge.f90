@@ -90,9 +90,9 @@ module wsjtx3_bridge
        integer, intent(in) :: nwave
        integer, intent(in) :: icmplx
        integer, intent(in) :: itone(nsym)
-       real(8), intent(in) :: fsample
+       real, intent(in) :: fsample
        real(8), intent(in) :: tonespacing
-       real(8), intent(in) :: f0
+       real, intent(in) :: f0
        complex, intent(out) :: cwave(nwave)
        real, intent(out) :: wave(nwave)
      end subroutine genwave
@@ -697,9 +697,9 @@ contains
     character(len=37) :: msgsent
     complex, allocatable :: cwave(:)
     real, allocatable :: wave(:)
-    real(8) :: fsample
+    real :: fsample
     real(8) :: tonespacing
-    real(8) :: f0
+    real :: f0
 
     wsjtx3_bridge_generate_q65_wave = 0_c_int
     if (sample_rate <= 0_c_int .or. out_capacity <= 0_c_int) then
@@ -731,9 +731,9 @@ contains
 
     allocate(cwave(nwave))
     allocate(wave(nwave))
-    fsample = real(sample_rate, kind=8)
-    tonespacing = (fsample / real(scaled_nsps, kind=8)) * real(mode_factor, kind=8)
-    f0 = real(base_frequency_hz, kind=8)
+    fsample = real(sample_rate)
+    tonespacing = (real(fsample, kind=8) / real(scaled_nsps, kind=8)) * real(mode_factor, kind=8)
+    f0 = real(base_frequency_hz)
     call genwave(itone, 85, scaled_nsps, nwave, fsample, tonespacing, f0, 0, cwave, wave)
 
     do index = 1, nwave

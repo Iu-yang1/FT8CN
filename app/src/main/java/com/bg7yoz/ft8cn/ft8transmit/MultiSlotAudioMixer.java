@@ -60,6 +60,18 @@ public final class MultiSlotAudioMixer {
         );
     }
 
+    private static boolean hasOnlyFiniteSamples(float[] wave) {
+        if (wave == null) {
+            return false;
+        }
+        for (float sample : wave) {
+            if (!Float.isFinite(sample)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static float[] build(MultiSlotTransmitPlan plan, int sampleRate) {
         if (plan == null || plan.isEmpty()) {
             return null;
@@ -85,6 +97,9 @@ public final class MultiSlotAudioMixer {
             );
             if (wave == null || wave.length == 0) {
                 logWaveBuildFailure("single-slot-wave-empty", plan.getSignalMode(), sampleRate, item);
+            } else if (!hasOnlyFiniteSamples(wave)) {
+                logWaveBuildFailure("single-slot-wave-non-finite", plan.getSignalMode(), sampleRate, item);
+                return null;
             } else {
                 Log.d(TAG, "single-slot wave ready: " + buildWaveStats(wave, sampleRate));
             }
@@ -102,6 +117,10 @@ public final class MultiSlotAudioMixer {
             );
             if (wave == null || wave.length == 0) {
                 logWaveBuildFailure("multi-slot-wave-empty", plan.getSignalMode(), sampleRate, item);
+                continue;
+            }
+            if (!hasOnlyFiniteSamples(wave)) {
+                logWaveBuildFailure("multi-slot-wave-non-finite", plan.getSignalMode(), sampleRate, item);
                 continue;
             }
             waves.add(wave);
