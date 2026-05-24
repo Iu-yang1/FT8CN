@@ -29,5 +29,7 @@ public final class NativeSampleDecode {
                                               int decodeSensitivity,
                                               boolean enableEarlyDecode,
                                               boolean enableWidebandDxSearch,
-                                              boolean deepDecodeEnabled);
+                                              boolean deepDecodeEnabled,
+                                              int q65Submode,
+                                              int q65TrPeriodSeconds);
 }

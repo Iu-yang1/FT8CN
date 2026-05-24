@@ -182,7 +182,9 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                                                                    jint decodeSensitivity,
                                                                    jboolean enableEarlyDecode,
                                                                    jboolean enableWidebandDxSearch,
-                                                                   jboolean deepDecodeEnabled) {
+                                                                   jboolean deepDecodeEnabled,
+                                                                   jint q65Submode,
+                                                                   jint q65TrPeriodSeconds) {
     std::string output;
     const std::string path = copy_jstring(env, wavPath);
     const std::string my_call = copy_jstring(env, myCall);
@@ -246,6 +248,7 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     options.enable_early_decode = enableEarlyDecode == JNI_TRUE;
     options.enable_wideband_dx_search = enableWidebandDxSearch == JNI_TRUE;
     decoder_set_wsjtx_options(decoder, &options);
+    decoder_set_q65_config(decoder, (int) q65Submode, (int) q65TrPeriodSeconds);
     decoder_set_ldpc_iterations(decoder, deepDecodeEnabled == JNI_TRUE);
 
     ap_hints_t hints{};
@@ -261,7 +264,7 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     const int bridge_raw_count = decoder_get_last_bridge_raw_count(decoder);
     const int merged_count = decoder_get_last_merged_count(decoder);
     append_line(&output,
-                "decode mode=%s utc=%lld candidates=%d bridgeRawCount=%d mergedCount=%d passes=%d rounds=%d early=%d deep=%d myCall=%s",
+                "decode mode=%s utc=%lld candidates=%d bridgeRawCount=%d mergedCount=%d passes=%d rounds=%d early=%d deep=%d q65Submode=%d q65TrPeriod=%d myCall=%s",
                 mode_label((int) decodeMode),
                 (long long) utcTime,
                 candidate_count,
@@ -271,6 +274,8 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                 multiDecodeRoundCount,
                 options.enable_early_decode ? 1 : 0,
                 deepDecodeEnabled == JNI_TRUE ? 1 : 0,
+                (int) q65Submode,
+                (int) q65TrPeriodSeconds,
                 my_call.empty() ? "-" : my_call.c_str());
 
     int valid_count = 0;
