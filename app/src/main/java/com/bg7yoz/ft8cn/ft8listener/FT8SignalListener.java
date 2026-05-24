@@ -80,6 +80,9 @@ public class FT8SignalListener {
         int bridgeRawCount;
         int mergedCount;
     }
+    // The current WSJT-X bridge still routes callbacks through global active-context state.
+    // Keep the batch decoder path serialized on the Java side until native callback routing
+    // is made context-safe end to end.
     private final Object nativeBatchDecodeLock = new Object();
     private final DecodeScheduler decodeScheduler = new DecodeScheduler(
             "ft8-native-decode-worker",
@@ -1170,6 +1173,12 @@ public class FT8SignalListener {
     public void setDecodeConcurrencyPolicy(DecodeConcurrencyPolicy concurrencyPolicy) {
         if (concurrencyPolicy == null) {
             return;
+        }
+        if (concurrencyPolicy == DecodeConcurrencyPolicy.PARALLEL_NATIVE) {
+            Log.w(TAG,
+                    "reject PARALLEL_NATIVE decode policy: bridge still uses global active context; "
+                            + "forcing PARALLEL_PREPARE_SERIAL_NATIVE");
+            concurrencyPolicy = DecodeConcurrencyPolicy.PARALLEL_PREPARE_SERIAL_NATIVE;
         }
         decodeScheduler.setConcurrencyPolicy(concurrencyPolicy);
         Log.i(TAG, "update decode concurrency policy: " + concurrencyPolicy);

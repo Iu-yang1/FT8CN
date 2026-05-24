@@ -72,6 +72,8 @@ module wsjtx3_bridge
   type(ft8_decoder), save :: g_ft8_decoders(WSJTX3_MAX_CONTEXTS)
   type(ft4_decoder), save :: g_ft4_decoders(WSJTX3_MAX_CONTEXTS)
   type(q65_decoder), save :: g_q65_decoders(WSJTX3_MAX_CONTEXTS)
+  ! Decode callbacks still append through this global active context.
+  ! Keep bridge entry serialized until callbacks can route by explicit context.
   integer, save :: g_active_context = 0
 
   interface

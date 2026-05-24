@@ -105,6 +105,12 @@ static void wsjtx3_bridge_unlock(void) {
 }
 #endif
 
+/*
+ * The Fortran bridge still keeps decode callback routing in global saved state
+ * such as g_active_context. Until that is replaced with explicit per-context
+ * routing, every bridge entry must stay serialized here.
+ */
+
 static int bridge_create_locked(int mode,
                                 int sample_rate,
                                 int expected_samples,
