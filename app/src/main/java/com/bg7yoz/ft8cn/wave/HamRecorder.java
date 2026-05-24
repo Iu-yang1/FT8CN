@@ -172,6 +172,25 @@ public class HamRecorder {
         public OnHamRecord onHamRecord;
         public VoiceDataMonitor voiceDataMonitor = null;
 
+        private static int resolveVoiceBufferLength(int durationMs, int sampleRate) {
+            long requestedSamples = (long) Math.max(0, durationMs)
+                    * (long) Math.max(1, sampleRate)
+                    / 1000L;
+            if (requestedSamples <= 0L) {
+                return 1;
+            }
+            if (requestedSamples > Integer.MAX_VALUE) {
+                Log.w(TAG, String.format(
+                        "voice monitor sample request overflow, durationMs=%d, sampleRate=%d, requestedSamples=%d",
+                        durationMs,
+                        sampleRate,
+                        requestedSamples
+                ));
+                return Integer.MAX_VALUE;
+            }
+            return (int) requestedSamples;
+        }
+
         public VoiceDataMonitor(int duration,
                                 int sampleRate,
                                 HamRecorder hamRecorder,
@@ -179,7 +198,15 @@ public class HamRecorder {
                                 OnGetVoiceDataDone onGetVoiceDataDone) {
             dataCount = 0;
             final int normalizedSampleRate = sampleRate <= 0 ? DEFAULT_SAMPLE_RATE_IN_HZ : sampleRate;
-            voiceData = new float[Math.max(1, duration * normalizedSampleRate / 1000)];
+            final int requestedSamples = resolveVoiceBufferLength(duration, normalizedSampleRate);
+            voiceData = new float[requestedSamples];
+            Log.d(TAG, String.format(
+                    "create voice monitor: durationMs=%d, sampleRate=%d, requestedSamples=%d, afterDoneRemove=%s",
+                    duration,
+                    normalizedSampleRate,
+                    requestedSamples,
+                    afterDoneRemove ? "Y" : "N"
+            ));
 
             onHamRecord = new OnHamRecord() {
                 @Override
