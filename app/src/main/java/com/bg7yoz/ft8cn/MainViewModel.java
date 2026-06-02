@@ -43,6 +43,7 @@ import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
 import com.bg7yoz.ft8cn.database.OnAfterQueryFollowCallsigns;
 import com.bg7yoz.ft8cn.database.OperationBand;
+import com.bg7yoz.ft8cn.eme.EmeAssistController;
 import com.bg7yoz.ft8cn.flex.FlexRadio;
 import com.bg7yoz.ft8cn.ft8listener.FT8SignalListener;
 import com.bg7yoz.ft8cn.ft8listener.OnFt8Listen;
@@ -159,6 +160,7 @@ public class MainViewModel extends ViewModel {
     public SpectrumListener spectrumListener;
     public PSKReporterManager pskReporterManager;
     public PSKReporterSender pskReporterSender;
+    public final EmeAssistController emeAssistController = new EmeAssistController();
     public boolean markMessage = true;
 
     public OperationBand operationBand = null;

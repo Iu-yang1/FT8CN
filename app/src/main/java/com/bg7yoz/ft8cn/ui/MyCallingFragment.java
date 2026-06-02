@@ -51,6 +51,8 @@ import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.cq.CqCallEntry;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
+import com.bg7yoz.ft8cn.eme.EmeAssistState;
+import com.bg7yoz.ft8cn.eme.EmeDopplerCalculator;
 import com.bg7yoz.ft8cn.ft8transmit.DxpeditionFoxSlotFrequencyConfig;
 import com.bg7yoz.ft8cn.ft8transmit.DxpeditionMacroSupport;
 import com.bg7yoz.ft8cn.ft8transmit.FunctionOfTransmit;
@@ -59,6 +61,7 @@ import com.bg7yoz.ft8cn.ft8transmit.TransmitCallsign;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
 import java.util.ArrayList;
+import java.util.Locale;
 
 public class MyCallingFragment extends Fragment {
     private static final String TAG = "MyCallingFragment";
@@ -681,7 +684,7 @@ public class MyCallingFragment extends Fragment {
             return;
         }
         if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
-            binding.autoSessionTextView.setMaxLines(3);
+            binding.autoSessionTextView.setMaxLines(4);
             binding.autoSessionTextView.setText(buildQ65StatusText());
             return;
         }
@@ -712,7 +715,36 @@ public class MyCallingFragment extends Fragment {
                 + "\n"
                 + getString(R.string.q65_status_rx_line, rxSummary)
                 + "\n"
-                + getString(R.string.q65_status_tx_line, txSummary);
+                + getString(R.string.q65_status_tx_line, txSummary)
+                + "\n"
+                + getString(R.string.q65_status_eme_line, buildEmeAssistStatusText());
+    }
+
+    private String buildEmeAssistStatusText() {
+        if (mainViewModel == null || mainViewModel.emeAssistController == null) {
+            return "Display only: unavailable";
+        }
+        EmeAssistState emeState = mainViewModel.emeAssistController.updateDisplayOnly(
+                GeneralVariables.getMyMaidenheadGrid(),
+                GeneralVariables.band,
+                UtcTimer.getSystemTime());
+        if (emeState == null || emeState.moonEphemeris == null || !emeState.moonEphemeris.available) {
+            return "Display only: grid unavailable";
+        }
+        double txCorrectionHz = EmeDopplerCalculator.calculateTxCorrectionHz(
+                GeneralVariables.band,
+                emeState.moonEphemeris.rangeRateMps);
+        return String.format(
+                Locale.US,
+                "Display only grid=%s Az %.1f El %.1f Dist %.0fkm dR %.2fm/s RX %.1fHz TX %.1fHz preview %.1fHz",
+                emeState.observerLocation == null ? "-" : emeState.observerLocation.grid,
+                emeState.moonEphemeris.azimuthDeg,
+                emeState.moonEphemeris.elevationDeg,
+                emeState.moonEphemeris.distanceKm,
+                emeState.moonEphemeris.rangeRateMps,
+                emeState.lastDopplerHz,
+                txCorrectionHz,
+                emeState.previewFrequencyHz);
     }
 
     private void initCqQueuePanel() {
@@ -1067,6 +1099,21 @@ public class MyCallingFragment extends Fragment {
                         "[%s] " + GeneralVariables.getStringFromResource(R.string.sound_frequency_is),
                         getCurrentModeLabel(),
                         aFloat));
+                updateAutoSessionStatus();
+            }
+        });
+
+        GeneralVariables.mutableMyMaidenheadGrid.observe(getViewLifecycleOwner(), new Observer<String>() {
+            @Override
+            public void onChanged(String grid) {
+                updateAutoSessionStatus();
+            }
+        });
+
+        GeneralVariables.mutableBandChange.observe(getViewLifecycleOwner(), new Observer<Integer>() {
+            @Override
+            public void onChanged(Integer bandIndex) {
+                updateAutoSessionStatus();
             }
         });
 
