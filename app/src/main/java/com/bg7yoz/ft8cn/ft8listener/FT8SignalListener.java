@@ -911,6 +911,19 @@ public class FT8SignalListener {
                     decodeScheduler.getWorkerCount()));
             return;
         }
+        if (decodeScheduler.getConcurrencyPolicy() != DecodeConcurrencyPolicy.PARALLEL_NATIVE
+                && decodeScheduler.getActiveJobCount() > 0) {
+            Log.d(TAG, String.format(Locale.US,
+                    "decode deep-skip listener=%d request=%d trigger=%d mode=%s utc=%d active=%d policy=%s reason=deep-native-serial-active-before-enqueue",
+                    listenerInstanceId,
+                    request.requestSequence,
+                    request.triggerSequence,
+                    FT8Common.modeToString(request.decodeMode),
+                    request.utc,
+                    decodeScheduler.getActiveJobCount(),
+                    decodeScheduler.getConcurrencyPolicy()));
+            return;
+        }
 
         Log.d(TAG, String.format(Locale.US,
                 "decode deep-schedule listener=%d request=%d trigger=%d mode=%s utc=%d expectedSamples=%d source=%s",

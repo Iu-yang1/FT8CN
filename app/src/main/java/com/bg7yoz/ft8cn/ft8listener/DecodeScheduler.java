@@ -83,6 +83,10 @@ final class DecodeScheduler {
         return executor.getQueue().size();
     }
 
+    int getActiveJobCount() {
+        return executor.getActiveCount();
+    }
+
     int getWorkerCount() {
         return workerConfig.workerCount;
     }
@@ -137,6 +141,9 @@ final class DecodeScheduler {
             return null;
         }
         if (job.stage == DecodeStage.DEEP_SUPPLEMENT) {
+            if (concurrencyPolicy != DecodeConcurrencyPolicy.PARALLEL_NATIVE && activeCount > 0) {
+                return "deep-native-serial-active";
+            }
             if (queueSize > workerConfig.lowPriorityBacklogLimit) {
                 return "deep-backlog";
             }
