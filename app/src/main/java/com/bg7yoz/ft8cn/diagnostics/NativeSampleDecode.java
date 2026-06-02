@@ -1,8 +1,8 @@
 package com.bg7yoz.ft8cn.diagnostics;
 
 /**
- * 调试用样本解码入口。
- * 仅负责把 WAV 路径交给 native 侧执行一次完整解码，并返回可读文本。
+ * Debug-only sample decode entry.
+ * It passes one WAV path to native code and returns a readable smoke-test report.
  */
 public final class NativeSampleDecode {
     static {

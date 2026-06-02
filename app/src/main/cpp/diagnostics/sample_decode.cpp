@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cstdarg>
+#include <chrono>
 
 extern "C" {
 #include "../common/wave.h"
@@ -40,6 +41,20 @@ static const char *mode_label(int decode_mode) {
     }
 }
 
+static std::string mode_config_label(int decode_mode, int q65_submode, int q65_tr_period_seconds) {
+    if (decode_mode != FTX_MODE_Q65) {
+        return mode_label(decode_mode);
+    }
+    const int normalized_submode = std::max(0, std::min(q65_submode, 5));
+    char buffer[32];
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "Q65%c/%ds",
+                  'A' + normalized_submode,
+                  q65_tr_period_seconds);
+    return buffer;
+}
+
 static int max_sample_seconds_for_mode(int decode_mode) {
     return decode_mode == FTX_MODE_Q65 ? kMaxQ65SampleSeconds : kMaxFt8LikeSampleSeconds;
 }
@@ -69,6 +84,11 @@ static void append_line(std::string *out, const char *fmt, ...) {
     va_end(args);
     out->append(buffer);
     out->push_back('\n');
+}
+
+static long long elapsed_ms(std::chrono::steady_clock::time_point start_time) {
+    return (long long) std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start_time).count();
 }
 
 static bool has_visible_text(const char *text) {
@@ -185,17 +205,29 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                                                                    jboolean deepDecodeEnabled,
                                                                    jint q65Submode,
                                                                    jint q65TrPeriodSeconds) {
+    const auto start_time = std::chrono::steady_clock::now();
     std::string output;
     const std::string path = copy_jstring(env, wavPath);
     const std::string my_call = copy_jstring(env, myCall);
+    const std::string mode_config = mode_config_label((int) decodeMode,
+                                                      (int) q65Submode,
+                                                      (int) q65TrPeriodSeconds);
 
     if (path.empty()) {
         append_line(&output, "error: wav path is empty");
+        append_line(&output,
+                    "smoke summary mode=%s sampleCount=0 bridgeRawCount=0 mergedCount=0 nativeBatchCount=0 javaPublishedCount=0 durationMs=%lld failureReason=empty-wav-path",
+                    mode_config.c_str(),
+                    elapsed_ms(start_time));
         return env->NewStringUTF(output.c_str());
     }
 
     if (!is_supported_mode((int) decodeMode)) {
         append_line(&output, "error: unsupported decode mode %d", (int) decodeMode);
+        append_line(&output,
+                    "smoke summary mode=%s sampleCount=0 bridgeRawCount=0 mergedCount=0 nativeBatchCount=0 javaPublishedCount=0 durationMs=%lld failureReason=unsupported-mode",
+                    mode_config.c_str(),
+                    elapsed_ms(start_time));
         return env->NewStringUTF(output.c_str());
     }
 
@@ -214,6 +246,11 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                 max_sample_seconds_for_mode((int) decodeMode));
 
     if (load_result != 0) {
+        append_line(&output,
+                    "smoke summary mode=%s sampleCount=%d bridgeRawCount=0 mergedCount=0 nativeBatchCount=0 javaPublishedCount=0 durationMs=%lld failureReason=wav-load-failed",
+                    mode_config.c_str(),
+                    sample_count,
+                    elapsed_ms(start_time));
         return env->NewStringUTF(output.c_str());
     }
 
@@ -222,6 +259,11 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                     "error: unsupported sample rate %d, current debug decoder expects %d Hz input",
                     sample_rate,
                     kMaxSupportedRate);
+        append_line(&output,
+                    "smoke summary mode=%s sampleCount=%d bridgeRawCount=0 mergedCount=0 nativeBatchCount=0 javaPublishedCount=0 durationMs=%lld failureReason=unsupported-sample-rate",
+                    mode_config.c_str(),
+                    sample_count,
+                    elapsed_ms(start_time));
         return env->NewStringUTF(output.c_str());
     }
 
@@ -233,6 +275,11 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                                                     (int) decodeMode);
     if (decoder == nullptr) {
         append_line(&output, "error: init_decoder failed");
+        append_line(&output,
+                    "smoke summary mode=%s sampleCount=%d bridgeRawCount=0 mergedCount=0 nativeBatchCount=0 javaPublishedCount=0 durationMs=%lld failureReason=init-decoder-failed",
+                    mode_config.c_str(),
+                    sample_count,
+                    elapsed_ms(start_time));
         return env->NewStringUTF(output.c_str());
     }
     append_line(&output,
@@ -264,12 +311,14 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     const int bridge_raw_count = decoder_get_last_bridge_raw_count(decoder);
     const int merged_count = decoder_get_last_merged_count(decoder);
     append_line(&output,
-                "decode mode=%s utc=%lld candidates=%d bridgeRawCount=%d mergedCount=%d passes=%d rounds=%d early=%d deep=%d q65Submode=%d q65TrPeriod=%d myCall=%s",
-                mode_label((int) decodeMode),
+                "decode mode=%s utc=%lld sampleCount=%d candidates=%d bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d passes=%d rounds=%d early=%d deep=%d q65Submode=%d q65TrPeriod=%d myCall=%s",
+                mode_config.c_str(),
                 (long long) utcTime,
+                sample_count,
                 candidate_count,
                 bridge_raw_count,
                 merged_count,
+                candidate_count,
                 decodePassCount,
                 multiDecodeRoundCount,
                 options.enable_early_decode ? 1 : 0,
@@ -300,13 +349,31 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                     message.message.text);
     }
 
+    const char *failure_reason = "none";
+    if (bridge_raw_count == 0) {
+        failure_reason = "no-bridge-candidates";
+    } else if (merged_count == 0) {
+        failure_reason = "no-merged-candidates";
+    } else if (text_count == 0) {
+        failure_reason = "no-published-text";
+    }
     append_line(&output,
                 "summary mode=%s valid=%d text=%d bridgeRawCount=%d mergedCount=%d",
-                mode_label((int) decodeMode),
+                mode_config.c_str(),
                 valid_count,
                 text_count,
                 bridge_raw_count,
                 merged_count);
+    append_line(&output,
+                "smoke summary mode=%s sampleCount=%d bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d javaPublishedCount=%d durationMs=%lld failureReason=%s",
+                mode_config.c_str(),
+                sample_count,
+                bridge_raw_count,
+                merged_count,
+                candidate_count,
+                text_count,
+                elapsed_ms(start_time),
+                failure_reason);
     delete_decoder(decoder);
     return env->NewStringUTF(output.c_str());
 }
