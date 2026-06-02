@@ -792,7 +792,9 @@ public class FT8TransmitSignal {
         autoSession.resetNoReplyCount();
         syncNoReplyCount();
         functionList.clear();
+        int currentMode = GeneralVariables.getSignalMode();
         int sanitizedOrder = AutoSessionUiPolicy.sanitizeFunctionOrder(
+                currentMode,
                 autoSession.getSessionType(),
                 functionOrder,
                 functionOrder
@@ -801,6 +803,7 @@ public class FT8TransmitSignal {
             functionOrder = sanitizedOrder;
         }
         int[] availableOrders = AutoSessionUiPolicy.getAvailableFunctionOrders(
+                currentMode,
                 autoSession.getSessionType(),
                 functionOrder
         );
@@ -1488,6 +1491,7 @@ public class FT8TransmitSignal {
 
     public void setCurrentFunctionOrder(int order) {
         order = AutoSessionUiPolicy.sanitizeFunctionOrder(
+                GeneralVariables.getSignalMode(),
                 autoSession.getSessionType(),
                 functionOrder,
                 order

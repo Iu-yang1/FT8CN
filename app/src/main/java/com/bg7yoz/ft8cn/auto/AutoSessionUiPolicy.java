@@ -4,6 +4,7 @@ import com.bg7yoz.ft8cn.FT8Common;
 
 public final class AutoSessionUiPolicy {
     private static final int[] CQ_ONLY = new int[]{6};
+    private static final int[] MANUAL_TARGET_ONLY = new int[]{1, 6};
     private static final int[] STANDARD = new int[]{1, 2, 3, 4, 5, 6};
     private static final int[] DXPEDITION_HOUND = new int[]{1, 3};
     private static final int[] DXPEDITION_FOX = new int[]{2, 4, 6};
@@ -32,6 +33,15 @@ public final class AutoSessionUiPolicy {
         return STANDARD;
     }
 
+    public static int[] getAvailableFunctionOrders(int signalMode,
+                                                   AutoSessionType sessionType,
+                                                   int currentFunctionOrder) {
+        if (!supportsAutomaticQso(signalMode)) {
+            return currentFunctionOrder == 6 ? CQ_ONLY : MANUAL_TARGET_ONLY;
+        }
+        return getAvailableFunctionOrders(sessionType, currentFunctionOrder);
+    }
+
     public static boolean isFunctionOrderAllowed(AutoSessionType sessionType, int currentFunctionOrder, int order) {
         int[] allowed = getAvailableFunctionOrders(sessionType, currentFunctionOrder);
         for (int candidate : allowed) {
@@ -44,6 +54,19 @@ public final class AutoSessionUiPolicy {
 
     public static int sanitizeFunctionOrder(AutoSessionType sessionType, int currentFunctionOrder, int requestedOrder) {
         int[] allowed = getAvailableFunctionOrders(sessionType, currentFunctionOrder);
+        for (int candidate : allowed) {
+            if (candidate == requestedOrder) {
+                return requestedOrder;
+            }
+        }
+        return allowed[0];
+    }
+
+    public static int sanitizeFunctionOrder(int signalMode,
+                                            AutoSessionType sessionType,
+                                            int currentFunctionOrder,
+                                            int requestedOrder) {
+        int[] allowed = getAvailableFunctionOrders(signalMode, sessionType, currentFunctionOrder);
         for (int candidate : allowed) {
             if (candidate == requestedOrder) {
                 return requestedOrder;
