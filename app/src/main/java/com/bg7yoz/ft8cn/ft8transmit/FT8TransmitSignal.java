@@ -1213,7 +1213,7 @@ public class FT8TransmitSignal {
                 primaryItem == null ? 0.0f : primaryItem.frequencyHz,
                 primaryMessage == null ? "" : primaryMessage.getMessageText()));
         updateLastTransmitStatus(String.format(java.util.Locale.US,
-                "%s tx-build sub=%s/%ds sr=%d freq=%.1f text=%s",
+                "lastTx mode=%s stage=build submode=%s trPeriod=%d sampleRate=%d audioFrequency=%.1f message=%s failureReason=pending",
                 FT8Common.modeToString(currentMode),
                 FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
                 GeneralVariables.getQ65TrPeriodSeconds(),
@@ -1223,7 +1223,7 @@ public class FT8TransmitSignal {
         float[] buffer = MultiSlotAudioMixer.build(plan, GeneralVariables.audioSampleRate);
         if (buffer == null) {
             updateLastTransmitStatus(String.format(java.util.Locale.US,
-                    "%s tx-fail mixer-null sub=%s/%ds sr=%d freq=%.1f text=%s",
+                    "lastTx mode=%s stage=mixer samples=0 durationMs=0.0 peak=0.000000 rms=0.000000 submode=%s trPeriod=%d sampleRate=%d audioFrequency=%.1f message=%s failureReason=mixer-returned-null",
                     FT8Common.modeToString(currentMode),
                     FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
                     GeneralVariables.getQ65TrPeriodSeconds(),
@@ -1251,7 +1251,7 @@ public class FT8TransmitSignal {
                 GeneralVariables.volumePercent,
                 buildBufferStats(buffer, currentSampleRate)));
         updateLastTransmitStatus(String.format(java.util.Locale.US,
-                "%s tx-wave %s",
+                "lastTx mode=%s stage=wave %s failureReason=none",
                 FT8Common.modeToString(currentMode),
                 buildBufferStats(buffer, currentSampleRate)));
 
@@ -1284,7 +1284,7 @@ public class FT8TransmitSignal {
                 mySession);
         if (audioTrack.getState() == AudioTrack.STATE_UNINITIALIZED) {
             updateLastTransmitStatus(String.format(java.util.Locale.US,
-                    "%s tx-fail audio-init sr=%d state=%d %s",
+                    "lastTx mode=%s stage=audio-init sampleRate=%d trackState=%d %s failureReason=audio-track-uninitialized",
                     FT8Common.modeToString(currentMode),
                     currentSampleRate,
                     audioTrack.getState(),
@@ -1328,7 +1328,7 @@ public class FT8TransmitSignal {
                 || writeResult == AudioTrack.ERROR_DEAD_OBJECT
                 || writeResult == AudioTrack.ERROR) {
             updateLastTransmitStatus(String.format(java.util.Locale.US,
-                    "%s tx-fail audio-write result=%d %s",
+                    "lastTx mode=%s stage=audio-write writeResult=%d %s failureReason=audio-write-failed",
                     FT8Common.modeToString(currentMode),
                     writeResult,
                     buildBufferStats(buffer, currentSampleRate)));
@@ -1353,7 +1353,7 @@ public class FT8TransmitSignal {
             audioTrack.setVolume(GeneralVariables.volumePercent);
             audioTrack.play();
             updateLastTransmitStatus(String.format(java.util.Locale.US,
-                    "%s tx-playing sr=%d volume=%.2f %s",
+                    "lastTx mode=%s stage=playing sampleRate=%d volume=%.2f %s failureReason=none",
                     FT8Common.modeToString(currentMode),
                     currentSampleRate,
                     GeneralVariables.volumePercent,

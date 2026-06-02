@@ -1306,6 +1306,7 @@ public class FT8SignalListener {
                 request.profile.publishEmptyWhenSlotIsNew
         );
 
+        String diagnosticReason = buildDecodeDiagnosticReason(request, decoderInput, nativeResult, publishedCount);
         if (msgs.size() == 0 || publishedCount == 0) {
             Log.d(TAG, String.format(Locale.US,
                     "decode diagnostic listener=%d request=%d trigger=%d stage=%s mode=%s utc=%d reason=%s inputSamples=%d expectedSamples=%d sampleDurationMs=%d earlyThresholdReached=%s bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d javaPublishedCount=%d source=%s enqueueReason=%s",
@@ -1315,7 +1316,7 @@ public class FT8SignalListener {
                     request.profile.stageName,
                     FT8Common.modeToString(request.decodeMode),
                     request.utc,
-                    buildDecodeDiagnosticReason(request, decoderInput, nativeResult, publishedCount),
+                    diagnosticReason,
                     decoderInput.length,
                     request.expectedSamples,
                     decoderInputDurationMs,
@@ -1329,14 +1330,15 @@ public class FT8SignalListener {
         }
 
         lastDecodeStatusSummary = String.format(Locale.US,
-                "%s %s raw=%d merged=%d batch=%d pub=%d reason=%s",
+                "lastRx mode=%s stage=%s raw=%d merged=%d nativeBatch=%d published=%d durationMs=%d failureReason=%s",
                 FT8Common.modeToString(request.decodeMode),
                 request.profile.stageName,
                 nativeResult.bridgeRawCount,
                 nativeResult.mergedCount,
                 msgs.size(),
                 publishedCount,
-                buildDecodeDiagnosticReason(request, decoderInput, nativeResult, publishedCount));
+                timeSec,
+                "results-published".equals(diagnosticReason) ? "none" : diagnosticReason);
 
         if (request.notifyFinished) {
             decodeTimeSec.postValue(timeSec);
