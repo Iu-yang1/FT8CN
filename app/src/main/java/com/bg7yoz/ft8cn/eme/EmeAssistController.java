@@ -40,23 +40,33 @@ public final class EmeAssistController {
             return state;
         }
 
-        MoonEphemeris moonEphemeris = MoonEphemeris.unavailable(nowMillis);
+        MoonEphemeris moonEphemeris = MoonEphemeris.calculate(observerLocation, nowMillis);
+        double rxCorrectionHz = EmeDopplerCalculator.calculateRxCorrectionHz(frequencyHz, moonEphemeris.rangeRateMps);
+        double txCorrectionHz = EmeDopplerCalculator.calculateTxCorrectionHz(frequencyHz, moonEphemeris.rangeRateMps);
+        double previewFrequencyHz = frequencyHz + rxCorrectionHz;
         state = new EmeAssistState(
                 true,
                 EmeAssistState.Mode.DISPLAY_ONLY,
                 false,
                 false,
                 true,
-                0.0,
-                frequencyHz,
+                rxCorrectionHz,
+                previewFrequencyHz,
                 observerLocation,
                 moonEphemeris,
                 String.format(Locale.US,
-                        "display-only scaffold: grid=%s lat=%.4f lon=%.4f freq=%.1f moon=unavailable",
+                        "display-only: grid=%s lat=%.4f lon=%.4f freq=%.1f az=%.1f el=%.1f distKm=%.0f rangeRateMps=%.2f dopplerRxHz=%.1f dopplerTxHz=%.1f correctedPreviewHz=%.1f",
                         observerLocation.grid,
                         observerLocation.latitudeDeg,
                         observerLocation.longitudeDeg,
-                        frequencyHz));
+                        frequencyHz,
+                        moonEphemeris.azimuthDeg,
+                        moonEphemeris.elevationDeg,
+                        moonEphemeris.distanceKm,
+                        moonEphemeris.rangeRateMps,
+                        rxCorrectionHz,
+                        txCorrectionHz,
+                        previewFrequencyHz));
         Log.i(TAG, state.statusText);
         return state;
     }
