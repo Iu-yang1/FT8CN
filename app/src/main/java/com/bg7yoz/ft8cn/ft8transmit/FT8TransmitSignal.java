@@ -36,7 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 
 /**
- * 鍙戝皠鎺у埗涓庤嚜鍔ㄩ€氳仈娴佺▼銆?
+ * Transmit controller and automatic QSO flow.
  */
 public class FT8TransmitSignal {
     private static final String TAG = "FT8TransmitSignal";
@@ -61,10 +61,10 @@ public class FT8TransmitSignal {
     private int lastTransmittedFunctionOrder = -1;
     private Ft8Message lastTransmittedMessage = null;
     private MultiSlotTransmitPlan lastTransmitPlan = null;
-    //闃叉绔嬪嵆鍙戝皠鏃跺簭绔炰簤锛氳褰曚笂娆″彂灏勫皾璇曠殑鍛ㄦ湡绱㈠紩锛岄伩鍏嶅悓涓€鍛ㄦ湡閲嶅瑙﹀彂
+    // Prevent duplicate immediate TX triggers within the same slot sequence.
     private long lastTransmitAttemptSequence = -1;
     // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
-    // 閬垮厤閲嶅鐐瑰嚮瀵艰嚧瀹為獙妯″紡鍗曟鍙戝皠琚Е鍙戜袱娆°€?
+    // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
     private long lastManualTransmitRequestMs = 0L;
     private volatile long lastDecodeMessageUpdateMs = 0L;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
@@ -528,7 +528,7 @@ public class FT8TransmitSignal {
 
         resetTargetReport();
 
-        // 绔嬪嵆鍙戝皠鏃舵坊鍔犲幓閲嶆鏌ワ紝闃叉鍛ㄦ湡杈圭晫閲嶅瑙﹀彂
+        // De-duplicate immediate TX around slot boundaries.
         int currentSeq = UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM());
         long currentFullSeq = UtcTimer.getSystemTime() / FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode());
 
@@ -568,7 +568,7 @@ public class FT8TransmitSignal {
             if (reserveBeforeQueue) {
                 // For manual experimental TX we reserve the state before queueing
                 // to prevent duplicate click events from dispatching two jobs.
-                // 瀹為獙鎵嬪姩鍙戝皠鍦ㄥ叆闃熷墠鍏堝崰浣嶏紝閬垮厤閲嶅鐐瑰嚮骞跺彂鍏ラ槦銆?
+                // Reserve state before queueing to avoid duplicate manual TX jobs.
                 isTransmitting = true;
                 mutableIsTransmitting.postValue(true);
             }
@@ -602,7 +602,8 @@ public class FT8TransmitSignal {
         mutableToCallsign.postValue(transmitCallsign);
         toCallsign = transmitCallsign;
 
-        if (functionOrder == -1) {//璇存槑鏄洖澶嶆秷鎭?
+        if (functionOrder == -1) {
+            // Reply mode: infer the next function order from received extra info.
             this.functionOrder = normalizeFunctionOrder(
                     GeneralVariables.checkFunOrderByExtraInfo(toMaidenheadGrid) + 1);
             if (this.functionOrder == 6) {
@@ -1201,7 +1202,7 @@ public class FT8TransmitSignal {
             }
         }
 
-        //杩涘叆澹板崱妯″紡
+        // Build local sound-card audio for VOX playback.
         Log.d(TAG, String.format(java.util.Locale.US,
                 "playTransmitPlan build-wave start: mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, slots=%d, freq=%.1f, text=%s",
                 FT8Common.modeToString(currentMode),
@@ -1367,8 +1368,8 @@ public class FT8TransmitSignal {
     }
 
     /**
-     * 銆愪紭鍖栥€戞挱鏀惧畬鎴愬悗鐨勬竻鐞嗗伐浣?
-     * 鏀硅繘鐐癸細绔嬪嵆閲婃斁 AudioTrack 璧勬簮锛岄伩鍏嶉暱鏃堕棿杩愯鏃惰祫婧愮疮绉?
+     * Clean up playback resources after one transmit frame finishes.
+     * AudioTrack is released before state updates so the next frame starts cleanly.
      */
     private void afterPlayAudio() {
         int transmittedOrder = lastTransmittedFunctionOrder > 0
@@ -1383,15 +1384,15 @@ public class FT8TransmitSignal {
         updateDxpeditionFoxSlotStatus();
         clearPendingDxpeditionMacro();
 
-        // 銆愪紭鍖栥€戝厛閲婃斁闊抽璧勬簮鍐嶆洿鏂扮姸鎬侊紝纭繚璧勬簮鍙婃椂鍥炴敹
+        // Release the current AudioTrack before publishing transmit completion state.
         if (audioTrack != null) {
             try {
-                audioTrack.stop();     // 鍋滄鎾斁
-                audioTrack.release();   // 閲婃斁璧勬簮
+                audioTrack.stop();
+                audioTrack.release();
             } catch (Exception e) {
                 Log.w(TAG, "Error releasing AudioTrack: " + e.getMessage());
             } finally {
-                audioTrack = null;      // 娓呯┖寮曠敤
+                audioTrack = null;
             }
         }
 
@@ -1399,7 +1400,7 @@ public class FT8TransmitSignal {
 
         if (isExperimentalManualTxMode() && activated) {
             // Experimental chain uses one-shot manual TX: stop right after each frame.
-            // 瀹為獙閾捐矾鏄竴甯т竴鍙戯紝鍙戝畬绔嬪嵆鍋滄銆?
+            // Manual experimental TX is one-shot and stops after each frame.
             setActivated(false);
         }
 
@@ -1535,7 +1536,7 @@ public class FT8TransmitSignal {
         if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
             int cqQueueSize = callQueueManager.size();
             if (GeneralVariables.cqQueueEnabled && cqQueueSize > 0) {
-                return String.format("CQ闃熷垪 %d", cqQueueSize);
+                return String.format(java.util.Locale.US, "CQ queue %d", cqQueueSize);
             }
             return "";
         }
@@ -2414,7 +2415,7 @@ public class FT8TransmitSignal {
             if (!ft8Message.isAutoFlowRelevant()) continue;
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;
             // Only enforce band match when decoded message carries a valid RF band.
-            // 浠呭湪瑙ｇ爜娑堟伅甯︽湁鏈夋晥棰戞鏃舵墠鍋氶娈典竴鑷存€х害鏉熴€?
+            // Only enforce band match when decoded message carries a valid RF band.
             if (ft8Message.band > 0 && ft8Message.band != GeneralVariables.band) continue;
             if (!ft8Message.checkIsCQ()) continue;
 
@@ -2562,7 +2563,7 @@ public class FT8TransmitSignal {
         );
 
         // Late-decode override is only enabled for a short time after fresh decode updates.
-        // 鍙湁鍦ㄢ€滃垰鏀跺埌鏂拌В鐮佲€濈殑鐭獥鍙ｉ噷锛屾墠鍏佽鏅氬埌瑙ｇ爜瑕嗙洊鍙戝皠鍐呭銆?
+        // Late-decode override is only enabled shortly after fresh decode updates.
         if (lastDecodeMessageUpdateMs > 0L) {
             long sinceDecodeMs = nowMs - lastDecodeMessageUpdateMs;
             if (sinceDecodeMs >= 0

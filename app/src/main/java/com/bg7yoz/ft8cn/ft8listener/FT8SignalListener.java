@@ -712,8 +712,8 @@ public class FT8SignalListener {
     /**
      * Core decode entry.
      *
-     * @param utc        褰撳墠鏃堕殭 UTC
-     * @param voiceData  杈撳叆闊抽鏁版嵁
+     * @param utc        current slot UTC
+     * @param voiceData  input audio samples
      * @param decodeMode fixed mode for this round so another mode cannot leak into the worker
      */
     public void decodeFt8(long utc, float[] voiceData, int decodeMode) {
@@ -1654,9 +1654,9 @@ public class FT8SignalListener {
      * Execute one native decode round.
      *
      * @param ft8Decoder native decoder handle
-     * @param utc        褰撳墠 UTC
+     * @param utc        current UTC
      * @param isDeep     whether to use deep decode mode
-     * @param decodeMode 褰撳墠鍥哄畾妯″紡
+     * @param decodeMode fixed decode mode
      */
     private ArrayList<Ft8Message> runDecode(long ft8Decoder,
                                             long utc,
@@ -1874,9 +1874,9 @@ public class FT8SignalListener {
     /**
      * Initialize the decoder and return the native handle.
      *
-     * @param utcTime     褰撳墠 UTC
+     * @param utcTime     current UTC
      * @param sampleRat sample rate, fixed at 12000
-     * @param num_samples 鏈疆鏈熸湜閲囨牱鐐规暟
+     * @param num_samples decoder sample count
      * @param isFt8 true for FT8, false for FT4
      * @return native decoder handle
      */
@@ -1885,7 +1885,7 @@ public class FT8SignalListener {
     /**
      * Feed a whole PCM buffer into the decoder.
      *
-     * @param buffer  wav 鏁版嵁
+     * @param buffer  wav PCM data
      * @param decoder native decoder handle
      */
     public native void DecoderMonitorPress(int[] buffer, long decoder);
