@@ -1505,7 +1505,10 @@ public class FT8SignalListener {
                                        int decodeMode,
                                        int decodeStage,
                                        int expectedSamples) {
-        if (!BuildConfig.DEBUG || decoderInput == null || decoderInput.length == 0) {
+        if (!BuildConfig.DEBUG
+                || !GeneralVariables.enableLiveDecoderInputDump
+                || decoderInput == null
+                || decoderInput.length == 0) {
             return;
         }
 

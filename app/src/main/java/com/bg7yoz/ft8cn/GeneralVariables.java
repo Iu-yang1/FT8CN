@@ -69,6 +69,7 @@ public class GeneralVariables {
     public static int wsjtxDecodeSensitivity = WSJTX_SENSITIVITY_NORMAL;
     public static boolean wsjtxEnableEarlyDecode = true;
     public static boolean wsjtxWidebandDxSearch = true;
+    public static boolean enableLiveDecoderInputDump = false;
     // Experimental modem modes for 4FSK/CPFSK bring-up.
     public static final int EXP_CODEC_MODE_OFF = 0;
     public static final int EXP_CODEC_MODE_4FSK = 1;

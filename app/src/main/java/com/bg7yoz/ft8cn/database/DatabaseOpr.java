@@ -2304,6 +2304,9 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("wsjtxWidebandDxSearch")) {
                     GeneralVariables.wsjtxWidebandDxSearch = result.equals("") || result.equals("1");
                 }
+                if (name.equalsIgnoreCase("enableLiveDecoderInputDump")) {
+                    GeneralVariables.enableLiveDecoderInputDump = result.equals("1");
+                }
                 if (name.equalsIgnoreCase("expCodecDebug")) {
                     GeneralVariables.experimentalCodecDebugMode = result.equals("1");
                 }
