@@ -1247,6 +1247,7 @@ public class MainViewModel extends ViewModel {
             return;
         }
         resourcesReleased = true;
+        emeAssistController.releaseEmeTracking();
         GeneralVariables.mutableNtpConfigChanged.removeObserver(ntpConfigChangedObserver);
         if (utcTimer != null) {
             utcTimer.stop();

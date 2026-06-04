@@ -188,6 +188,12 @@
     <string name="eme_max_correction_hint">Max correction Hz</string>
     <string name="eme_min_elevation_hint">Min moon elevation deg</string>
     <string name="eme_apply_cat_now">Apply CAT</string>
+    <string name="eme_tracking_title">EME Doppler Tracking</string>
+    <string name="eme_tracking_header">EME Tracking: %1$s   Mode: %2$s</string>
+    <string name="eme_tracking_start">Start Tracking</string>
+    <string name="eme_tracking_stop">Stop</string>
+    <string name="eme_tracking_refresh">Refresh</string>
+    <string name="eme_update_interval_hint">Update interval seconds</string>
     <string name="dxpedition_macro_armed">macro armed</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">DXpedition replies</string>

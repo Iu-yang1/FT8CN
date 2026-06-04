@@ -56,6 +56,11 @@ import com.bg7yoz.ft8cn.eme.EmeAssistState;
 import com.bg7yoz.ft8cn.eme.EmeDopplerCalculator;
 import com.bg7yoz.ft8cn.eme.EmeRigControlAdapter;
 import com.bg7yoz.ft8cn.eme.EmeRigControlResult;
+import com.bg7yoz.ft8cn.eme.EmeTrackingEnvironment;
+import com.bg7yoz.ft8cn.eme.EmeTrackingPolicy;
+import com.bg7yoz.ft8cn.eme.EmeTrackingResult;
+import com.bg7yoz.ft8cn.eme.ui.DopplerCorrectionView;
+import com.bg7yoz.ft8cn.eme.ui.MoonSkyView;
 import com.bg7yoz.ft8cn.ft8transmit.DxpeditionFoxSlotFrequencyConfig;
 import com.bg7yoz.ft8cn.ft8transmit.DxpeditionMacroSupport;
 import com.bg7yoz.ft8cn.ft8transmit.FunctionOfTransmit;
@@ -283,6 +288,70 @@ public class MyCallingFragment extends Fragment {
                 GeneralVariables.emeMinElevationDeg);
     }
 
+    private EmeTrackingPolicy buildEmeTrackingPolicy(boolean enabled) {
+        return new EmeTrackingPolicy(
+                enabled,
+                GeneralVariables.emeUseCurrentRigFrequency,
+                GeneralVariables.emeBaseFrequencyHz,
+                GeneralVariables.emeMaxCorrectionHz,
+                GeneralVariables.emeUpdateIntervalSeconds,
+                GeneralVariables.emeMinElevationDeg,
+                GeneralVariables.emeAllowCorrectionWhileTransmitting,
+                GeneralVariables.emeRestoreFrequencyOnDisable,
+                GeneralVariables.emeCorrectionDirectionMode);
+    }
+
+    private EmeTrackingEnvironment buildEmeTrackingEnvironment() {
+        return new EmeTrackingEnvironment() {
+            @Override
+            public String getObserverGrid() {
+                return GeneralVariables.getMyMaidenheadGrid();
+            }
+
+            @Override
+            public EmeRigControlAdapter getRigControlAdapter() {
+                return new EmeRigControlAdapter(mainViewModel == null ? null : mainViewModel.baseRig);
+            }
+
+            @Override
+            public long getFallbackBaseFrequencyHz() {
+                return getEmeSourceFrequencyHz();
+            }
+
+            @Override
+            public boolean hasAutoFrequencyConflict() {
+                return GeneralVariables.manualDxpeditionFoxMode
+                        || GeneralVariables.manualDxpeditionHoundMode
+                        || GeneralVariables.dxpeditionFoxManualSlotFrequency;
+            }
+
+            @Override
+            public String getAutoFrequencyConflictReason() {
+                if (GeneralVariables.manualDxpeditionFoxMode) {
+                    return "dxpedition-fox-active";
+                }
+                if (GeneralVariables.manualDxpeditionHoundMode) {
+                    return "dxpedition-hound-active";
+                }
+                if (GeneralVariables.dxpeditionFoxManualSlotFrequency) {
+                    return "dxpedition-slot-frequency-active";
+                }
+                return "";
+            }
+        };
+    }
+
+    private void saveEmeTrackingConfig() {
+        writeEmeConfig("emeAssistEnabled", GeneralVariables.emeAssistEnabled ? "1" : "0");
+        writeEmeConfig("emeUseCurrentRigFrequency", GeneralVariables.emeUseCurrentRigFrequency ? "1" : "0");
+        writeEmeConfig("emeMaxCorrectionHz", String.format(Locale.US, "%.1f", GeneralVariables.emeMaxCorrectionHz));
+        writeEmeConfig("emeMinElevationDeg", String.format(Locale.US, "%.1f", GeneralVariables.emeMinElevationDeg));
+        writeEmeConfig("emeUpdateIntervalSeconds", String.valueOf(GeneralVariables.emeUpdateIntervalSeconds));
+        writeEmeConfig("emeAllowCorrectionWhileTransmitting",
+                GeneralVariables.emeAllowCorrectionWhileTransmitting ? "1" : "0");
+        writeEmeConfig("emeApplyMode", EmeAssistState.Mode.CAT_TRACKING.name());
+    }
+
     private String formatEmeAssistDialogText(boolean enabled) {
         EmeAssistState emeState = updateEmePreview(enabled, GeneralVariables.emeApplyMode);
         if (emeState == null) {
@@ -330,28 +399,19 @@ public class MyCallingFragment extends Fragment {
         int padding = Math.round(getResources().getDisplayMetrics().density * 20.0f);
         root.setPadding(padding, padding, padding, padding / 2);
 
-        CheckBox enableCheckBox = new CheckBox(requireContext());
-        enableCheckBox.setText(R.string.eme_assist_enable);
-        enableCheckBox.setChecked(GeneralVariables.emeAssistEnabled);
-        root.addView(enableCheckBox);
+        TextView headerView = new TextView(requireContext());
+        headerView.setTextSize(16.0f);
+        root.addView(headerView);
 
-        TextView applyModeTitle = new TextView(requireContext());
-        applyModeTitle.setText(R.string.eme_apply_mode_title);
-        applyModeTitle.setPadding(0, padding / 2, 0, 0);
-        root.addView(applyModeTitle);
+        MoonSkyView moonSkyView = new MoonSkyView(requireContext());
+        root.addView(moonSkyView);
 
-        EmeAssistState.Mode[] applyModes = getEmeApplyModes();
-        ArrayList<String> applyModeLabels = new ArrayList<>();
-        for (EmeAssistState.Mode mode : applyModes) {
-            applyModeLabels.add(getEmeApplyModeLabel(mode));
-        }
-        Spinner applyModeSpinner = new Spinner(requireContext());
-        applyModeSpinner.setAdapter(new ArrayAdapter<>(
-                requireContext(),
-                android.R.layout.simple_spinner_dropdown_item,
-                applyModeLabels));
-        applyModeSpinner.setSelection(getEmeApplyModeIndex(applyModes, GeneralVariables.emeApplyMode));
-        root.addView(applyModeSpinner);
+        DopplerCorrectionView dopplerCorrectionView = new DopplerCorrectionView(requireContext());
+        root.addView(dopplerCorrectionView);
+
+        TextView statusView = new TextView(requireContext());
+        statusView.setPadding(0, padding / 2, 0, 0);
+        root.addView(statusView);
 
         CheckBox useCurrentRigFrequencyCheckBox = new CheckBox(requireContext());
         useCurrentRigFrequencyCheckBox.setText(R.string.eme_use_current_rig_frequency);
@@ -376,14 +436,14 @@ public class MyCallingFragment extends Fragment {
         minElevationEditor.setText(String.format(Locale.US, "%.1f", GeneralVariables.emeMinElevationDeg));
         root.addView(minElevationEditor);
 
-        TextView statusView = new TextView(requireContext());
-        statusView.setPadding(0, padding / 2, 0, 0);
-        root.addView(statusView);
+        EditText updateIntervalEditor = new EditText(requireContext());
+        updateIntervalEditor.setInputType(InputType.TYPE_CLASS_NUMBER);
+        updateIntervalEditor.setHint(R.string.eme_update_interval_hint);
+        updateIntervalEditor.setText(String.valueOf(GeneralVariables.emeUpdateIntervalSeconds));
+        root.addView(updateIntervalEditor);
 
-        Runnable refresh = () -> {
-            GeneralVariables.emeApplyMode = applyModes[Math.max(0, Math.min(
-                    applyModeSpinner.getSelectedItemPosition(),
-                    applyModes.length - 1))];
+        Runnable applyEditors = () -> {
+            GeneralVariables.emeApplyMode = EmeAssistState.Mode.CAT_TRACKING;
             GeneralVariables.emeUseCurrentRigFrequency = useCurrentRigFrequencyCheckBox.isChecked();
             GeneralVariables.emeAllowCorrectionWhileTransmitting = allowTxCorrectionCheckBox.isChecked();
             GeneralVariables.emeMaxCorrectionHz = Math.max(0.0, parseDoubleOrDefault(
@@ -392,67 +452,102 @@ public class MyCallingFragment extends Fragment {
             GeneralVariables.emeMinElevationDeg = parseDoubleOrDefault(
                     minElevationEditor.getText().toString(),
                     GeneralVariables.emeMinElevationDeg);
-            String text = formatEmeAssistDialogText(enableCheckBox.isChecked());
-            if (enableCheckBox.isChecked() && GeneralVariables.emeApplyMode != EmeAssistState.Mode.CAT_TRACKING) {
-                text += "\n\nSanity:\n" + mainViewModel.emeAssistController.buildSanitySummary(
-                        GeneralVariables.getMyMaidenheadGrid(),
-                        UtcTimer.getSystemTime());
+            try {
+                GeneralVariables.emeUpdateIntervalSeconds = Math.max(1, Math.min(
+                        Integer.parseInt(updateIntervalEditor.getText().toString()),
+                        60));
+            } catch (Exception e) {
+                GeneralVariables.emeUpdateIntervalSeconds = 10;
             }
-            statusView.setText(text);
         };
-        enableCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> refresh.run());
-        applyModeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                refresh.run();
-            }
 
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {
+        Runnable refreshPanel = () -> {
+            EmeTrackingResult result = mainViewModel.emeAssistController.getTrackingResult();
+            EmeAssistState emeState = mainViewModel.emeAssistController.updateCorrectionPreview(
+                    GeneralVariables.getMyMaidenheadGrid(),
+                    getEmeSourceFrequencyHz(),
+                    UtcTimer.getSystemTime(),
+                    GeneralVariables.emeAssistEnabled,
+                    EmeAssistState.Mode.CAT_TRACKING,
+                    GeneralVariables.emeCorrectionDirectionMode,
+                    GeneralVariables.emeMaxCorrectionHz,
+                    GeneralVariables.emeMinElevationDeg);
+            headerView.setText(getString(
+                    R.string.eme_tracking_header,
+                    result.status.name(),
+                    GeneralVariables.getActiveModeLabel()));
+            if (emeState.moonEphemeris != null) {
+                moonSkyView.setMoonPosition(
+                        emeState.moonEphemeris.azimuthDeg,
+                        emeState.moonEphemeris.elevationDeg);
             }
-        });
-        refresh.run();
+            double selectedCorrection = result.selectedCorrectionHz;
+            if (selectedCorrection == 0.0 && emeState.sourceFrequencyHz > 0L) {
+                selectedCorrection = emeState.targetFrequencyHz - emeState.sourceFrequencyHz;
+            }
+            double lastAppliedCorrection = emeState.lastAppliedRigFrequencyHz > 0L && emeState.sourceFrequencyHz > 0L
+                    ? emeState.lastAppliedRigFrequencyHz - emeState.sourceFrequencyHz
+                    : 0.0;
+            dopplerCorrectionView.setCorrections(
+                    GeneralVariables.emeMaxCorrectionHz,
+                    emeState.lastDopplerHz,
+                    emeState.lastTxDopplerHz,
+                    selectedCorrection,
+                    lastAppliedCorrection,
+                    Math.abs(result.rawCorrectionHz) > GeneralVariables.emeMaxCorrectionHz);
+            statusView.setText(String.format(
+                    Locale.US,
+                    "Rig: %s  connected=%s\nFrequency: %d -> %d Hz  source=%s\nCorrection: raw %.1f Hz selected %.1f Hz limit %.0f Hz\nMoon: Az %.1f El %.1f rangeRate %.2f m/s\nUpdate interval: %ds\nLast CAT: %s\nReason: %s",
+                    result.rigName,
+                    result.rigConnected ? "yes" : "no",
+                    result.currentFrequencyHz > 0L ? result.currentFrequencyHz : emeState.sourceFrequencyHz,
+                    result.targetFrequencyHz > 0L ? result.targetFrequencyHz : emeState.targetFrequencyHz,
+                    result.frequencySource,
+                    result.rawCorrectionHz,
+                    selectedCorrection,
+                    GeneralVariables.emeMaxCorrectionHz,
+                    emeState.moonEphemeris == null ? Double.NaN : emeState.moonEphemeris.azimuthDeg,
+                    emeState.moonEphemeris == null ? Double.NaN : emeState.moonEphemeris.elevationDeg,
+                    emeState.moonEphemeris == null ? Double.NaN : emeState.moonEphemeris.rangeRateMps,
+                    GeneralVariables.emeUpdateIntervalSeconds,
+                    result.catResult == null ? "-" : result.catResult.toSummary(),
+                    result.reason));
+            updateEmeAssistButtonUi();
+            updateAutoSessionStatus();
+        };
+        refreshPanel.run();
 
         AlertDialog dialog = new AlertDialog.Builder(requireContext())
-                .setTitle(R.string.eme_assist_title)
+                .setTitle(R.string.eme_tracking_title)
                 .setView(root)
-                .setPositiveButton(android.R.string.ok, (dialogInterface, which) -> {
-                    GeneralVariables.emeAssistEnabled = enableCheckBox.isChecked();
-                    refresh.run();
-                    writeEmeConfig("emeAssistEnabled", GeneralVariables.emeAssistEnabled ? "1" : "0");
-                    writeEmeConfig("emeApplyMode", GeneralVariables.emeApplyMode.name());
-                    writeEmeConfig("emeUseCurrentRigFrequency", GeneralVariables.emeUseCurrentRigFrequency ? "1" : "0");
-                    writeEmeConfig("emeMaxCorrectionHz", String.format(Locale.US, "%.1f", GeneralVariables.emeMaxCorrectionHz));
-                    writeEmeConfig("emeMinElevationDeg", String.format(Locale.US, "%.1f", GeneralVariables.emeMinElevationDeg));
-                    writeEmeConfig("emeAllowCorrectionWhileTransmitting",
-                            GeneralVariables.emeAllowCorrectionWhileTransmitting ? "1" : "0");
-                    updateEmeAssistButtonUi();
-                    updateAutoSessionStatus();
-                })
-                .setNegativeButton(android.R.string.cancel, (dialogInterface, which) -> updateAutoSessionStatus())
-                .setNeutralButton(R.string.eme_apply_cat_now, null)
+                .setPositiveButton(R.string.eme_tracking_start, null)
+                .setNegativeButton(R.string.eme_tracking_stop, null)
+                .setNeutralButton(R.string.eme_tracking_refresh, null)
                 .create();
         dialog.setOnShowListener(dialogInterface -> {
-            Button applyButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
-            applyButton.setOnClickListener(view -> {
-                refresh.run();
-                EmeRigControlResult result = mainViewModel.emeAssistController.applyManualCatCorrection(
-                        GeneralVariables.getMyMaidenheadGrid(),
-                        getEmeSourceFrequencyHz(),
-                        UtcTimer.getSystemTime(),
-                        new EmeRigControlAdapter(mainViewModel.baseRig),
-                        GeneralVariables.emeUseCurrentRigFrequency,
-                        GeneralVariables.emeMaxCorrectionHz,
-                        GeneralVariables.emeMinElevationDeg,
-                        GeneralVariables.emeAllowCorrectionWhileTransmitting,
-                        GeneralVariables.emeCorrectionDirectionMode);
-                String summary = result == null ? "null" : result.toSummary();
-                Log.i(TAG, "EME manual CAT apply: " + summary);
-                ToastMessage.show(summary);
-                statusView.setText(formatEmeAssistDialogText(enableCheckBox.isChecked())
-                        + "\n\nCAT apply:\n"
-                        + summary);
-                updateAutoSessionStatus();
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                applyEditors.run();
+                GeneralVariables.emeAssistEnabled = true;
+                saveEmeTrackingConfig();
+                mainViewModel.emeAssistController.startEmeTracking(
+                        buildEmeTrackingEnvironment(),
+                        buildEmeTrackingPolicy(true),
+                        refreshPanel);
+                refreshPanel.run();
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view -> {
+                GeneralVariables.emeAssistEnabled = false;
+                saveEmeTrackingConfig();
+                mainViewModel.emeAssistController.stopEmeTracking("user-stopped");
+                refreshPanel.run();
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
+                applyEditors.run();
+                EmeAssistState preview = updateEmePreview(
+                        GeneralVariables.emeAssistEnabled,
+                        EmeAssistState.Mode.CAT_TRACKING);
+                Log.i(TAG, "EME tracking refresh: " + (preview == null ? "null" : preview.statusText));
+                refreshPanel.run();
             });
         });
         dialog.show();

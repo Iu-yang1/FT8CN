@@ -1,5 +1,7 @@
 package com.bg7yoz.ft8cn.eme;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import java.util.Locale;
@@ -12,6 +14,7 @@ public final class EmeAssistController {
             1_296_000_000.0,
             10_368_000_000.0
     };
+    private final Handler trackingHandler = new Handler(Looper.getMainLooper());
     private volatile EmeAssistState state = new EmeAssistState(
             false,
             EmeAssistState.Mode.DISPLAY_ONLY,
@@ -23,14 +26,79 @@ public final class EmeAssistController {
             null,
             MoonEphemeris.unavailable(0L),
             "disabled");
+    private volatile EmeTrackingResult trackingResult =
+            EmeTrackingResult.off("disabled", 0L);
+    private volatile boolean trackingActive = false;
+    private EmeTrackingEnvironment trackingEnvironment;
+    private EmeTrackingPolicy trackingPolicy;
+    private Runnable trackingUpdateCallback;
+    private final Runnable trackingRunnable = new Runnable() {
+        @Override
+        public void run() {
+            runTrackingTickAndSchedule();
+        }
+    };
 
     public EmeAssistState getState() {
         return state;
     }
 
+    public EmeTrackingResult getTrackingResult() {
+        return trackingResult;
+    }
+
+    public boolean isTrackingActive() {
+        return trackingActive;
+    }
+
+    public synchronized void startEmeTracking(EmeTrackingEnvironment environment,
+                                              EmeTrackingPolicy policy,
+                                              Runnable updateCallback) {
+        trackingEnvironment = environment;
+        trackingPolicy = policy;
+        trackingUpdateCallback = updateCallback;
+        trackingActive = true;
+        trackingResult = new EmeTrackingResult(
+                EmeTrackingStatus.ARMED,
+                "armed",
+                "-",
+                false,
+                false,
+                EmeFrequencySource.UNAVAILABLE,
+                0L,
+                0L,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                Double.NaN,
+                Double.NaN,
+                Double.NaN,
+                null,
+                System.currentTimeMillis());
+        trackingHandler.removeCallbacks(trackingRunnable);
+        trackingHandler.post(trackingRunnable);
+    }
+
+    public synchronized void stopEmeTracking(String reason) {
+        trackingActive = false;
+        trackingHandler.removeCallbacks(trackingRunnable);
+        trackingResult = EmeTrackingResult.off(reason == null ? "stopped" : reason, System.currentTimeMillis());
+        notifyTrackingUpdated();
+        Log.i(TAG, "EME tracking stopped: " + trackingResult.toSummary());
+    }
+
+    public synchronized void releaseEmeTracking() {
+        stopEmeTracking("released");
+        trackingEnvironment = null;
+        trackingPolicy = null;
+        trackingUpdateCallback = null;
+    }
+
     public EmeAssistState requestApplyMode(EmeAssistState.Mode requestedMode) {
         if (requestedMode == null || requestedMode == EmeAssistState.Mode.DISPLAY_ONLY
                 || requestedMode == EmeAssistState.Mode.CAT_MANUAL_APPLY
+                || requestedMode == EmeAssistState.Mode.CAT_TRACKING
                 || requestedMode == EmeAssistState.Mode.AUDIO_OFFSET_PREVIEW) {
             return state;
         }
@@ -75,7 +143,7 @@ public final class EmeAssistController {
         EmeAssistState.Mode mode = requestedMode == null
                 ? EmeAssistState.Mode.DISPLAY_ONLY
                 : requestedMode;
-        if (mode.isTrackingMode()) {
+        if (mode == EmeAssistState.Mode.AUDIO_OFFSET_TRACKING) {
             requestApplyMode(mode);
             mode = EmeAssistState.Mode.DISPLAY_ONLY;
         }
@@ -243,9 +311,33 @@ public final class EmeAssistController {
                     rigAdapter.isTransmitting(),
                     "below-min-elevation"));
         }
+        double rawCorrectionHz = selectCorrectionHz(
+                preview.lastDopplerHz,
+                preview.lastTxDopplerHz,
+                directionMode);
+        if (maxCorrectionHz <= 0.0) {
+            return finishCatApply(EmeRigControlResult.failure(
+                    "manual-cat-apply",
+                    rigAdapter.getRigName(),
+                    rigAdapter.getCachedMainFrequencyHz(),
+                    preview.targetFrequencyHz,
+                    rawCorrectionHz,
+                    rigAdapter.isTransmitting(),
+                    "invalid-correction-limit"));
+        }
+        if (Math.abs(rawCorrectionHz) > maxCorrectionHz) {
+            return finishCatApply(EmeRigControlResult.failure(
+                    "manual-cat-apply",
+                    rigAdapter.getRigName(),
+                    rigAdapter.getCachedMainFrequencyHz(),
+                    preview.targetFrequencyHz,
+                    rawCorrectionHz,
+                    rigAdapter.isTransmitting(),
+                    "correction-exceeds-limit"));
+        }
         return finishCatApply(rigAdapter.setMainFrequencyHz(
                 preview.targetFrequencyHz,
-                preview.targetFrequencyHz - preview.sourceFrequencyHz,
+                rawCorrectionHz,
                 allowWhileTransmitting));
     }
 
@@ -350,6 +442,358 @@ public final class EmeAssistController {
         }
         Log.i(TAG, "EME CAT apply result: " + (result == null ? "null" : result.toSummary()));
         return result;
+    }
+
+    private void runTrackingTickAndSchedule() {
+        if (!trackingActive) {
+            return;
+        }
+        EmeTrackingPolicy policy = trackingPolicy;
+        trackingResult = runTrackingTick(System.currentTimeMillis(), trackingEnvironment, policy);
+        Log.i(TAG, "EME tracking tick: " + trackingResult.toSummary());
+        notifyTrackingUpdated();
+        if (trackingActive) {
+            long intervalMs = policy == null ? 10_000L : Math.max(1000L, policy.updateIntervalSeconds * 1000L);
+            trackingHandler.postDelayed(trackingRunnable, intervalMs);
+        }
+    }
+
+    private EmeTrackingResult runTrackingTick(long nowMillis,
+                                              EmeTrackingEnvironment environment,
+                                              EmeTrackingPolicy policy) {
+        if (environment == null || policy == null) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.ERROR,
+                    "tracking-context-unavailable",
+                    null,
+                    EmeFrequencySource.UNAVAILABLE,
+                    0L,
+                    0.0,
+                    0.0,
+                    null,
+                    nowMillis);
+        }
+        if (!policy.enabled) {
+            trackingActive = false;
+            return buildTrackingResult(
+                    EmeTrackingStatus.OFF,
+                    "disabled",
+                    environment.getRigControlAdapter(),
+                    EmeFrequencySource.UNAVAILABLE,
+                    0L,
+                    0.0,
+                    0.0,
+                    null,
+                    nowMillis);
+        }
+
+        EmeRigControlAdapter rigAdapter = environment.getRigControlAdapter();
+        if (rigAdapter == null || !rigAdapter.isAvailable()) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.PAUSED,
+                    "rig-disconnected",
+                    rigAdapter,
+                    EmeFrequencySource.UNAVAILABLE,
+                    0L,
+                    0.0,
+                    0.0,
+                    null,
+                    nowMillis);
+        }
+        if (environment.hasAutoFrequencyConflict()) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.PAUSED,
+                    environment.getAutoFrequencyConflictReason(),
+                    rigAdapter,
+                    EmeFrequencySource.UNAVAILABLE,
+                    rigAdapter.getCachedMainFrequencyHz(),
+                    0.0,
+                    0.0,
+                    null,
+                    nowMillis);
+        }
+
+        rigAdapter.requestReadMainFrequency();
+        long sourceFrequencyHz = resolveTrackingFrequencyHz(environment, policy, rigAdapter);
+        EmeFrequencySource frequencySource = resolveTrackingFrequencySource(environment, policy, rigAdapter);
+        if (sourceFrequencyHz <= 0L) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.PAUSED,
+                    "frequency-unavailable",
+                    rigAdapter,
+                    frequencySource,
+                    sourceFrequencyHz,
+                    0.0,
+                    0.0,
+                    null,
+                    nowMillis);
+        }
+
+        ObserverLocation observerLocation = ObserverLocation.fromGrid(environment.getObserverGrid());
+        if (observerLocation == null) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.ERROR,
+                    "observer-grid-invalid",
+                    rigAdapter,
+                    frequencySource,
+                    sourceFrequencyHz,
+                    0.0,
+                    0.0,
+                    null,
+                    nowMillis);
+        }
+        MoonEphemeris moonEphemeris = MoonEphemeris.calculate(observerLocation, nowMillis);
+        double rxDopplerHz = EmeDopplerCalculator.calculateRxCorrectionHz(
+                sourceFrequencyHz,
+                moonEphemeris.rangeRateMps);
+        double txDopplerHz = EmeDopplerCalculator.calculateTxCorrectionHz(
+                sourceFrequencyHz,
+                moonEphemeris.rangeRateMps);
+        double rawCorrectionHz = selectCorrectionHz(
+                rxDopplerHz,
+                txDopplerHz,
+                policy.correctionDirectionMode);
+        updateTrackingPreviewState(
+                policy,
+                sourceFrequencyHz,
+                rxDopplerHz,
+                txDopplerHz,
+                rawCorrectionHz,
+                observerLocation,
+                moonEphemeris,
+                nowMillis);
+
+        if (!Double.isFinite(rawCorrectionHz)) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.ERROR,
+                    "correction-not-finite",
+                    rigAdapter,
+                    frequencySource,
+                    sourceFrequencyHz,
+                    rawCorrectionHz,
+                    0.0,
+                    moonEphemeris,
+                    nowMillis);
+        }
+        if (policy.maxCorrectionHz <= 0.0) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.PAUSED,
+                    "invalid-correction-limit",
+                    rigAdapter,
+                    frequencySource,
+                    sourceFrequencyHz,
+                    rawCorrectionHz,
+                    0.0,
+                    moonEphemeris,
+                    nowMillis);
+        }
+        if (Math.abs(rawCorrectionHz) > policy.maxCorrectionHz) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.PAUSED,
+                    "correction-exceeds-limit",
+                    rigAdapter,
+                    frequencySource,
+                    sourceFrequencyHz,
+                    rawCorrectionHz,
+                    0.0,
+                    moonEphemeris,
+                    nowMillis);
+        }
+        if (moonEphemeris.elevationDeg < policy.minElevationDeg) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.PAUSED,
+                    "below-min-elevation",
+                    rigAdapter,
+                    frequencySource,
+                    sourceFrequencyHz,
+                    rawCorrectionHz,
+                    rawCorrectionHz,
+                    moonEphemeris,
+                    nowMillis);
+        }
+        if (rigAdapter.isTransmitting() && !policy.allowCorrectionWhileTransmitting) {
+            return buildTrackingResult(
+                    EmeTrackingStatus.PAUSED,
+                    "transmitting-lockout",
+                    rigAdapter,
+                    frequencySource,
+                    sourceFrequencyHz,
+                    rawCorrectionHz,
+                    rawCorrectionHz,
+                    moonEphemeris,
+                    nowMillis);
+        }
+
+        long targetFrequencyHz = Math.round(sourceFrequencyHz + rawCorrectionHz);
+        EmeRigControlResult catResult = rigAdapter.setMainFrequencyHz(
+                targetFrequencyHz,
+                rawCorrectionHz,
+                policy.allowCorrectionWhileTransmitting);
+        if (catResult.success) {
+            EmeAssistState current = state;
+            state = new EmeAssistState(
+                    current.enabled,
+                    current.mode,
+                    current.correctionDirectionMode,
+                    current.ownEcho,
+                    current.mutual,
+                    current.manual,
+                    current.lastDopplerHz,
+                    current.lastTxDopplerHz,
+                    current.previewFrequencyHz,
+                    current.sourceFrequencyHz,
+                    current.targetFrequencyHz,
+                    catResult.targetFrequencyHz,
+                    nowMillis,
+                    current.observerLocation,
+                    current.moonEphemeris,
+                    current.statusText + " trackingCat=" + catResult.toSummary(),
+                    current.correctionEnabled,
+                    current.applyToRig,
+                    current.applyToAudio,
+                    current.correctionUpdateRateLimitMs,
+                    current.maxCorrectionClampHz,
+                    current.manualOverride);
+        }
+        return buildTrackingResult(
+                catResult.success ? EmeTrackingStatus.TRACKING : EmeTrackingStatus.PAUSED,
+                catResult.success ? "cat-applied" : catResult.reason,
+                rigAdapter,
+                frequencySource,
+                sourceFrequencyHz,
+                rawCorrectionHz,
+                rawCorrectionHz,
+                moonEphemeris,
+                catResult,
+                nowMillis);
+    }
+
+    private void notifyTrackingUpdated() {
+        Runnable callback = trackingUpdateCallback;
+        if (callback != null) {
+            callback.run();
+        }
+    }
+
+    private long resolveTrackingFrequencyHz(EmeTrackingEnvironment environment,
+                                            EmeTrackingPolicy policy,
+                                            EmeRigControlAdapter rigAdapter) {
+        if (policy.useCurrentRigFrequency && rigAdapter != null && rigAdapter.getCachedMainFrequencyHz() > 0L) {
+            return rigAdapter.getCachedMainFrequencyHz();
+        }
+        if (!policy.useCurrentRigFrequency && policy.fixedBaseFrequencyHz > 0L) {
+            return policy.fixedBaseFrequencyHz;
+        }
+        return environment == null ? 0L : environment.getFallbackBaseFrequencyHz();
+    }
+
+    private EmeFrequencySource resolveTrackingFrequencySource(EmeTrackingEnvironment environment,
+                                                              EmeTrackingPolicy policy,
+                                                              EmeRigControlAdapter rigAdapter) {
+        if (policy.useCurrentRigFrequency && rigAdapter != null && rigAdapter.getCachedMainFrequencyHz() > 0L) {
+            return EmeFrequencySource.CACHED;
+        }
+        if (!policy.useCurrentRigFrequency && policy.fixedBaseFrequencyHz > 0L) {
+            return EmeFrequencySource.USER_BASE_FREQUENCY;
+        }
+        if (environment != null && environment.getFallbackBaseFrequencyHz() > 0L) {
+            return EmeFrequencySource.CACHED;
+        }
+        return EmeFrequencySource.UNAVAILABLE;
+    }
+
+    private void updateTrackingPreviewState(EmeTrackingPolicy policy,
+                                            long sourceFrequencyHz,
+                                            double rxDopplerHz,
+                                            double txDopplerHz,
+                                            double rawCorrectionHz,
+                                            ObserverLocation observerLocation,
+                                            MoonEphemeris moonEphemeris,
+                                            long nowMillis) {
+        double displayCorrectionHz = clampCorrectionHz(rawCorrectionHz, policy.maxCorrectionHz);
+        state = buildState(
+                true,
+                EmeAssistState.Mode.CAT_TRACKING,
+                policy.correctionDirectionMode,
+                sourceFrequencyHz,
+                rxDopplerHz,
+                txDopplerHz,
+                sourceFrequencyHz + displayCorrectionHz,
+                observerLocation,
+                moonEphemeris,
+                String.format(Locale.US,
+                        "tracking-preview: freq=%d rawCorrectionHz=%.1f displayCorrectionHz=%.1f maxCorrectionHz=%.1f az=%.1f el=%.1f",
+                        sourceFrequencyHz,
+                        rawCorrectionHz,
+                        displayCorrectionHz,
+                        policy.maxCorrectionHz,
+                        moonEphemeris.azimuthDeg,
+                        moonEphemeris.elevationDeg),
+                true,
+                true,
+                false,
+                policy.maxCorrectionHz,
+                state.lastAppliedRigFrequencyHz,
+                state.lastAppliedAtMillis);
+    }
+
+    private EmeTrackingResult buildTrackingResult(EmeTrackingStatus status,
+                                                  String reason,
+                                                  EmeRigControlAdapter rigAdapter,
+                                                  EmeFrequencySource frequencySource,
+                                                  long currentFrequencyHz,
+                                                  double rawCorrectionHz,
+                                                  double selectedCorrectionHz,
+                                                  MoonEphemeris moonEphemeris,
+                                                  long nowMillis) {
+        return buildTrackingResult(
+                status,
+                reason,
+                rigAdapter,
+                frequencySource,
+                currentFrequencyHz,
+                rawCorrectionHz,
+                selectedCorrectionHz,
+                moonEphemeris,
+                null,
+                nowMillis);
+    }
+
+    private EmeTrackingResult buildTrackingResult(EmeTrackingStatus status,
+                                                  String reason,
+                                                  EmeRigControlAdapter rigAdapter,
+                                                  EmeFrequencySource frequencySource,
+                                                  long currentFrequencyHz,
+                                                  double rawCorrectionHz,
+                                                  double selectedCorrectionHz,
+                                                  MoonEphemeris moonEphemeris,
+                                                  EmeRigControlResult catResult,
+                                                  long nowMillis) {
+        long targetFrequencyHz = currentFrequencyHz > 0L
+                ? Math.round(currentFrequencyHz + selectedCorrectionHz)
+                : 0L;
+        return new EmeTrackingResult(
+                status,
+                reason,
+                rigAdapter == null ? "-" : rigAdapter.getRigName(),
+                rigAdapter != null && rigAdapter.isAvailable(),
+                rigAdapter != null && rigAdapter.isTransmitting(),
+                frequencySource,
+                currentFrequencyHz,
+                targetFrequencyHz,
+                rawCorrectionHz,
+                selectedCorrectionHz,
+                moonEphemeris == null ? 0.0 : EmeDopplerCalculator.calculateRxCorrectionHz(
+                        currentFrequencyHz,
+                        moonEphemeris.rangeRateMps),
+                moonEphemeris == null ? 0.0 : EmeDopplerCalculator.calculateTxCorrectionHz(
+                        currentFrequencyHz,
+                        moonEphemeris.rangeRateMps),
+                moonEphemeris == null ? Double.NaN : moonEphemeris.azimuthDeg,
+                moonEphemeris == null ? Double.NaN : moonEphemeris.elevationDeg,
+                moonEphemeris == null ? Double.NaN : moonEphemeris.rangeRateMps,
+                catResult,
+                nowMillis);
     }
 
     private EmeAssistState buildState(boolean enabled,

@@ -121,6 +121,20 @@ public final class EmeRigControlAdapter {
             Log.i(TAG, "EME CAT command sent: " + result.toSummary());
             return result;
         } catch (Exception e) {
+            boolean restored = false;
+            try {
+                if (beforeFrequencyHz > 0L) {
+                    rig.setFreq(beforeFrequencyHz);
+                    restored = true;
+                }
+            } catch (Exception restoreException) {
+                Log.w(TAG, "EME CAT local cache restore failed: rig="
+                        + getRigName()
+                        + " before="
+                        + beforeFrequencyHz
+                        + " reason="
+                        + restoreException.getMessage());
+            }
             EmeRigControlResult result = EmeRigControlResult.failure(
                     "set-main-frequency",
                     getRigName(),
@@ -128,7 +142,8 @@ public final class EmeRigControlAdapter {
                     targetFrequencyHz,
                     correctionHz,
                     transmitting,
-                    "command-exception:" + e.getMessage());
+                    "command-exception:" + e.getMessage()
+                            + (restored ? ":local-cache-restored" : ":local-cache-may-be-stale"));
             Log.e(TAG, "EME CAT command failed: " + result.toSummary());
             return result;
         }

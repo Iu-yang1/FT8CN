@@ -601,6 +601,12 @@
     <string name="eme_max_correction_hint">最大校正 Hz</string>
     <string name="eme_min_elevation_hint">月亮最低仰角 deg</string>
     <string name="eme_apply_cat_now">应用 CAT</string>
+    <string name="eme_tracking_title">EME Doppler Tracking</string>
+    <string name="eme_tracking_header">EME Tracking: %1$s   模式: %2$s</string>
+    <string name="eme_tracking_start">开始 Tracking</string>
+    <string name="eme_tracking_stop">停止</string>
+    <string name="eme_tracking_refresh">刷新</string>
+    <string name="eme_update_interval_hint">更新间隔秒数</string>
     <string name="dxpedition_macro_armed">宏已待发</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">远征快捷回复</string>
