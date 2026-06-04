@@ -199,6 +199,21 @@
                             android:textSize="11sp"
                             android:visibility="gone" />
 
+                    <Button
+                            android:id="@+id/emeAssistButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="24dp"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp"
+                            android:background="@drawable/imagebutton_style"
+                            android:minHeight="0dp"
+                            android:minWidth="0dp"
+                            android:paddingLeft="8dp"
+                            android:paddingRight="8dp"
+                            android:text="@string/eme_assist_button"
+                            android:textColor="@color/bar_text_view_color"
+                            android:textSize="11sp" />
+
                     <CheckBox
                             android:id="@+id/dxpeditionManualCheckBox"
                             android:layout_width="wrap_content"

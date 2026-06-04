@@ -100,6 +100,16 @@ public class MyCallingFragment extends Fragment {
         binding.q65ConfigButton.setText(getQ65ConfigLabel());
     }
 
+    private void updateEmeAssistButtonUi() {
+        if (binding == null) {
+            return;
+        }
+        binding.emeAssistButton.setText(GeneralVariables.emeAssistEnabled
+                ? R.string.eme_assist_button_on
+                : R.string.eme_assist_button);
+        binding.emeAssistButton.setAlpha(GeneralVariables.emeAssistEnabled ? 1.0f : 0.65f);
+    }
+
     private void restartForModeRuntimeChange() {
         if (mainViewModel.ft8SignalListener != null) {
             mainViewModel.ft8SignalListener.restartByCurrentMode();
@@ -196,6 +206,85 @@ public class MyCallingFragment extends Fragment {
                     applyQ65Configuration(selectedSubmode, selectedTrPeriod);
                 })
                 .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private String formatEmeAssistDialogText(boolean enabled) {
+        EmeAssistState emeState = mainViewModel.emeAssistController.updateDisplayOnly(
+                GeneralVariables.getMyMaidenheadGrid(),
+                GeneralVariables.band,
+                UtcTimer.getSystemTime(),
+                enabled);
+        if (emeState == null) {
+            return getString(R.string.eme_assist_status_unavailable);
+        }
+        if (!enabled) {
+            return getString(R.string.eme_assist_status_disabled);
+        }
+        if (emeState.moonEphemeris == null || !emeState.moonEphemeris.available) {
+            return getString(
+                    R.string.eme_assist_dialog_error,
+                    emeState.statusText);
+        }
+        double txCorrectionHz = EmeDopplerCalculator.calculateTxCorrectionHz(
+                GeneralVariables.band,
+                emeState.moonEphemeris.rangeRateMps);
+        String horizon = emeState.moonEphemeris.elevationDeg < 0.0 ? " below horizon" : "";
+        return String.format(
+                Locale.US,
+                "Apply mode: Display only\nGrid: %s  Lat/Lon: %.4f, %.4f\nMoon Az: %.1f deg  El: %.1f deg%s\nDistance: %.0f km  Range rate: %.2f m/s\nRX Doppler: %.1f Hz  TX Doppler: %.1f Hz\nCorrected frequency preview: %.1f Hz\nLast update: %s\nStatus: %s",
+                emeState.observerLocation == null ? "-" : emeState.observerLocation.grid,
+                emeState.observerLocation == null ? Double.NaN : emeState.observerLocation.latitudeDeg,
+                emeState.observerLocation == null ? Double.NaN : emeState.observerLocation.longitudeDeg,
+                emeState.moonEphemeris.azimuthDeg,
+                emeState.moonEphemeris.elevationDeg,
+                horizon,
+                emeState.moonEphemeris.distanceKm,
+                emeState.moonEphemeris.rangeRateMps,
+                emeState.lastDopplerHz,
+                txCorrectionHz,
+                emeState.previewFrequencyHz,
+                UtcTimer.getDatetimeStr(emeState.moonEphemeris.validTimeMillis),
+                emeState.statusText);
+    }
+
+    private void showEmeAssistDialog() {
+        if (getContext() == null || mainViewModel == null || mainViewModel.emeAssistController == null) {
+            return;
+        }
+        LinearLayout root = new LinearLayout(requireContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        int padding = Math.round(getResources().getDisplayMetrics().density * 20.0f);
+        root.setPadding(padding, padding, padding, padding / 2);
+
+        CheckBox enableCheckBox = new CheckBox(requireContext());
+        enableCheckBox.setText(R.string.eme_assist_enable);
+        enableCheckBox.setChecked(GeneralVariables.emeAssistEnabled);
+        root.addView(enableCheckBox);
+
+        TextView statusView = new TextView(requireContext());
+        statusView.setPadding(0, padding / 2, 0, 0);
+        root.addView(statusView);
+
+        Runnable refresh = () -> statusView.setText(formatEmeAssistDialogText(enableCheckBox.isChecked()));
+        enableCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> refresh.run());
+        refresh.run();
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.eme_assist_title)
+                .setView(root)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    GeneralVariables.emeAssistEnabled = enableCheckBox.isChecked();
+                    if (mainViewModel.databaseOpr != null) {
+                        mainViewModel.databaseOpr.writeConfig(
+                                "emeAssistEnabled",
+                                GeneralVariables.emeAssistEnabled ? "1" : "0",
+                                null);
+                    }
+                    updateEmeAssistButtonUi();
+                    updateAutoSessionStatus();
+                })
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> updateAutoSessionStatus())
                 .show();
     }
 
@@ -727,9 +816,10 @@ public class MyCallingFragment extends Fragment {
         EmeAssistState emeState = mainViewModel.emeAssistController.updateDisplayOnly(
                 GeneralVariables.getMyMaidenheadGrid(),
                 GeneralVariables.band,
-                UtcTimer.getSystemTime());
+                UtcTimer.getSystemTime(),
+                GeneralVariables.emeAssistEnabled);
         if (emeState == null || emeState.moonEphemeris == null || !emeState.moonEphemeris.available) {
-            return "Display only: grid unavailable";
+            return "Display only: " + (emeState == null ? "unavailable" : emeState.statusText);
         }
         double txCorrectionHz = EmeDopplerCalculator.calculateTxCorrectionHz(
                 GeneralVariables.band,
@@ -950,6 +1040,7 @@ public class MyCallingFragment extends Fragment {
             updatingSignalModeUi = false;
         }
         updateQ65ConfigUi();
+        updateEmeAssistButtonUi();
 
         // Refresh the base-frequency label for the active mode.
         binding.baseFrequencyTextView.setText(String.format(
@@ -1025,6 +1116,7 @@ public class MyCallingFragment extends Fragment {
             switchSignalMode(mode);
         });
         binding.q65ConfigButton.setOnClickListener(view -> showQ65ConfigDialog());
+        binding.emeAssistButton.setOnClickListener(view -> showEmeAssistDialog());
         binding.rbQ65.setOnLongClickListener(view -> {
             showQ65ConfigDialog();
             return true;

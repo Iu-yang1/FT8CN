@@ -583,6 +583,13 @@
     <string name="q65_status_rx_line">接收: %1$s</string>
     <string name="q65_status_tx_line">发射: %1$s</string>
     <string name="q65_status_eme_line">EME: %1$s</string>
+    <string name="eme_assist_button">EME</string>
+    <string name="eme_assist_button_on">EME*</string>
+    <string name="eme_assist_title">EME Assist</string>
+    <string name="eme_assist_enable">启用 EME Assist</string>
+    <string name="eme_assist_status_disabled">Display only: 已关闭</string>
+    <string name="eme_assist_status_unavailable">Display only: 不可用</string>
+    <string name="eme_assist_dialog_error">Display only: %1$s</string>
     <string name="dxpedition_macro_armed">宏已待发</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">远征快捷回复</string>

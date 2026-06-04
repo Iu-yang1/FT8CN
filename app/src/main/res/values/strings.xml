@@ -170,6 +170,13 @@
     <string name="q65_status_rx_line">RX: %1$s</string>
     <string name="q65_status_tx_line">TX: %1$s</string>
     <string name="q65_status_eme_line">EME: %1$s</string>
+    <string name="eme_assist_button">EME</string>
+    <string name="eme_assist_button_on">EME*</string>
+    <string name="eme_assist_title">EME Assist</string>
+    <string name="eme_assist_enable">Enable EME Assist</string>
+    <string name="eme_assist_status_disabled">Display only: disabled</string>
+    <string name="eme_assist_status_unavailable">Display only: unavailable</string>
+    <string name="eme_assist_dialog_error">Display only: %1$s</string>
     <string name="dxpedition_macro_armed">macro armed</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">DXpedition replies</string>

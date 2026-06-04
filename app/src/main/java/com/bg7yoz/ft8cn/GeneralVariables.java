@@ -326,6 +326,7 @@ public class GeneralVariables {
     public static int dxpeditionFoxSlotStepHz = 60;
     public static boolean dxpeditionFoxAutoSpecialMessage = true;
     public static boolean dxpeditionFoxCqOnFreeSlot = true;
+    public static boolean emeAssistEnabled = false;
     public static String manualDxpeditionMacroCustom1 = "{DXCALL} RR73";
     public static String manualDxpeditionMacroCustom2 = "{DXCALL} {MYCALL} {RPT}";
     public static ArrayList<String> QSL_Callsign_list = new ArrayList<>();

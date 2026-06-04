@@ -23,6 +23,42 @@ public final class EmeAssistController {
     }
 
     public EmeAssistState updateDisplayOnly(String grid, double frequencyHz, long nowMillis) {
+        return updateDisplayOnly(grid, frequencyHz, nowMillis, true);
+    }
+
+    public EmeAssistState updateDisplayOnly(String grid,
+                                            double frequencyHz,
+                                            long nowMillis,
+                                            boolean enabled) {
+        if (!enabled) {
+            state = new EmeAssistState(
+                    false,
+                    EmeAssistState.Mode.DISPLAY_ONLY,
+                    false,
+                    false,
+                    true,
+                    0.0,
+                    frequencyHz,
+                    null,
+                    MoonEphemeris.unavailable(nowMillis),
+                    "disabled");
+            return state;
+        }
+        if (!Double.isFinite(frequencyHz) || frequencyHz <= 0.0) {
+            state = new EmeAssistState(
+                    true,
+                    EmeAssistState.Mode.DISPLAY_ONLY,
+                    false,
+                    false,
+                    true,
+                    0.0,
+                    frequencyHz,
+                    null,
+                    MoonEphemeris.unavailable(nowMillis),
+                    "frequency-unavailable");
+            Log.w(TAG, "EME display-only update skipped: reason=frequency-unavailable freq=" + frequencyHz);
+            return state;
+        }
         ObserverLocation observerLocation = ObserverLocation.fromGrid(grid);
         if (observerLocation == null) {
             state = new EmeAssistState(
