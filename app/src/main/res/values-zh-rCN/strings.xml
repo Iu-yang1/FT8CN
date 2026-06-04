@@ -607,6 +607,7 @@
     <string name="eme_tracking_stop">停止</string>
     <string name="eme_tracking_refresh">刷新</string>
     <string name="eme_update_interval_hint">更新间隔秒数</string>
+    <string name="eme_tracking_entry">EME %1$s</string>
     <string name="dxpedition_macro_armed">宏已待发</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">远征快捷回复</string>

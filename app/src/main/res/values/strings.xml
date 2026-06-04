@@ -194,6 +194,7 @@
     <string name="eme_tracking_stop">Stop</string>
     <string name="eme_tracking_refresh">Refresh</string>
     <string name="eme_update_interval_hint">Update interval seconds</string>
+    <string name="eme_tracking_entry">EME %1$s</string>
     <string name="dxpedition_macro_armed">macro armed</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">DXpedition replies</string>

@@ -152,8 +152,11 @@ public class MyCallingFragment extends Fragment {
     }
 
     private String getQ65ConfigLabel() {
-        return FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode())
-                + "/" + GeneralVariables.getQ65TrPeriodSeconds() + "s";
+        return "Q65 "
+                + FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode())
+                + " · "
+                + GeneralVariables.getQ65TrPeriodSeconds()
+                + "s";
     }
 
     private void updateQ65ConfigUi() {
@@ -161,7 +164,7 @@ public class MyCallingFragment extends Fragment {
             return;
         }
         boolean q65Active = GeneralVariables.getSignalMode() == FT8Common.Q65_MODE;
-        binding.rbQ65.setText("Q65 " + getQ65ConfigLabel());
+        binding.rbQ65.setText("Q65");
         binding.q65ConfigButton.setVisibility(q65Active ? View.VISIBLE : View.GONE);
         binding.q65ConfigButton.setEnabled(q65Active);
         binding.q65ConfigButton.setAlpha(q65Active ? 1.0f : 0.45f);
@@ -172,10 +175,15 @@ public class MyCallingFragment extends Fragment {
         if (binding == null) {
             return;
         }
-        binding.emeAssistButton.setText(GeneralVariables.emeAssistEnabled
-                ? R.string.eme_assist_button_on
-                : R.string.eme_assist_button);
-        binding.emeAssistButton.setAlpha(GeneralVariables.emeAssistEnabled ? 1.0f : 0.65f);
+        EmeTrackingResult result = mainViewModel == null || mainViewModel.emeAssistController == null
+                ? null
+                : mainViewModel.emeAssistController.getTrackingResult();
+        String status = result == null ? "OFF" : result.status.name();
+        if (!GeneralVariables.emeAssistEnabled && (result == null || !mainViewModel.emeAssistController.isTrackingActive())) {
+            status = "OFF";
+        }
+        binding.emeAssistButton.setText(getString(R.string.eme_tracking_entry, status));
+        binding.emeAssistButton.setAlpha(GeneralVariables.emeAssistEnabled ? 1.0f : 0.72f);
     }
 
     private void restartForModeRuntimeChange() {
