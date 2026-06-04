@@ -1209,6 +1209,10 @@ public class FT8SignalListener {
         return decodeScheduler.getConcurrencyPolicy();
     }
 
+    public String getDecodeSchedulerStatusSummary() {
+        return decodeScheduler.getStatusSummary();
+    }
+
     public String getLastDecodeStatusSummary() {
         return lastDecodeStatusSummary;
     }

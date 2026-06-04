@@ -11,6 +11,7 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
     final String enqueueReason;
     final long enqueueWallClockMs;
     final Runnable delegate;
+    private Runnable beforeRun;
 
     DecodeJob(long requestSequence,
               long triggerSequence,
@@ -34,8 +35,15 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
         this.delegate = delegate;
     }
 
+    void setBeforeRun(Runnable beforeRun) {
+        this.beforeRun = beforeRun;
+    }
+
     @Override
     public void run() {
+        if (beforeRun != null) {
+            beforeRun.run();
+        }
         delegate.run();
     }
 

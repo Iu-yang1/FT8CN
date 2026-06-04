@@ -781,7 +781,7 @@ public class MyCallingFragment extends Fragment {
             return;
         }
         if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
-            binding.autoSessionTextView.setMaxLines(4);
+            binding.autoSessionTextView.setMaxLines(5);
             binding.autoSessionTextView.setText(buildQ65StatusText());
             return;
         }
@@ -796,11 +796,17 @@ public class MyCallingFragment extends Fragment {
         String txSummary = mainViewModel.ft8TransmitSignal == null
                 ? ""
                 : mainViewModel.ft8TransmitSignal.getLastTransmitStatusSummary();
+        String schedulerSummary = mainViewModel.ft8SignalListener == null
+                ? ""
+                : mainViewModel.ft8SignalListener.getDecodeSchedulerStatusSummary();
         if (rxSummary == null || rxSummary.trim().length() == 0) {
             rxSummary = "-";
         }
         if (txSummary == null || txSummary.trim().length() == 0) {
             txSummary = "-";
+        }
+        if (schedulerSummary == null || schedulerSummary.trim().length() == 0) {
+            schedulerSummary = "-";
         }
         return getString(
                 R.string.q65_status_line,
@@ -814,7 +820,9 @@ public class MyCallingFragment extends Fragment {
                 + "\n"
                 + getString(R.string.q65_status_tx_line, txSummary)
                 + "\n"
-                + getString(R.string.q65_status_eme_line, buildEmeAssistStatusText());
+                + getString(R.string.q65_status_eme_line, buildEmeAssistStatusText())
+                + "\n"
+                + getString(R.string.q65_status_scheduler_line, schedulerSummary);
     }
 
     private String buildEmeAssistStatusText() {

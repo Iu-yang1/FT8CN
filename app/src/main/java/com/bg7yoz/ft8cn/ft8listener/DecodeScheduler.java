@@ -17,6 +17,8 @@ final class DecodeScheduler {
     private volatile DecodeWorkerConfig workerConfig;
     private volatile DecodeConcurrencyPolicy concurrencyPolicy;
     private volatile ThreadPoolExecutor executor;
+    private volatile String lastDropReason = "none";
+    private volatile String lastExecutedStage = "none";
 
     DecodeScheduler(String threadNamePrefix,
                     long threadStackBytes,
@@ -59,6 +61,7 @@ final class DecodeScheduler {
         synchronized (executorLock) {
             String dropReason = getDropReason(job, executor, workerConfig);
             if (dropReason != null) {
+                lastDropReason = dropReason;
                 logger.debug(String.format(
                         "decode scheduler drop request=%d trigger=%d stage=%s priority=%s utc=%d source=%s reason=%s queue=%d active=%d config=%s policy=%s",
                         job.requestSequence,
@@ -74,6 +77,12 @@ final class DecodeScheduler {
                         concurrencyPolicy));
                 return false;
             }
+            job.setBeforeRun(new Runnable() {
+                @Override
+                public void run() {
+                    lastExecutedStage = job.stage.name();
+                }
+            });
             executor.execute(job);
             return true;
         }
@@ -89,6 +98,18 @@ final class DecodeScheduler {
 
     int getWorkerCount() {
         return workerConfig.workerCount;
+    }
+
+    String getStatusSummary() {
+        ThreadPoolExecutor currentExecutor = executor;
+        return "scheduler"
+                + " workerConfig=" + workerConfig
+                + " concurrencyPolicy=" + concurrencyPolicy
+                + " workerCount=" + workerConfig.workerCount
+                + " activeCount=" + currentExecutor.getActiveCount()
+                + " pendingCount=" + currentExecutor.getQueue().size()
+                + " lastDropReason=" + lastDropReason
+                + " lastExecutedStage=" + lastExecutedStage;
     }
 
     void shutdownNow() {

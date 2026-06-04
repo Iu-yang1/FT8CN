@@ -583,6 +583,7 @@
     <string name="q65_status_rx_line">接收: %1$s</string>
     <string name="q65_status_tx_line">发射: %1$s</string>
     <string name="q65_status_eme_line">EME: %1$s</string>
+    <string name="q65_status_scheduler_line">调度: %1$s</string>
     <string name="eme_assist_button">EME</string>
     <string name="eme_assist_button_on">EME*</string>
     <string name="eme_assist_title">EME Assist</string>
