@@ -51,6 +51,10 @@ public final class EmeAssistController {
         return trackingActive;
     }
 
+    public synchronized void setTrackingUpdateCallback(Runnable updateCallback) {
+        trackingUpdateCallback = updateCallback;
+    }
+
     public synchronized void startEmeTracking(EmeTrackingEnvironment environment,
                                               EmeTrackingPolicy policy,
                                               Runnable updateCallback) {
@@ -89,10 +93,10 @@ public final class EmeAssistController {
     }
 
     public synchronized void releaseEmeTracking() {
+        trackingUpdateCallback = null;
         stopEmeTracking("released");
         trackingEnvironment = null;
         trackingPolicy = null;
-        trackingUpdateCallback = null;
     }
 
     public EmeAssistState requestApplyMode(EmeAssistState.Mode requestedMode) {

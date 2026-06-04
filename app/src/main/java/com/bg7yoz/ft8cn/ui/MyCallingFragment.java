@@ -30,6 +30,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
@@ -68,6 +69,7 @@ import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
 import com.bg7yoz.ft8cn.ft8transmit.TransmitCallsign;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Locale;
 
@@ -82,6 +84,64 @@ public class MyCallingFragment extends Fragment {
     private FunctionOrderSpinnerAdapter functionOrderSpinnerAdapter;
     private boolean updatingDxpeditionModeUi = false;
     private boolean updatingSignalModeUi = false;
+    private AlertDialog emeTrackingDialog;
+    private boolean emeTrackingDialogAlive = false;
+    private Runnable emeTrackingUiCallback;
+
+    private static final class FragmentSafeEmeTrackingEnvironment implements EmeTrackingEnvironment {
+        private final WeakReference<MainViewModel> viewModelRef;
+
+        private FragmentSafeEmeTrackingEnvironment(MainViewModel mainViewModel) {
+            viewModelRef = new WeakReference<>(mainViewModel);
+        }
+
+        @Override
+        public String getObserverGrid() {
+            return GeneralVariables.getMyMaidenheadGrid();
+        }
+
+        @Override
+        public EmeRigControlAdapter getRigControlAdapter() {
+            MainViewModel viewModel = viewModelRef.get();
+            return new EmeRigControlAdapter(viewModel == null ? null : viewModel.baseRig);
+        }
+
+        @Override
+        public long getFallbackBaseFrequencyHz() {
+            MainViewModel viewModel = viewModelRef.get();
+            if (GeneralVariables.emeUseCurrentRigFrequency
+                    && viewModel != null
+                    && viewModel.baseRig != null
+                    && viewModel.baseRig.getFreq() > 0L) {
+                return viewModel.baseRig.getFreq();
+            }
+            if (!GeneralVariables.emeUseCurrentRigFrequency && GeneralVariables.emeBaseFrequencyHz > 0L) {
+                return GeneralVariables.emeBaseFrequencyHz;
+            }
+            return GeneralVariables.band;
+        }
+
+        @Override
+        public boolean hasAutoFrequencyConflict() {
+            return GeneralVariables.manualDxpeditionFoxMode
+                    || GeneralVariables.manualDxpeditionHoundMode
+                    || GeneralVariables.dxpeditionFoxManualSlotFrequency;
+        }
+
+        @Override
+        public String getAutoFrequencyConflictReason() {
+            if (GeneralVariables.manualDxpeditionFoxMode) {
+                return "dxpedition-fox-active";
+            }
+            if (GeneralVariables.manualDxpeditionHoundMode) {
+                return "dxpedition-hound-active";
+            }
+            if (GeneralVariables.dxpeditionFoxManualSlotFrequency) {
+                return "dxpedition-slot-frequency-active";
+            }
+            return "";
+        }
+    }
 
     private boolean isExperimentalManualTxMode() {
         return GeneralVariables.isExperimentalCodecEnabled();
@@ -302,43 +362,16 @@ public class MyCallingFragment extends Fragment {
     }
 
     private EmeTrackingEnvironment buildEmeTrackingEnvironment() {
-        return new EmeTrackingEnvironment() {
-            @Override
-            public String getObserverGrid() {
-                return GeneralVariables.getMyMaidenheadGrid();
-            }
+        return new FragmentSafeEmeTrackingEnvironment(mainViewModel);
+    }
 
-            @Override
-            public EmeRigControlAdapter getRigControlAdapter() {
-                return new EmeRigControlAdapter(mainViewModel == null ? null : mainViewModel.baseRig);
-            }
-
-            @Override
-            public long getFallbackBaseFrequencyHz() {
-                return getEmeSourceFrequencyHz();
-            }
-
-            @Override
-            public boolean hasAutoFrequencyConflict() {
-                return GeneralVariables.manualDxpeditionFoxMode
-                        || GeneralVariables.manualDxpeditionHoundMode
-                        || GeneralVariables.dxpeditionFoxManualSlotFrequency;
-            }
-
-            @Override
-            public String getAutoFrequencyConflictReason() {
-                if (GeneralVariables.manualDxpeditionFoxMode) {
-                    return "dxpedition-fox-active";
-                }
-                if (GeneralVariables.manualDxpeditionHoundMode) {
-                    return "dxpedition-hound-active";
-                }
-                if (GeneralVariables.dxpeditionFoxManualSlotFrequency) {
-                    return "dxpedition-slot-frequency-active";
-                }
-                return "";
-            }
-        };
+    private void detachEmeTrackingUiCallback(String reason) {
+        Log.i(TAG, "detach EME tracking UI callback: reason=" + reason);
+        emeTrackingDialogAlive = false;
+        emeTrackingUiCallback = null;
+        if (mainViewModel != null && mainViewModel.emeAssistController != null) {
+            mainViewModel.emeAssistController.setTrackingUpdateCallback(null);
+        }
     }
 
     private void saveEmeTrackingConfig() {
@@ -394,10 +427,20 @@ public class MyCallingFragment extends Fragment {
         if (getContext() == null || mainViewModel == null || mainViewModel.emeAssistController == null) {
             return;
         }
+        Log.i(TAG, "open EME tracking dialog: orientation="
+                + getResources().getConfiguration().orientation
+                + " trackingActive="
+                + mainViewModel.emeAssistController.isTrackingActive());
+        if (emeTrackingDialog != null && emeTrackingDialog.isShowing()) {
+            emeTrackingDialog.dismiss();
+        }
         LinearLayout root = new LinearLayout(requireContext());
         root.setOrientation(LinearLayout.VERTICAL);
         int padding = Math.round(getResources().getDisplayMetrics().density * 20.0f);
         root.setPadding(padding, padding, padding, padding / 2);
+        ScrollView scrollView = new ScrollView(requireContext());
+        scrollView.setFillViewport(false);
+        scrollView.addView(root);
 
         TextView headerView = new TextView(requireContext());
         headerView.setTextSize(16.0f);
@@ -462,6 +505,15 @@ public class MyCallingFragment extends Fragment {
         };
 
         Runnable refreshPanel = () -> {
+            if (!isAdded()
+                    || getView() == null
+                    || binding == null
+                    || emeTrackingDialog == null
+                    || !emeTrackingDialog.isShowing()
+                    || !emeTrackingDialogAlive) {
+                Log.i(TAG, "skip EME tracking UI update: reason=ui-detached");
+                return;
+            }
             EmeTrackingResult result = mainViewModel.emeAssistController.getTrackingResult();
             EmeAssistState emeState = mainViewModel.emeAssistController.updateCorrectionPreview(
                     GeneralVariables.getMyMaidenheadGrid(),
@@ -515,29 +567,38 @@ public class MyCallingFragment extends Fragment {
             updateEmeAssistButtonUi();
             updateAutoSessionStatus();
         };
-        refreshPanel.run();
+        emeTrackingUiCallback = refreshPanel;
 
         AlertDialog dialog = new AlertDialog.Builder(requireContext())
                 .setTitle(R.string.eme_tracking_title)
-                .setView(root)
+                .setView(scrollView)
                 .setPositiveButton(R.string.eme_tracking_start, null)
                 .setNegativeButton(R.string.eme_tracking_stop, null)
                 .setNeutralButton(R.string.eme_tracking_refresh, null)
                 .create();
+        emeTrackingDialog = dialog;
+        dialog.setOnDismissListener(dialogInterface -> {
+            Log.i(TAG, "EME tracking dialog dismissed");
+            detachEmeTrackingUiCallback("dialog-dismiss");
+        });
         dialog.setOnShowListener(dialogInterface -> {
+            emeTrackingDialogAlive = true;
+            refreshPanel.run();
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                 applyEditors.run();
                 GeneralVariables.emeAssistEnabled = true;
                 saveEmeTrackingConfig();
+                Log.i(TAG, "start EME tracking from dialog");
                 mainViewModel.emeAssistController.startEmeTracking(
                         buildEmeTrackingEnvironment(),
                         buildEmeTrackingPolicy(true),
-                        refreshPanel);
+                        emeTrackingUiCallback);
                 refreshPanel.run();
             });
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view -> {
                 GeneralVariables.emeAssistEnabled = false;
                 saveEmeTrackingConfig();
+                Log.i(TAG, "stop EME tracking from dialog");
                 mainViewModel.emeAssistController.stopEmeTracking("user-stopped");
                 refreshPanel.run();
             });
@@ -1748,6 +1809,21 @@ public class MyCallingFragment extends Fragment {
         updateDxpeditionManualUi();
         updateAutoSessionStatus();
         return binding.getRoot();
+    }
+
+    @Override
+    public void onDestroyView() {
+        Log.i(TAG, "MyCallingFragment onDestroyView: detach EME tracking UI");
+        detachEmeTrackingUiCallback("fragment-destroy-view");
+        if (emeTrackingDialog != null) {
+            emeTrackingDialog.setOnDismissListener(null);
+            if (emeTrackingDialog.isShowing()) {
+                emeTrackingDialog.dismiss();
+            }
+            emeTrackingDialog = null;
+        }
+        binding = null;
+        super.onDestroyView();
     }
 
     private void showFreeTextEdit() {
