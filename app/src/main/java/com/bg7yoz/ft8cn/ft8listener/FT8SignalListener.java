@@ -1223,7 +1223,9 @@ public class FT8SignalListener {
         }
         if (concurrencyPolicy == DecodeConcurrencyPolicy.PARALLEL_NATIVE) {
             Log.w(TAG,
-                    "reject PARALLEL_NATIVE decode policy: bridge still uses global active context; "
+                    "reject PARALLEL_NATIVE decode policy: "
+                            + "reason=native-bridge-global-context, "
+                            + "bridge still uses global active context; "
                             + "forcing PARALLEL_PREPARE_SERIAL_NATIVE");
             concurrencyPolicy = DecodeConcurrencyPolicy.PARALLEL_PREPARE_SERIAL_NATIVE;
         }
