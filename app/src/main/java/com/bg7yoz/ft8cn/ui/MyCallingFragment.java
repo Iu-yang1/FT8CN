@@ -266,7 +266,15 @@ public class MyCallingFragment extends Fragment {
         statusView.setPadding(0, padding / 2, 0, 0);
         root.addView(statusView);
 
-        Runnable refresh = () -> statusView.setText(formatEmeAssistDialogText(enableCheckBox.isChecked()));
+        Runnable refresh = () -> {
+            String text = formatEmeAssistDialogText(enableCheckBox.isChecked());
+            if (enableCheckBox.isChecked()) {
+                text += "\n\nSanity:\n" + mainViewModel.emeAssistController.buildSanitySummary(
+                        GeneralVariables.getMyMaidenheadGrid(),
+                        UtcTimer.getSystemTime());
+            }
+            statusView.setText(text);
+        };
         enableCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> refresh.run());
         refresh.run();
 
