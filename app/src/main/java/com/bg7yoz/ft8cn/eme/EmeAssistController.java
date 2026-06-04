@@ -28,6 +28,34 @@ public final class EmeAssistController {
         return state;
     }
 
+    public EmeAssistState requestApplyMode(EmeAssistState.Mode requestedMode) {
+        if (requestedMode == null || requestedMode == EmeAssistState.Mode.DISPLAY_ONLY) {
+            return state;
+        }
+        Log.w(TAG, "EME correction mode disabled: requested="
+                + requestedMode
+                + " reason=display-only-guard");
+        EmeAssistState current = state;
+        state = new EmeAssistState(
+                current.enabled,
+                EmeAssistState.Mode.DISPLAY_ONLY,
+                current.ownEcho,
+                current.mutual,
+                current.manual,
+                current.lastDopplerHz,
+                current.previewFrequencyHz,
+                current.observerLocation,
+                current.moonEphemeris,
+                "correction-mode-unsupported:" + requestedMode,
+                false,
+                false,
+                false,
+                current.correctionUpdateRateLimitMs,
+                current.maxCorrectionClampHz,
+                current.manualOverride);
+        return state;
+    }
+
     public EmeAssistState updateDisplayOnly(String grid, double frequencyHz, long nowMillis) {
         return updateDisplayOnly(grid, frequencyHz, nowMillis, true);
     }
