@@ -178,6 +178,16 @@
     <string name="eme_assist_status_disabled">Display only: disabled</string>
     <string name="eme_assist_status_unavailable">Display only: unavailable</string>
     <string name="eme_assist_dialog_error">Display only: %1$s</string>
+    <string name="eme_apply_mode_title">EME apply mode</string>
+    <string name="eme_apply_mode_display_only">Display only</string>
+    <string name="eme_apply_mode_cat_manual">CAT manual apply</string>
+    <string name="eme_apply_mode_cat_tracking_guarded">CAT tracking (guarded)</string>
+    <string name="eme_apply_mode_audio_preview">Audio offset preview</string>
+    <string name="eme_use_current_rig_frequency">Use current rig frequency</string>
+    <string name="eme_allow_correction_while_transmitting">Allow correction while transmitting</string>
+    <string name="eme_max_correction_hint">Max correction Hz</string>
+    <string name="eme_min_elevation_hint">Min moon elevation deg</string>
+    <string name="eme_apply_cat_now">Apply CAT</string>
     <string name="dxpedition_macro_armed">macro armed</string>
     <string name="dxpedition_macro_button">DXP+</string>
     <string name="dxpedition_macro_pick_title">DXpedition replies</string>

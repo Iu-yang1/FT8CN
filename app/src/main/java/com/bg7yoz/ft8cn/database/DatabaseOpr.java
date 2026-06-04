@@ -2214,6 +2214,51 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("emeAssistEnabled")) {
                     GeneralVariables.emeAssistEnabled = result.equals("1");
                 }
+                if (name.equalsIgnoreCase("emeApplyMode")) {
+                    GeneralVariables.emeApplyMode = com.bg7yoz.ft8cn.eme.EmeAssistState.Mode.fromConfigValue(result);
+                }
+                if (name.equalsIgnoreCase("emeUseCurrentRigFrequency")) {
+                    GeneralVariables.emeUseCurrentRigFrequency = (result.equals("") || result.equals("1"));
+                }
+                if (name.equalsIgnoreCase("emeBaseFrequencyHz")) {
+                    try {
+                        GeneralVariables.emeBaseFrequencyHz = result.equals("") ? 0L : Long.parseLong(result);
+                    } catch (Exception e) {
+                        GeneralVariables.emeBaseFrequencyHz = 0L;
+                    }
+                }
+                if (name.equalsIgnoreCase("emeMaxCorrectionHz")) {
+                    try {
+                        GeneralVariables.emeMaxCorrectionHz = result.equals("") ? 5000.0 : Double.parseDouble(result);
+                    } catch (Exception e) {
+                        GeneralVariables.emeMaxCorrectionHz = 5000.0;
+                    }
+                }
+                if (name.equalsIgnoreCase("emeUpdateIntervalSeconds")) {
+                    try {
+                        int value = result.equals("") ? 10 : Integer.parseInt(result);
+                        GeneralVariables.emeUpdateIntervalSeconds = Math.max(1, Math.min(value, 60));
+                    } catch (Exception e) {
+                        GeneralVariables.emeUpdateIntervalSeconds = 10;
+                    }
+                }
+                if (name.equalsIgnoreCase("emeMinElevationDeg")) {
+                    try {
+                        GeneralVariables.emeMinElevationDeg = result.equals("") ? 0.0 : Double.parseDouble(result);
+                    } catch (Exception e) {
+                        GeneralVariables.emeMinElevationDeg = 0.0;
+                    }
+                }
+                if (name.equalsIgnoreCase("emeAllowCorrectionWhileTransmitting")) {
+                    GeneralVariables.emeAllowCorrectionWhileTransmitting = result.equals("1");
+                }
+                if (name.equalsIgnoreCase("emeRestoreFrequencyOnDisable")) {
+                    GeneralVariables.emeRestoreFrequencyOnDisable = result.equals("1");
+                }
+                if (name.equalsIgnoreCase("emeCorrectionDirectionMode")) {
+                    GeneralVariables.emeCorrectionDirectionMode =
+                            com.bg7yoz.ft8cn.eme.EmeAssistState.CorrectionDirectionMode.fromConfigValue(result);
+                }
                 if (name.equalsIgnoreCase("manualDxpeditionMacroCustom1")) {
                     GeneralVariables.manualDxpeditionMacroCustom1 = result.equals("")
                             ? "{DXCALL} RR73"

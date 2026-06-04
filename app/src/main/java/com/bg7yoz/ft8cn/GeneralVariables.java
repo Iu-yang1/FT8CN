@@ -14,6 +14,7 @@ import com.bg7yoz.ft8cn.callsign.CallsignDatabase;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
+import com.bg7yoz.ft8cn.eme.EmeAssistState;
 import com.bg7yoz.ft8cn.ft8transmit.QslRecordList;
 import com.bg7yoz.ft8cn.html.HtmlContext;
 import com.bg7yoz.ft8cn.rigs.BaseRigOperation;
@@ -328,6 +329,16 @@ public class GeneralVariables {
     public static boolean dxpeditionFoxAutoSpecialMessage = true;
     public static boolean dxpeditionFoxCqOnFreeSlot = true;
     public static boolean emeAssistEnabled = false;
+    public static EmeAssistState.Mode emeApplyMode = EmeAssistState.Mode.DISPLAY_ONLY;
+    public static boolean emeUseCurrentRigFrequency = true;
+    public static long emeBaseFrequencyHz = 0L;
+    public static double emeMaxCorrectionHz = 5000.0;
+    public static int emeUpdateIntervalSeconds = 10;
+    public static double emeMinElevationDeg = 0.0;
+    public static boolean emeAllowCorrectionWhileTransmitting = false;
+    public static boolean emeRestoreFrequencyOnDisable = false;
+    public static EmeAssistState.CorrectionDirectionMode emeCorrectionDirectionMode =
+            EmeAssistState.CorrectionDirectionMode.RX_CORRECTION;
     public static String manualDxpeditionMacroCustom1 = "{DXCALL} RR73";
     public static String manualDxpeditionMacroCustom2 = "{DXCALL} {MYCALL} {RPT}";
     public static ArrayList<String> QSL_Callsign_list = new ArrayList<>();
