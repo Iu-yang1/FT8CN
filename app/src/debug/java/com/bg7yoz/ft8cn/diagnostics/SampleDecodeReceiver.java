@@ -271,7 +271,7 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
             );
 
             boolean finished = finishedLatch.await(
-                    getDirectListenerDecodeTimeoutMs(decodeMode),
+                    getDirectListenerDecodeTimeoutMs(decodeMode, q65TrPeriodSeconds),
                     TimeUnit.MILLISECONDS
             );
             logCollectedSummary("[listener]", path, sampleAudio.sampleRate, sampleAudio.voice.length,
@@ -612,6 +612,9 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
         }
 
         File target = new File(dir, source.getName());
+        if (source.getCanonicalFile().equals(target.getCanonicalFile())) {
+            return source.getAbsolutePath();
+        }
         copyFile(source, target);
         return target.getAbsolutePath();
     }
@@ -673,12 +676,12 @@ public class SampleDecodeReceiver extends BroadcastReceiver {
         return ENTRY_DECODE_TIMEOUT_FT8_MS;
     }
 
-    private static int getDirectListenerDecodeTimeoutMs(int decodeMode) {
+    private static int getDirectListenerDecodeTimeoutMs(int decodeMode, int q65TrPeriodSeconds) {
         if (decodeMode != FT8Common.Q65_MODE) {
             return 20000;
         }
-        int slotMs = FT8Common.getSlotTimeM(decodeMode);
-        long timeoutMs = Math.max(30000L, Math.round(slotMs / 4.0) + 15000L);
+        long slotMs = Math.max(15, q65TrPeriodSeconds) * 1000L;
+        long timeoutMs = Math.max(90000L, slotMs + 30000L);
         if (timeoutMs > Integer.MAX_VALUE) {
             return Integer.MAX_VALUE;
         }
