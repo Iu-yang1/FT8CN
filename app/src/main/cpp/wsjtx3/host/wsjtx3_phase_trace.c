@@ -32,6 +32,12 @@ extern void ft8cn_vendor_phase_trace_sink(int handle,
                                           int candidate_count,
                                           int decoded_count,
                                           long long duration_us) __attribute__((weak));
+extern int ft8cn_callback_slot_enabled(void) __attribute__((weak));
+extern void ft8cn_callback_slot_trace_sink(int active_context,
+                                           int explicit_context,
+                                           int callback_slot,
+                                           int result_count,
+                                           int mismatch) __attribute__((weak));
 #endif
 
 typedef struct {
@@ -166,5 +172,37 @@ void wsjtx3_vendor_trace_event(int phase,
     (void) candidate_count;
     (void) decoded_count;
     (void) duration_us;
+#endif
+}
+
+int wsjtx3_callback_slot_is_enabled(void) {
+#if defined(__GNUC__) || defined(__clang__)
+    return ft8cn_callback_slot_enabled != 0
+            && ft8cn_callback_slot_enabled() != 0;
+#else
+    return 0;
+#endif
+}
+
+void wsjtx3_callback_slot_trace_event(int active_context,
+                                      int explicit_context,
+                                      int callback_slot,
+                                      int result_count,
+                                      int mismatch) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (ft8cn_callback_slot_trace_sink == 0 || !wsjtx3_callback_slot_is_enabled()) {
+        return;
+    }
+    ft8cn_callback_slot_trace_sink(active_context,
+                                   explicit_context,
+                                   callback_slot,
+                                   result_count,
+                                   mismatch);
+#else
+    (void) active_context;
+    (void) explicit_context;
+    (void) callback_slot;
+    (void) result_count;
+    (void) mismatch;
 #endif
 }

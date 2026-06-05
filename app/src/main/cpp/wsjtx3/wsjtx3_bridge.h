@@ -83,6 +83,12 @@ void wsjtx3_vendor_trace_event(int phase,
                                int candidate_count,
                                int decoded_count,
                                long long duration_us);
+int wsjtx3_callback_slot_is_enabled(void);
+void wsjtx3_callback_slot_trace_event(int active_context,
+                                      int explicit_context,
+                                      int callback_slot,
+                                      int result_count,
+                                      int mismatch);
 
 #ifdef __cplusplus
 }

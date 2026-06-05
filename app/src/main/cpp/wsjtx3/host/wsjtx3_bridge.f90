@@ -1,8 +1,8 @@
 module wsjtx3_bridge
   use iso_c_binding
-  use ft8_decode, only: ft8_decoder
-  use ft4_decode, only: ft4_decoder
-  use q65_decode, only: q65_decoder
+  use ft8_decode, only: ft8_decoder, ft8_decode_callback
+  use ft4_decode, only: ft4_decoder, ft4_decode_callback
+  use q65_decode, only: q65_decoder, q65_decode_callback
   use prog_args, only: temp_dir, data_dir
   implicit none
 
@@ -144,6 +144,16 @@ module wsjtx3_bridge
 
      subroutine wsjtx3_vendor_trace_clear_context() bind(C, name="wsjtx3_vendor_trace_clear_context")
      end subroutine wsjtx3_vendor_trace_clear_context
+
+     integer(c_int) function wsjtx3_callback_slot_is_enabled() bind(C, name="wsjtx3_callback_slot_is_enabled")
+       import :: c_int
+     end function wsjtx3_callback_slot_is_enabled
+
+     subroutine wsjtx3_callback_slot_trace_event(active_context, explicit_context, callback_slot, result_count, &
+          mismatch) bind(C, name="wsjtx3_callback_slot_trace_event")
+       import :: c_int
+       integer(c_int), value :: active_context, explicit_context, callback_slot, result_count, mismatch
+     end subroutine wsjtx3_callback_slot_trace_event
   end interface
 
 contains
@@ -550,7 +560,9 @@ contains
     end do
   end subroutine copy_fortran_string
 
-  subroutine append_active_result(sync, snr, dt, freq, decoded, nap, qual)
+  subroutine append_result_to_context(context_id, callback_slot, sync, snr, dt, freq, decoded, nap, qual)
+    integer, intent(in) :: context_id
+    integer, intent(in) :: callback_slot
     real, intent(in) :: sync
     integer, intent(in) :: snr
     real, intent(in) :: dt
@@ -559,27 +571,66 @@ contains
     integer, intent(in) :: nap
     real, intent(in) :: qual
     integer :: next_index
-    if (g_active_context < 1 .or. g_active_context > WSJTX3_MAX_CONTEXTS) then
+    integer :: target_context
+    integer :: mismatch
+
+    target_context = context_id
+    mismatch = 0
+    if (target_context < 1 .or. target_context > WSJTX3_MAX_CONTEXTS) then
+       target_context = g_active_context
+       mismatch = 1
+    end if
+    if (target_context < 1 .or. target_context > WSJTX3_MAX_CONTEXTS) then
        return
     end if
-    if (.not. g_contexts(g_active_context)%active) then
+    if (.not. g_contexts(target_context)%active) then
+       target_context = g_active_context
+       mismatch = 1
+    end if
+    if (target_context < 1 .or. target_context > WSJTX3_MAX_CONTEXTS) then
        return
     end if
-    next_index = g_contexts(g_active_context)%result_count + 1
+    if (.not. g_contexts(target_context)%active) then
+       return
+    end if
+    if (callback_slot > 0 .and. g_active_context /= context_id) then
+       target_context = g_active_context
+       mismatch = 1
+    end if
+    if (target_context < 1 .or. target_context > WSJTX3_MAX_CONTEXTS) then
+       return
+    end if
+    if (.not. g_contexts(target_context)%active) then
+       return
+    end if
+    next_index = g_contexts(target_context)%result_count + 1
     if (next_index > WSJTX3_MAX_RESULTS) then
        return
     end if
-    g_contexts(g_active_context)%result_count = next_index
-    g_contexts(g_active_context)%results(next_index)%sync = real(sync, kind=c_float)
-    g_contexts(g_active_context)%results(next_index)%snr = int(snr, kind=c_int)
-    g_contexts(g_active_context)%results(next_index)%dt = real(dt, kind=c_float)
-    g_contexts(g_active_context)%results(next_index)%freq = real(freq, kind=c_float)
-    g_contexts(g_active_context)%results(next_index)%decoded = decoded
-    g_contexts(g_active_context)%results(next_index)%nap = int(nap, kind=c_int)
-    g_contexts(g_active_context)%results(next_index)%qual = real(qual, kind=c_float)
-    if (g_contexts(g_active_context)%trace_enabled /= 0) then
-       g_contexts(g_active_context)%trace_callback_count = g_contexts(g_active_context)%trace_callback_count + 1
+    g_contexts(target_context)%result_count = next_index
+    g_contexts(target_context)%results(next_index)%sync = real(sync, kind=c_float)
+    g_contexts(target_context)%results(next_index)%snr = int(snr, kind=c_int)
+    g_contexts(target_context)%results(next_index)%dt = real(dt, kind=c_float)
+    g_contexts(target_context)%results(next_index)%freq = real(freq, kind=c_float)
+    g_contexts(target_context)%results(next_index)%decoded = decoded
+    g_contexts(target_context)%results(next_index)%nap = int(nap, kind=c_int)
+    g_contexts(target_context)%results(next_index)%qual = real(qual, kind=c_float)
+    if (g_contexts(target_context)%trace_enabled /= 0) then
+       g_contexts(target_context)%trace_callback_count = g_contexts(target_context)%trace_callback_count + 1
     end if
+    if (callback_slot > 0) call wsjtx3_callback_slot_trace_event(g_active_context, context_id, callback_slot, &
+         next_index, mismatch)
+  end subroutine append_result_to_context
+
+  subroutine append_active_result(sync, snr, dt, freq, decoded, nap, qual)
+    real, intent(in) :: sync
+    integer, intent(in) :: snr
+    real, intent(in) :: dt
+    real, intent(in) :: freq
+    character(len=37), intent(in) :: decoded
+    integer, intent(in) :: nap
+    real, intent(in) :: qual
+    call append_result_to_context(g_active_context, 0, sync, snr, dt, freq, decoded, nap, qual)
   end subroutine append_active_result
 
   subroutine wsjtx3_ft8_callback(this, sync, snr, dt, freq, decoded, nap, qual)
@@ -594,6 +645,38 @@ contains
     call append_active_result(sync, snr, dt, freq, decoded, nap, qual)
   end subroutine wsjtx3_ft8_callback
 
+  subroutine wsjtx3_ft8_callback_slot1(this, sync, snr, dt, freq, decoded, nap, qual)
+    class(ft8_decoder), intent(inout) :: this
+    real, intent(in) :: sync, dt, freq, qual
+    integer, intent(in) :: snr, nap
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(1, 1, sync, snr, dt, freq, decoded, nap, qual)
+  end subroutine wsjtx3_ft8_callback_slot1
+
+  subroutine wsjtx3_ft8_callback_slot2(this, sync, snr, dt, freq, decoded, nap, qual)
+    class(ft8_decoder), intent(inout) :: this
+    real, intent(in) :: sync, dt, freq, qual
+    integer, intent(in) :: snr, nap
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(2, 2, sync, snr, dt, freq, decoded, nap, qual)
+  end subroutine wsjtx3_ft8_callback_slot2
+
+  subroutine wsjtx3_ft8_callback_slot3(this, sync, snr, dt, freq, decoded, nap, qual)
+    class(ft8_decoder), intent(inout) :: this
+    real, intent(in) :: sync, dt, freq, qual
+    integer, intent(in) :: snr, nap
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(3, 3, sync, snr, dt, freq, decoded, nap, qual)
+  end subroutine wsjtx3_ft8_callback_slot3
+
+  subroutine wsjtx3_ft8_callback_slot4(this, sync, snr, dt, freq, decoded, nap, qual)
+    class(ft8_decoder), intent(inout) :: this
+    real, intent(in) :: sync, dt, freq, qual
+    integer, intent(in) :: snr, nap
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(4, 4, sync, snr, dt, freq, decoded, nap, qual)
+  end subroutine wsjtx3_ft8_callback_slot4
+
   subroutine wsjtx3_ft4_callback(this, sync, snr, dt, freq, decoded, nap, qual)
     class(ft4_decoder), intent(inout) :: this
     real, intent(in) :: sync
@@ -605,6 +688,38 @@ contains
     real, intent(in) :: qual
     call append_active_result(sync, snr, dt, freq, decoded, nap, qual)
   end subroutine wsjtx3_ft4_callback
+
+  subroutine wsjtx3_ft4_callback_slot1(this, sync, snr, dt, freq, decoded, nap, qual)
+    class(ft4_decoder), intent(inout) :: this
+    real, intent(in) :: sync, dt, freq, qual
+    integer, intent(in) :: snr, nap
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(1, 1, sync, snr, dt, freq, decoded, nap, qual)
+  end subroutine wsjtx3_ft4_callback_slot1
+
+  subroutine wsjtx3_ft4_callback_slot2(this, sync, snr, dt, freq, decoded, nap, qual)
+    class(ft4_decoder), intent(inout) :: this
+    real, intent(in) :: sync, dt, freq, qual
+    integer, intent(in) :: snr, nap
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(2, 2, sync, snr, dt, freq, decoded, nap, qual)
+  end subroutine wsjtx3_ft4_callback_slot2
+
+  subroutine wsjtx3_ft4_callback_slot3(this, sync, snr, dt, freq, decoded, nap, qual)
+    class(ft4_decoder), intent(inout) :: this
+    real, intent(in) :: sync, dt, freq, qual
+    integer, intent(in) :: snr, nap
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(3, 3, sync, snr, dt, freq, decoded, nap, qual)
+  end subroutine wsjtx3_ft4_callback_slot3
+
+  subroutine wsjtx3_ft4_callback_slot4(this, sync, snr, dt, freq, decoded, nap, qual)
+    class(ft4_decoder), intent(inout) :: this
+    real, intent(in) :: sync, dt, freq, qual
+    integer, intent(in) :: snr, nap
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(4, 4, sync, snr, dt, freq, decoded, nap, qual)
+  end subroutine wsjtx3_ft4_callback_slot4
 
   subroutine wsjtx3_q65_callback(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
     class(q65_decoder), intent(inout) :: this
@@ -622,6 +737,45 @@ contains
     qual = real(nused)
     call append_active_result(snr1, nsnr, dt, freq, decoded, idec, qual)
   end subroutine wsjtx3_q65_callback
+
+  subroutine append_q65_result_to_context(context_id, callback_slot, snr1, nsnr, dt, freq, decoded, idec, nused)
+    integer, intent(in) :: context_id, callback_slot, nsnr, idec, nused
+    real, intent(in) :: snr1, dt, freq
+    character(len=37), intent(in) :: decoded
+    call append_result_to_context(context_id, callback_slot, snr1, nsnr, dt, freq, decoded, idec, real(nused))
+  end subroutine append_q65_result_to_context
+
+  subroutine wsjtx3_q65_callback_slot1(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
+    class(q65_decoder), intent(inout) :: this
+    integer, intent(in) :: nutc, nsnr, idec, nused, ntrperiod
+    real, intent(in) :: snr1, dt, freq
+    character(len=37), intent(in) :: decoded
+    call append_q65_result_to_context(1, 1, snr1, nsnr, dt, freq, decoded, idec, nused)
+  end subroutine wsjtx3_q65_callback_slot1
+
+  subroutine wsjtx3_q65_callback_slot2(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
+    class(q65_decoder), intent(inout) :: this
+    integer, intent(in) :: nutc, nsnr, idec, nused, ntrperiod
+    real, intent(in) :: snr1, dt, freq
+    character(len=37), intent(in) :: decoded
+    call append_q65_result_to_context(2, 2, snr1, nsnr, dt, freq, decoded, idec, nused)
+  end subroutine wsjtx3_q65_callback_slot2
+
+  subroutine wsjtx3_q65_callback_slot3(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
+    class(q65_decoder), intent(inout) :: this
+    integer, intent(in) :: nutc, nsnr, idec, nused, ntrperiod
+    real, intent(in) :: snr1, dt, freq
+    character(len=37), intent(in) :: decoded
+    call append_q65_result_to_context(3, 3, snr1, nsnr, dt, freq, decoded, idec, nused)
+  end subroutine wsjtx3_q65_callback_slot3
+
+  subroutine wsjtx3_q65_callback_slot4(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
+    class(q65_decoder), intent(inout) :: this
+    integer, intent(in) :: nutc, nsnr, idec, nused, ntrperiod
+    real, intent(in) :: snr1, dt, freq
+    character(len=37), intent(in) :: decoded
+    call append_q65_result_to_context(4, 4, snr1, nsnr, dt, freq, decoded, idec, nused)
+  end subroutine wsjtx3_q65_callback_slot4
 
   logical function ft8_allow_followup_rounds(context, phase)
     type(wsjtx3_context_t), intent(in) :: context
@@ -657,6 +811,7 @@ contains
     logical(kind=1) :: disk_data_flag
     integer(c_long_long) :: trace_started_at
     integer(c_int) :: result_count_before
+    procedure(ft8_decode_callback), pointer :: selected_callback
 
     if (phase <= 0) then
        return
@@ -677,12 +832,26 @@ contains
        g_active_context = 0
     end if
 
+    selected_callback => wsjtx3_ft8_callback
+    if (capture_results .and. wsjtx3_callback_slot_is_enabled() /= 0) then
+       select case (handle)
+       case (1)
+          selected_callback => wsjtx3_ft8_callback_slot1
+       case (2)
+          selected_callback => wsjtx3_ft8_callback_slot2
+       case (3)
+          selected_callback => wsjtx3_ft8_callback_slot3
+       case (4)
+          selected_callback => wsjtx3_ft8_callback_slot4
+       end select
+    end if
+
     result_count_before = g_contexts(handle)%result_count
     trace_started_at = phase_trace_now()
     call wsjtx3_vendor_trace_set_context(handle, g_active_context, context%mode, context%utc_time, &
          context%decode_pass_count, context%multi_decode_round_count, context%q65_submode, &
          context%q65_tr_period, size(iwave))
-    call g_ft8_decoders(handle)%decode(wsjtx3_ft8_callback, iwave, qso_progress, &
+    call g_ft8_decoders(handle)%decode(selected_callback, iwave, qso_progress, &
          context%qso_frequency_hz, context%tx_frequency_hz, newdat_flag, nutc, &
          FTX_DECODE_MIN_HZ, FT8_DECODE_MAX_HZ, &
          phase, ndepth, 0.0, 0, nagain, enable_ap, try_a8, .false., napwid, &
@@ -760,6 +929,7 @@ contains
     integer(c_int) :: nqf(20)
     integer(c_long_long) :: trace_started_at
     integer(c_int) :: result_count_before
+    procedure(q65_decode_callback), pointer :: selected_callback
 
     full_samples = context%q65_tr_period * 12000
     if (sample_count < full_samples) then
@@ -777,12 +947,25 @@ contains
     nqf = 0
     nutc = utc_millis_to_hhmmss(context%utc_time)
     g_active_context = handle
+    selected_callback => wsjtx3_q65_callback
+    if (wsjtx3_callback_slot_is_enabled() /= 0) then
+       select case (handle)
+       case (1)
+          selected_callback => wsjtx3_q65_callback_slot1
+       case (2)
+          selected_callback => wsjtx3_q65_callback_slot2
+       case (3)
+          selected_callback => wsjtx3_q65_callback_slot3
+       case (4)
+          selected_callback => wsjtx3_q65_callback_slot4
+       end select
+    end if
     result_count_before = g_contexts(handle)%result_count
     trace_started_at = phase_trace_now()
     call wsjtx3_vendor_trace_set_context(handle, g_active_context, context%mode, context%utc_time, &
          context%decode_pass_count, context%multi_decode_round_count, context%q65_submode, &
          context%q65_tr_period, sample_count)
-    call g_q65_decoders(handle)%decode(wsjtx3_q65_callback, iwave, nqd, nutc, context%q65_tr_period, &
+    call g_q65_decoders(handle)%decode(selected_callback, iwave, nqd, nutc, context%q65_tr_period, &
          context%q65_submode, context%qso_frequency_hz, q65_ntol_from_context(context), &
          q65_ndepth_from_context(context), FTX_DECODE_MIN_HZ, Q65_DECODE_MAX_HZ, .true., .true., .true., &
          0_c_int, .true., q65_emedelay_from_context(context), context%my_call, context%his_call, &
@@ -1013,6 +1196,7 @@ contains
     integer(c_int) :: result_count_before
     integer(c_long_long) :: trace_total_started_at
     integer(c_long_long) :: trace_phase_started_at
+    procedure(ft4_decode_callback), pointer :: selected_ft4_callback
 
     wsjtx3_bridge_process_float = 0
     if (.not. context_valid(handle)) then
@@ -1049,9 +1233,22 @@ contains
        call run_ft8_decode_pipeline(handle, context, iwave, sample_count)
     else if (context_is_ft4(context)) then
        g_active_context = handle
+       selected_ft4_callback => wsjtx3_ft4_callback
+       if (wsjtx3_callback_slot_is_enabled() /= 0) then
+          select case (handle)
+          case (1)
+             selected_ft4_callback => wsjtx3_ft4_callback_slot1
+          case (2)
+             selected_ft4_callback => wsjtx3_ft4_callback_slot2
+          case (3)
+             selected_ft4_callback => wsjtx3_ft4_callback_slot3
+          case (4)
+             selected_ft4_callback => wsjtx3_ft4_callback_slot4
+          end select
+       end if
        result_count_before = g_contexts(handle)%result_count
        trace_phase_started_at = phase_trace_now()
-       call g_ft4_decoders(handle)%decode(wsjtx3_ft4_callback, iwave, qso_progress_from_context(context), &
+       call g_ft4_decoders(handle)%decode(selected_ft4_callback, iwave, qso_progress_from_context(context), &
             context%qso_frequency_hz, FTX_DECODE_MIN_HZ, FT4_DECODE_MAX_HZ, &
             ft4_ndepth_from_context(context, sample_count), .false., 0, &
             context%my_call, context%his_call)

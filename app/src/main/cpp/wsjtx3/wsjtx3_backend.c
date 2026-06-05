@@ -25,6 +25,7 @@
 #include <sys/system_properties.h>
 #define WSJTX3_LOG_TAG "WSJTX3Backend"
 #define WSJTX3_PHASE_LOG_TAG "WSJTX3Phase"
+#define WSJTX3_CALLBACK_SLOT_LOG_TAG "WSJTX3CallbackSlot"
 #define WSJTX3_LOGI(...) __android_log_print(ANDROID_LOG_INFO, WSJTX3_LOG_TAG, __VA_ARGS__)
 #define WSJTX3_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, WSJTX3_LOG_TAG, __VA_ARGS__)
 #else
@@ -100,6 +101,22 @@ static const char *trace_phase_label(int phase) {
 
 int ft8cn_native_phase_trace_enabled(void);
 
+static int android_log_tag_debug_enabled(const char *tag) {
+#if defined(ANDROID)
+    char property_name[PROP_NAME_MAX] = {0};
+    char property_value[PROP_VALUE_MAX] = {0};
+    snprintf(property_name, sizeof(property_name), "log.tag.%s", tag);
+    __system_property_get(property_name, property_value);
+    return strcmp(property_value, "DEBUG") == 0
+            || strcmp(property_value, "VERBOSE") == 0
+            || strcmp(property_value, "D") == 0
+            || strcmp(property_value, "V") == 0;
+#else
+    (void) tag;
+    return 0;
+#endif
+}
+
 void ft8cn_vendor_phase_trace_sink(int handle,
                                    int active_context,
                                    int mode,
@@ -160,18 +177,55 @@ void ft8cn_vendor_phase_trace_sink(int handle,
 int ft8cn_native_phase_trace_enabled(void) {
 #if defined(ANDROID)
     static int cached_enabled = -1;
-    char property_value[PROP_VALUE_MAX] = {0};
     if (cached_enabled >= 0) {
         return cached_enabled;
     }
-    __system_property_get("log.tag." WSJTX3_PHASE_LOG_TAG, property_value);
-    cached_enabled = strcmp(property_value, "DEBUG") == 0
-            || strcmp(property_value, "VERBOSE") == 0
-            || strcmp(property_value, "D") == 0
-            || strcmp(property_value, "V") == 0;
+    cached_enabled = android_log_tag_debug_enabled(WSJTX3_PHASE_LOG_TAG);
     return cached_enabled;
 #else
     return 0;
+#endif
+}
+
+int ft8cn_callback_slot_enabled(void) {
+#if defined(ANDROID)
+    static int cached_enabled = -1;
+    if (cached_enabled >= 0) {
+        return cached_enabled;
+    }
+    cached_enabled = android_log_tag_debug_enabled(WSJTX3_CALLBACK_SLOT_LOG_TAG);
+    return cached_enabled;
+#else
+    return 0;
+#endif
+}
+
+void ft8cn_callback_slot_trace_sink(int active_context,
+                                    int explicit_context,
+                                    int callback_slot,
+                                    int result_count,
+                                    int mismatch) {
+#if defined(ANDROID)
+    if (!ft8cn_callback_slot_enabled()) {
+        return;
+    }
+    __android_log_print(
+            mismatch ? ANDROID_LOG_WARN : ANDROID_LOG_INFO,
+            WSJTX3_CALLBACK_SLOT_LOG_TAG,
+            "callbackRoute path=fixed-callback-slot slot=%d activeContext=%d explicitContext=%d "
+            "resultCount=%d mismatch=%d fallback=%s",
+            callback_slot,
+            active_context,
+            explicit_context,
+            result_count,
+            mismatch,
+            mismatch ? "active-context" : "no");
+#else
+    (void) active_context;
+    (void) explicit_context;
+    (void) callback_slot;
+    (void) result_count;
+    (void) mismatch;
 #endif
 }
 
