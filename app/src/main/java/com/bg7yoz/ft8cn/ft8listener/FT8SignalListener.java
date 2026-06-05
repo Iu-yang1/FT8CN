@@ -79,6 +79,7 @@ public class FT8SignalListener {
         final ArrayList<Ft8Message> messages = new ArrayList<>();
         int bridgeRawCount;
         int mergedCount;
+        long nativeDurationMs;
     }
     // The current WSJT-X bridge still routes callbacks through global active-context state.
     // Keep the batch decoder path serialized on the Java side until native callback routing
@@ -1031,6 +1032,7 @@ public class FT8SignalListener {
 
     private NativeBatchDecodeResult batchDecodeMessages(DecodeRequest request, float[] decoderInput) {
         NativeBatchDecodeResult result = new NativeBatchDecodeResult();
+        long nativeStartedAtMs = System.currentTimeMillis();
         long nativeHandle = acquirePersistentNativeDecoder(request.decodeMode, request.expectedSamples);
         if (nativeHandle == 0L) {
             Log.e(TAG, String.format(Locale.US,
@@ -1038,6 +1040,7 @@ public class FT8SignalListener {
                     FT8Common.modeToString(request.decodeMode),
                     request.profile.stageName,
                     request.expectedSamples));
+            result.nativeDurationMs = System.currentTimeMillis() - nativeStartedAtMs;
             return result;
         }
 
@@ -1066,6 +1069,7 @@ public class FT8SignalListener {
             result.bridgeRawCount = DecoderGetLastBridgeRawCount(nativeHandle);
             result.mergedCount = DecoderGetLastMergedCount(nativeHandle);
         }
+        result.nativeDurationMs = System.currentTimeMillis() - nativeStartedAtMs;
         if (nativeMessages == null) {
             return result;
         }
@@ -1217,6 +1221,50 @@ public class FT8SignalListener {
         return lastDecodeStatusSummary;
     }
 
+    private String buildDecodeBenchmarkSummary(DecodeRequest request,
+                                               float[] decoderInput,
+                                               NativeBatchDecodeResult nativeResult,
+                                               int publishedCount,
+                                               long startedAtMs,
+                                               long finishedAtMs,
+                                               long publishDurationMs,
+                                               String failureReason) {
+        String modeLabel = request.decodeMode == FT8Common.Q65_MODE
+                ? FT8Common.getQ65ModeLabel(request.q65Submode, request.q65TrPeriodSeconds)
+                : FT8Common.modeToString(request.decodeMode);
+        long queueDurationMs = Math.max(0L, startedAtMs - request.enqueueWallClockMs);
+        return String.format(Locale.US,
+                "decodeBenchmark mode=%s stage=%s profile[pass=%d round=%d qso=%d sens=%d wide=%s deep=%s] "
+                        + "input[sourceRate=%d expected=%d actual=%d] scheduler[%s] "
+                        + "result[raw=%d merged=%d nativeBatch=%d published=%d] "
+                        + "timing[queuedMs=%d nativeMs=%d publishMs=%d totalMs=%d deadline=no-deadline deadlineMissed=N] "
+                        + "reason=%s source=%s enqueueReason=%s utc=%d",
+                modeLabel,
+                request.profile.stageName,
+                request.profile.decodePassCount,
+                request.profile.multiDecodeRoundCount,
+                request.profile.qsoFreqSensitivity,
+                request.profile.decodeSensitivity,
+                request.profile.enableWidebandDxSearch ? "Y" : "N",
+                request.profile.useDeepSession ? "Y" : "N",
+                request.sourceSampleRate,
+                request.expectedSamples,
+                decoderInput == null ? 0 : decoderInput.length,
+                decodeScheduler.getStatusSummary(),
+                nativeResult.bridgeRawCount,
+                nativeResult.mergedCount,
+                nativeResult.messages.size(),
+                publishedCount,
+                queueDurationMs,
+                nativeResult.nativeDurationMs,
+                publishDurationMs,
+                Math.max(0L, finishedAtMs - startedAtMs),
+                failureReason,
+                request.sourceTag,
+                request.enqueueReason,
+                request.utc);
+    }
+
     public void setDecodeConcurrencyPolicy(DecodeConcurrencyPolicy concurrencyPolicy) {
         if (concurrencyPolicy == null) {
             return;
@@ -1314,7 +1362,7 @@ public class FT8SignalListener {
         ArrayList<Ft8Message> msgs = nativeResult.messages;
         ArrayList<Ft8Message> allMsg = new ArrayList<>(msgs);
 
-        timeSec = System.currentTimeMillis() - time;
+        long publishStartedAtMs = System.currentTimeMillis();
         int publishedCount = publishDecodeMessages(
                 request.utc,
                 slotTimeM,
@@ -1324,6 +1372,9 @@ public class FT8SignalListener {
                 request.profile.publishAsDeep,
                 request.profile.publishEmptyWhenSlotIsNew
         );
+        long finishedAtMs = System.currentTimeMillis();
+        long publishDurationMs = finishedAtMs - publishStartedAtMs;
+        timeSec = finishedAtMs - time;
 
         String diagnosticReason = buildDecodeDiagnosticReason(request, decoderInput, nativeResult, publishedCount);
         if (msgs.size() == 0 || publishedCount == 0) {
@@ -1348,16 +1399,16 @@ public class FT8SignalListener {
                     request.enqueueReason));
         }
 
-        lastDecodeStatusSummary = String.format(Locale.US,
-                "lastRx mode=%s stage=%s raw=%d merged=%d nativeBatch=%d published=%d durationMs=%d failureReason=%s",
-                FT8Common.modeToString(request.decodeMode),
-                request.profile.stageName,
-                nativeResult.bridgeRawCount,
-                nativeResult.mergedCount,
-                msgs.size(),
+        lastDecodeStatusSummary = buildDecodeBenchmarkSummary(
+                request,
+                decoderInput,
+                nativeResult,
                 publishedCount,
-                timeSec,
+                time,
+                finishedAtMs,
+                publishDurationMs,
                 "results-published".equals(diagnosticReason) ? "none" : diagnosticReason);
+        Log.i(TAG, lastDecodeStatusSummary);
 
         if (request.notifyFinished) {
             decodeTimeSec.postValue(timeSec);
