@@ -59,6 +59,13 @@ static int max_sample_seconds_for_mode(int decode_mode) {
     return decode_mode == FTX_MODE_Q65 ? kMaxQ65SampleSeconds : kMaxFt8LikeSampleSeconds;
 }
 
+static int expected_samples_for_mode(int decode_mode, int q65_tr_period_seconds) {
+    if (decode_mode == FTX_MODE_Q65) {
+        return kMaxSupportedRate * std::max(1, q65_tr_period_seconds);
+    }
+    return kMaxSupportedRate * (decode_mode == FTX_MODE_FT4 ? 8 : 15);
+}
+
 static std::string copy_jstring(JNIEnv *env, jstring value) {
     if (value == nullptr) {
         return {};
@@ -212,6 +219,8 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     const std::string mode_config = mode_config_label((int) decodeMode,
                                                       (int) q65Submode,
                                                       (int) q65TrPeriodSeconds);
+    const int expected_samples = expected_samples_for_mode((int) decodeMode,
+                                                           (int) q65TrPeriodSeconds);
 
     if (path.empty()) {
         append_line(&output, "error: wav path is empty");
@@ -237,11 +246,12 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     int sample_rate = 0;
     const int load_result = load_wav(samples.data(), &sample_count, &sample_rate, path.c_str());
     append_line(&output,
-                "input mode=%s path=%s load=%d sampleRate=%d sampleCount=%d maxSeconds=%d",
+                "input mode=%s path=%s load=%d sourceSampleRate=%d expectedSamples=%d actualSamples=%d maxSeconds=%d",
                 mode_label((int) decodeMode),
                 path.c_str(),
                 load_result,
                 sample_rate,
+                expected_samples,
                 sample_count,
                 max_sample_seconds_for_mode((int) decodeMode));
 
@@ -365,8 +375,21 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                 bridge_raw_count,
                 merged_count);
     append_line(&output,
-                "smoke summary mode=%s sampleCount=%d bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d javaPublishedCount=%d durationMs=%lld failureReason=%s",
+                "smoke summary path=%s mode=%s stage=diagnostic-sample "
+                "profile[pass=%d round=%d qso=%d sens=%d wide=%d deep=%d] "
+                "sourceSampleRate=%d expectedSamples=%d actualSamples=%d "
+                "bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d javaPublishedCount=%d "
+                "durationMs=%lld scheduler=direct-native-diagnostic failureReason=%s",
+                path.c_str(),
                 mode_config.c_str(),
+                decodePassCount,
+                multiDecodeRoundCount,
+                qsoFreqSensitivity,
+                decodeSensitivity,
+                enableWidebandDxSearch == JNI_TRUE ? 1 : 0,
+                deepDecodeEnabled == JNI_TRUE ? 1 : 0,
+                sample_rate,
+                expected_samples,
                 sample_count,
                 bridge_raw_count,
                 merged_count,
