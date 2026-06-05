@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -21,13 +22,129 @@
 
 #if defined(ANDROID)
 #include <android/log.h>
+#include <sys/system_properties.h>
 #define WSJTX3_LOG_TAG "WSJTX3Backend"
+#define WSJTX3_PHASE_LOG_TAG "WSJTX3Phase"
 #define WSJTX3_LOGI(...) __android_log_print(ANDROID_LOG_INFO, WSJTX3_LOG_TAG, __VA_ARGS__)
 #define WSJTX3_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, WSJTX3_LOG_TAG, __VA_ARGS__)
 #else
 #define WSJTX3_LOGI(...) ((void) 0)
 #define WSJTX3_LOGE(...) ((void) 0)
 #endif
+
+enum {
+    WSJTX3_TRACE_BRIDGE_ENTER = 1,
+    WSJTX3_TRACE_INPUT_CONVERT = 2,
+    WSJTX3_TRACE_FT8_DECODE = 3,
+    WSJTX3_TRACE_FT4_DECODE = 4,
+    WSJTX3_TRACE_Q65_FILES_OPEN = 5,
+    WSJTX3_TRACE_Q65_DECODE = 6,
+    WSJTX3_TRACE_Q65_FILES_CLOSE = 7,
+    WSJTX3_TRACE_CALLBACK_SUMMARY = 8,
+    WSJTX3_TRACE_BRIDGE_EXIT = 9
+};
+
+static int64_t monotonic_time_us(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return 0;
+    }
+    return (int64_t) now.tv_sec * 1000000LL + (int64_t) now.tv_nsec / 1000LL;
+}
+
+static const char *trace_phase_label(int phase) {
+    switch (phase) {
+        case WSJTX3_TRACE_BRIDGE_ENTER:
+            return "bridge.enter";
+        case WSJTX3_TRACE_INPUT_CONVERT:
+            return "bridge.input-convert";
+        case WSJTX3_TRACE_FT8_DECODE:
+            return "ft8.decoder-call";
+        case WSJTX3_TRACE_FT4_DECODE:
+            return "ft4.decoder-call";
+        case WSJTX3_TRACE_Q65_FILES_OPEN:
+            return "q65.files-open";
+        case WSJTX3_TRACE_Q65_DECODE:
+            return "q65.decoder-call";
+        case WSJTX3_TRACE_Q65_FILES_CLOSE:
+            return "q65.files-close";
+        case WSJTX3_TRACE_CALLBACK_SUMMARY:
+            return "callback.summary";
+        case WSJTX3_TRACE_BRIDGE_EXIT:
+            return "bridge.exit";
+        default:
+            return "unknown";
+    }
+}
+
+int ft8cn_native_phase_trace_enabled(void) {
+#if defined(ANDROID)
+    static int cached_enabled = -1;
+    char property_value[PROP_VALUE_MAX] = {0};
+    if (cached_enabled >= 0) {
+        return cached_enabled;
+    }
+    __system_property_get("log.tag." WSJTX3_PHASE_LOG_TAG, property_value);
+    cached_enabled = strcmp(property_value, "DEBUG") == 0
+            || strcmp(property_value, "VERBOSE") == 0
+            || strcmp(property_value, "D") == 0
+            || strcmp(property_value, "V") == 0;
+    return cached_enabled;
+#else
+    return 0;
+#endif
+}
+
+void ft8cn_native_phase_trace_sink(int handle,
+                                   int active_context,
+                                   int mode,
+                                   int phase,
+                                   long long utc_time,
+                                   int decode_pass_count,
+                                   int multi_decode_round_count,
+                                   int q65_submode,
+                                   int q65_tr_period,
+                                   int sample_count,
+                                   int result_count,
+                                   long long duration_us) {
+#if defined(ANDROID)
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            WSJTX3_PHASE_LOG_TAG,
+            "nativePhase layer=fortran phase=%s mode=%d handle=%d context=%d activeContext=%d "
+            "utc=%lld pass=%d round=%d q65Submode=%d q65TrPeriod=%d samples=%d "
+            "resultCount=%d durationUs=%lld",
+            trace_phase_label(phase),
+            mode,
+            handle,
+            handle,
+            active_context,
+            utc_time,
+            decode_pass_count,
+            multi_decode_round_count,
+            q65_submode,
+            q65_tr_period,
+            sample_count,
+            result_count,
+            duration_us);
+#else
+    (void) handle;
+    (void) active_context;
+    (void) mode;
+    (void) phase;
+    (void) utc_time;
+    (void) decode_pass_count;
+    (void) multi_decode_round_count;
+    (void) q65_submode;
+    (void) q65_tr_period;
+    (void) sample_count;
+    (void) result_count;
+    (void) duration_us;
+#endif
+}
 
 #ifndef FT8CN_ENABLE_WSJTX3_BACKEND
 #define FT8CN_ENABLE_WSJTX3_BACKEND 0
@@ -66,6 +183,7 @@ typedef struct {
     ft8_message session_results[kMax_decoded_messages];
     int session_result_count;
     uint8_t current_a91[FTX_LDPC_K_BYTES];
+    int64_t last_input_copy_us;
 } wsjtx3_backend_state_t;
 
 #if defined(_WIN32)
@@ -203,11 +321,24 @@ static int bridge_generate_q65_wave_locked(const char *message,
     return sample_count;
 }
 
-static int bridge_process_float_locked(int handle, const float *samples, int sample_count) {
+static int bridge_process_float_locked(int handle,
+                                       const float *samples,
+                                       int sample_count,
+                                       int64_t *lock_wait_us,
+                                       int64_t *process_us) {
     int bridge_count;
+    const int trace_enabled = wsjtx3_phase_trace_is_enabled();
+    const int64_t lock_started_us = trace_enabled ? monotonic_time_us() : 0;
     wsjtx3_bridge_lock();
+    const int64_t process_started_us = trace_enabled ? monotonic_time_us() : 0;
     bridge_count = wsjtx3_bridge_process_float(handle, samples, sample_count);
+    if (process_us != NULL) {
+        *process_us = trace_enabled ? monotonic_time_us() - process_started_us : 0;
+    }
     wsjtx3_bridge_unlock();
+    if (lock_wait_us != NULL) {
+        *lock_wait_us = trace_enabled ? process_started_us - lock_started_us : 0;
+    }
     return bridge_count;
 }
 
@@ -276,6 +407,54 @@ static const char *backend_mode_label(int mode) {
         default:
             return "UNKNOWN";
     }
+}
+
+static void backend_trace(const wsjtx3_backend_state_t *state,
+                          const char *phase,
+                          int pass_index,
+                          int pass_total,
+                          int sample_count,
+                          int raw_count,
+                          int merged_count,
+                          int64_t duration_us,
+                          int64_t lock_wait_us) {
+#if defined(ANDROID)
+    if (!wsjtx3_phase_trace_is_enabled()) {
+        return;
+    }
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            WSJTX3_PHASE_LOG_TAG,
+            "nativePhase layer=backend phase=%s mode=%s handle=%d context=%d utc=%lld "
+            "pass=%d/%d profilePass=%d profileRound=%d q65Submode=%d q65TrPeriod=%d "
+            "samples=%d raw=%d merged=%d durationUs=%lld lockWaitUs=%lld",
+            phase == NULL ? "unknown" : phase,
+            state == NULL ? "UNKNOWN" : backend_mode_label(state->mode),
+            state == NULL ? 0 : state->bridge_handle,
+            state == NULL ? 0 : state->bridge_handle,
+            state == NULL ? 0LL : (long long) state->utc_time,
+            pass_index,
+            pass_total,
+            state == NULL ? 0 : state->options.decode_pass_count,
+            state == NULL ? 0 : state->options.multi_decode_round_count,
+            state == NULL ? 0 : state->q65_submode,
+            state == NULL ? 0 : state->q65_tr_period_seconds,
+            sample_count,
+            raw_count,
+            merged_count,
+            (long long) duration_us,
+            (long long) lock_wait_us);
+#else
+    (void) state;
+    (void) phase;
+    (void) pass_index;
+    (void) pass_total;
+    (void) sample_count;
+    (void) raw_count;
+    (void) merged_count;
+    (void) duration_us;
+    (void) lock_wait_us;
+#endif
 }
 
 static int backend_default_expected_samples(int mode) {
@@ -742,6 +921,8 @@ static void push_bridge_options(const wsjtx3_backend_state_t *state,
 #if FT8CN_ENABLE_WSJTX3_BACKEND
     const wsjtx_decoder_options_t *effective_options = options;
     static const wsjtx_decoder_options_t default_options = {0};
+    const int trace_enabled = wsjtx3_phase_trace_is_enabled();
+    const int64_t started_us = trace_enabled ? monotonic_time_us() : 0;
 
     if (state == NULL || state->bridge_handle <= 0) {
         return;
@@ -768,6 +949,17 @@ static void push_bridge_options(const wsjtx3_backend_state_t *state,
     bridge_set_qso_frequencies_locked(state->bridge_handle,
                                       state->qso_frequency_hz,
                                       state->tx_frequency_hz);
+    if (trace_enabled) {
+        backend_trace(state,
+                      "backend.configure",
+                      0,
+                      0,
+                      state->last_sample_count,
+                      0,
+                      state->session_result_count,
+                      monotonic_time_us() - started_us,
+                      0);
+    }
 #else
     (void) state;
     (void) options;
@@ -829,9 +1021,14 @@ static int run_bridge_pass(wsjtx3_backend_state_t *state,
                            int pass_total) {
 #if FT8CN_ENABLE_WSJTX3_BACKEND
     const int merged_before = state->session_result_count;
+    const int trace_enabled = wsjtx3_phase_trace_is_enabled();
+    int64_t lock_wait_us = 0;
+    int64_t process_us = 0;
     const int bridge_count = bridge_process_float_locked(state->bridge_handle,
                                                          state->raw_samples,
-                                                         sample_count);
+                                                         sample_count,
+                                                         &lock_wait_us,
+                                                         &process_us);
 
     WSJTX3_LOGI("find_sync bridge pass=%s index=%d/%d handle=%d samples=%d bridgeCount=%d ldpc=%d passes=%d rounds=%d early=%d wideband=%d hisCall=%s",
                 pass_label == NULL ? "default" : pass_label,
@@ -847,7 +1044,28 @@ static int run_bridge_pass(wsjtx3_backend_state_t *state,
                 options != NULL && options->enable_wideband_dx_search ? 1 : 0,
                 his_call == NULL ? "" : his_call);
 
+    const int64_t merge_started_us = trace_enabled ? monotonic_time_us() : 0;
     merge_bridge_results(state, bridge_count);
+    if (trace_enabled) {
+        backend_trace(state,
+                      "backend.process",
+                      pass_index,
+                      pass_total,
+                      sample_count,
+                      bridge_count,
+                      state->session_result_count - merged_before,
+                      process_us,
+                      lock_wait_us);
+        backend_trace(state,
+                      "backend.merge",
+                      pass_index,
+                      pass_total,
+                      sample_count,
+                      bridge_count,
+                      state->session_result_count - merged_before,
+                      monotonic_time_us() - merge_started_us,
+                      0);
+    }
     WSJTX3_LOGI("find_sync merge pass=%s handle=%d rawBridgeCount=%d mergedCount=%d totalMerged=%d",
                 pass_label == NULL ? "default" : pass_label,
                 state->bridge_handle,
@@ -1125,6 +1343,8 @@ void wsjtx3_backend_free_decoder(decoder_t *decoder) {
 
 void wsjtx3_backend_monitor_press(decoder_t *decoder, const float *signal, int sample_count) {
     wsjtx3_backend_state_t *state = get_state(decoder);
+    const int trace_enabled = wsjtx3_phase_trace_is_enabled();
+    const int64_t started_us = trace_enabled ? monotonic_time_us() : 0;
     if (state == NULL || signal == NULL) {
         return;
     }
@@ -1143,6 +1363,18 @@ void wsjtx3_backend_monitor_press(decoder_t *decoder, const float *signal, int s
                (size_t) (state->raw_capacity - sample_count) * sizeof(float));
     }
     state->last_sample_count = sample_count;
+    state->last_input_copy_us = trace_enabled ? monotonic_time_us() - started_us : 0;
+    if (trace_enabled) {
+        backend_trace(state,
+                      "backend.input-copy",
+                      0,
+                      0,
+                      sample_count,
+                      0,
+                      0,
+                      state->last_input_copy_us,
+                      0);
+    }
 }
 
 int wsjtx3_backend_find_sync(decoder_t *decoder) {
@@ -1153,11 +1385,25 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
 
 #if FT8CN_ENABLE_WSJTX3_BACKEND
     int total_bridge_count;
+    const int trace_enabled = wsjtx3_phase_trace_is_enabled();
+    const int64_t started_us = trace_enabled ? monotonic_time_us() : 0;
     const int sample_count = state->last_sample_count > 0 ? state->last_sample_count : state->expected_samples;
 
     reset_backend_results(decoder, state);
     total_bridge_count = run_wsjtx3_session(decoder, state, sample_count);
-    return finalize_wsjtx3_session(decoder, state, total_bridge_count);
+    const int merged_count = finalize_wsjtx3_session(decoder, state, total_bridge_count);
+    if (trace_enabled) {
+        backend_trace(state,
+                      "backend.total",
+                      0,
+                      0,
+                      sample_count,
+                      total_bridge_count,
+                      merged_count,
+                      monotonic_time_us() - started_us,
+                      0);
+    }
+    return merged_count;
 #else
     (void) decoder;
     return 0;

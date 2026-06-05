@@ -107,6 +107,7 @@ $hostSupportFortranSources = @(
 )
 $hostSupportCSources = @(
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\shmem_stub.c'),
+    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\wsjtx3_phase_trace.c'),
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\android\fftw3f_kiss_shim.c'),
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\android\complex_math_shim.c'),
     (Join-Path $repoRoot 'app\src\main\cpp\fft\kiss_fft.c'),

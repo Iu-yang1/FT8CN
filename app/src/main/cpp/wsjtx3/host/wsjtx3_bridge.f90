@@ -23,6 +23,15 @@ module wsjtx3_bridge
   integer, parameter :: Q65_DECODE_MAX_HZ = 5000
   integer, parameter :: Q65_DEFAULT_TR_PERIOD = 60
   integer, parameter :: Q65_DEFAULT_SUBMODE = 0
+  integer, parameter :: TRACE_BRIDGE_ENTER = 1
+  integer, parameter :: TRACE_INPUT_CONVERT = 2
+  integer, parameter :: TRACE_FT8_DECODE = 3
+  integer, parameter :: TRACE_FT4_DECODE = 4
+  integer, parameter :: TRACE_Q65_FILES_OPEN = 5
+  integer, parameter :: TRACE_Q65_DECODE = 6
+  integer, parameter :: TRACE_Q65_FILES_CLOSE = 7
+  integer, parameter :: TRACE_CALLBACK_SUMMARY = 8
+  integer, parameter :: TRACE_BRIDGE_EXIT = 9
 
   type :: wsjtx3_result_t
      real(c_float) :: sync = 0.0
@@ -65,6 +74,8 @@ module wsjtx3_bridge
      character(len=12) :: his_call = ''
      character(len=6) :: his_grid = ''
      integer(c_int) :: result_count = 0
+     integer(c_int) :: trace_callback_count = 0
+     integer(c_int) :: trace_enabled = 0
      type(wsjtx3_result_t) :: results(WSJTX3_MAX_RESULTS)
   end type wsjtx3_context_t
 
@@ -98,9 +109,76 @@ module wsjtx3_bridge
        complex, intent(out) :: cwave(nwave)
        real, intent(out) :: wave(nwave)
      end subroutine genwave
+
+     integer(c_int) function wsjtx3_phase_trace_is_enabled() bind(C, name="wsjtx3_phase_trace_is_enabled")
+       import :: c_int
+     end function wsjtx3_phase_trace_is_enabled
+
+     subroutine wsjtx3_phase_trace_event(handle, active_context, mode, phase, utc_time, decode_pass_count, &
+          multi_decode_round_count, q65_submode, q65_tr_period, sample_count, result_count, duration_us) &
+          bind(C, name="wsjtx3_phase_trace_event")
+       import :: c_int, c_long_long
+       integer(c_int), value :: handle
+       integer(c_int), value :: active_context
+       integer(c_int), value :: mode
+       integer(c_int), value :: phase
+       integer(c_long_long), value :: utc_time
+       integer(c_int), value :: decode_pass_count
+       integer(c_int), value :: multi_decode_round_count
+       integer(c_int), value :: q65_submode
+       integer(c_int), value :: q65_tr_period
+       integer(c_int), value :: sample_count
+       integer(c_int), value :: result_count
+       integer(c_long_long), value :: duration_us
+     end subroutine wsjtx3_phase_trace_event
   end interface
 
 contains
+
+  logical function phase_trace_enabled()
+    phase_trace_enabled = wsjtx3_phase_trace_is_enabled() /= 0
+  end function phase_trace_enabled
+
+  integer(c_long_long) function phase_trace_now()
+    integer(c_long_long) :: count
+    if (.not. phase_trace_enabled()) then
+       phase_trace_now = 0
+       return
+    end if
+    call system_clock(count=count)
+    phase_trace_now = count
+  end function phase_trace_now
+
+  integer(c_long_long) function phase_trace_elapsed_us(started_at)
+    integer(c_long_long), intent(in) :: started_at
+    integer(c_long_long) :: finished_at
+    integer(c_long_long) :: count_rate
+    if (started_at <= 0) then
+       phase_trace_elapsed_us = 0
+       return
+    end if
+    call system_clock(count=finished_at, count_rate=count_rate)
+    if (count_rate <= 0) then
+       phase_trace_elapsed_us = 0
+       return
+    end if
+    phase_trace_elapsed_us = ((finished_at - started_at) * 1000000_c_long_long) / count_rate
+  end function phase_trace_elapsed_us
+
+  subroutine emit_phase_trace(handle, context, phase, sample_count, result_count, duration_us)
+    integer(c_int), intent(in) :: handle
+    type(wsjtx3_context_t), intent(in) :: context
+    integer(c_int), intent(in) :: phase
+    integer(c_int), intent(in) :: sample_count
+    integer(c_int), intent(in) :: result_count
+    integer(c_long_long), intent(in) :: duration_us
+    if (.not. phase_trace_enabled()) then
+       return
+    end if
+    call wsjtx3_phase_trace_event(handle, g_active_context, context%mode, phase, context%utc_time, &
+         context%decode_pass_count, context%multi_decode_round_count, context%q65_submode, &
+         context%q65_tr_period, sample_count, result_count, duration_us)
+  end subroutine emit_phase_trace
 
   logical function context_valid(handle)
     integer(c_int), intent(in) :: handle
@@ -155,6 +233,7 @@ contains
        return
     end if
     g_contexts(handle)%result_count = 0
+    g_contexts(handle)%trace_callback_count = 0
     do index = 1, WSJTX3_MAX_RESULTS
        g_contexts(handle)%results(index)%sync = 0.0
        g_contexts(handle)%results(index)%snr = 0
@@ -485,6 +564,9 @@ contains
     g_contexts(g_active_context)%results(next_index)%decoded = decoded
     g_contexts(g_active_context)%results(next_index)%nap = int(nap, kind=c_int)
     g_contexts(g_active_context)%results(next_index)%qual = real(qual, kind=c_float)
+    if (g_contexts(g_active_context)%trace_enabled /= 0) then
+       g_contexts(g_active_context)%trace_callback_count = g_contexts(g_active_context)%trace_callback_count + 1
+    end if
   end subroutine append_active_result
 
   subroutine wsjtx3_ft8_callback(this, sync, snr, dt, freq, decoded, nap, qual)
@@ -560,6 +642,8 @@ contains
     logical :: try_a8
     logical :: newdat_flag
     logical(kind=1) :: disk_data_flag
+    integer(c_long_long) :: trace_started_at
+    integer(c_int) :: result_count_before
 
     if (phase <= 0) then
        return
@@ -580,12 +664,18 @@ contains
        g_active_context = 0
     end if
 
+    result_count_before = g_contexts(handle)%result_count
+    trace_started_at = phase_trace_now()
     call g_ft8_decoders(handle)%decode(wsjtx3_ft8_callback, iwave, qso_progress, &
          context%qso_frequency_hz, context%tx_frequency_hz, newdat_flag, nutc, &
          FTX_DECODE_MIN_HZ, FT8_DECODE_MAX_HZ, &
          phase, ndepth, 0.0, 0, nagain, enable_ap, try_a8, .false., napwid, &
          context%my_call, context%his_call, context%his_grid, disk_data_flag)
 
+    call emit_phase_trace(handle, context, TRACE_FT8_DECODE, size(iwave), &
+         g_contexts(handle)%result_count - result_count_before, phase_trace_elapsed_us(trace_started_at))
+    call emit_phase_trace(handle, context, TRACE_CALLBACK_SUMMARY, size(iwave), &
+         g_contexts(handle)%trace_callback_count, 0_c_long_long)
     g_active_context = 0
   end subroutine call_ft8_decode_phase
 
@@ -651,29 +741,43 @@ contains
     integer(c_int) :: nqd
     integer(c_int) :: nutc
     integer(c_int) :: nqf(20)
+    integer(c_long_long) :: trace_started_at
+    integer(c_int) :: result_count_before
 
     full_samples = context%q65_tr_period * 12000
     if (sample_count < full_samples) then
        return
     end if
 
+    trace_started_at = phase_trace_now()
     open(17, file=trim(temp_dir)//'/red.dat', status='unknown')
     open(14, file=trim(temp_dir)//'/avemsg.txt', status='unknown')
+    call emit_phase_trace(handle, context, TRACE_Q65_FILES_OPEN, sample_count, &
+         g_contexts(handle)%result_count, phase_trace_elapsed_us(trace_started_at))
 
     navg0 = 0
     nqd = 1
     nqf = 0
     nutc = utc_millis_to_hhmmss(context%utc_time)
     g_active_context = handle
+    result_count_before = g_contexts(handle)%result_count
+    trace_started_at = phase_trace_now()
     call g_q65_decoders(handle)%decode(wsjtx3_q65_callback, iwave, nqd, nutc, context%q65_tr_period, &
          context%q65_submode, context%qso_frequency_hz, q65_ntol_from_context(context), &
          q65_ndepth_from_context(context), FTX_DECODE_MIN_HZ, Q65_DECODE_MAX_HZ, .true., .true., .true., &
          0_c_int, .true., q65_emedelay_from_context(context), context%my_call, context%his_call, &
          context%his_grid, qso_progress_from_context(context), 0_c_int, .false., navg0, nqf)
+    call emit_phase_trace(handle, context, TRACE_Q65_DECODE, sample_count, &
+         g_contexts(handle)%result_count - result_count_before, phase_trace_elapsed_us(trace_started_at))
+    call emit_phase_trace(handle, context, TRACE_CALLBACK_SUMMARY, sample_count, &
+         g_contexts(handle)%trace_callback_count, 0_c_long_long)
     g_active_context = 0
 
+    trace_started_at = phase_trace_now()
     close(17)
     close(14)
+    call emit_phase_trace(handle, context, TRACE_Q65_FILES_CLOSE, sample_count, &
+         g_contexts(handle)%result_count, phase_trace_elapsed_us(trace_started_at))
   end subroutine run_q65_decode_pipeline
 
   integer(c_int) function wsjtx3_bridge_generate_q65_wave(message, q65_submode, q65_tr_period, &
@@ -885,14 +989,20 @@ contains
     type(wsjtx3_context_t) :: context
     integer(c_int16_t), allocatable :: iwave(:)
     integer(c_int) :: max_samples
+    integer(c_int) :: result_count_before
+    integer(c_long_long) :: trace_total_started_at
+    integer(c_long_long) :: trace_phase_started_at
 
     wsjtx3_bridge_process_float = 0
     if (.not. context_valid(handle)) then
        return
     end if
 
+    g_contexts(handle)%trace_enabled = wsjtx3_phase_trace_is_enabled()
     context = g_contexts(handle)
     call reset_context_results(handle)
+    trace_total_started_at = phase_trace_now()
+    call emit_phase_trace(handle, context, TRACE_BRIDGE_ENTER, sample_count, 0_c_int, 0_c_long_long)
 
     if (context%sample_rate /= 12000 .or. sample_count <= 0) then
        return
@@ -904,21 +1014,30 @@ contains
        return
     end if
 
+    trace_phase_started_at = phase_trace_now()
     allocate(iwave(max_samples))
     iwave = 0
     do index = 1, copy_count
        iwave(index) = int(max(-32767.0_c_float, min(32767.0_c_float, samples(index) * 32767.0_c_float)), &
             kind=c_int16_t)
     end do
+    call emit_phase_trace(handle, context, TRACE_INPUT_CONVERT, copy_count, 0_c_int, &
+         phase_trace_elapsed_us(trace_phase_started_at))
 
     if (context_is_ft8(context)) then
        call run_ft8_decode_pipeline(handle, context, iwave, sample_count)
     else if (context_is_ft4(context)) then
        g_active_context = handle
+       result_count_before = g_contexts(handle)%result_count
+       trace_phase_started_at = phase_trace_now()
        call g_ft4_decoders(handle)%decode(wsjtx3_ft4_callback, iwave, qso_progress_from_context(context), &
             context%qso_frequency_hz, FTX_DECODE_MIN_HZ, FT4_DECODE_MAX_HZ, &
             ft4_ndepth_from_context(context, sample_count), .false., 0, &
             context%my_call, context%his_call)
+       call emit_phase_trace(handle, context, TRACE_FT4_DECODE, sample_count, &
+            g_contexts(handle)%result_count - result_count_before, phase_trace_elapsed_us(trace_phase_started_at))
+       call emit_phase_trace(handle, context, TRACE_CALLBACK_SUMMARY, sample_count, &
+            g_contexts(handle)%trace_callback_count, 0_c_long_long)
        g_active_context = 0
     else if (context_is_q65(context)) then
        call run_q65_decode_pipeline(handle, context, iwave, sample_count)
@@ -926,6 +1045,8 @@ contains
 
     wsjtx3_bridge_process_float = g_contexts(handle)%result_count
     deallocate(iwave)
+    call emit_phase_trace(handle, context, TRACE_BRIDGE_EXIT, sample_count, &
+         g_contexts(handle)%result_count, phase_trace_elapsed_us(trace_total_started_at))
   end function wsjtx3_bridge_process_float
 
   integer(c_int) function wsjtx3_bridge_get_result_count(handle) bind(C, name="wsjtx3_bridge_get_result_count")

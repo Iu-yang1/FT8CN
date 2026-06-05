@@ -24,6 +24,7 @@ endif ()
 # 继续避免把 Qt、旧模式 UI 和测试程序整包拖进来。
 set(WSJTX3_HOST_SUPPORT_SOURCES
         ${CMAKE_CURRENT_LIST_DIR}/shmem_stub.c
+        ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_phase_trace.c
         ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_bridge.f90
 )
 

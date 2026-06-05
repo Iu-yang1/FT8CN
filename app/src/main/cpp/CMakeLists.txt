@@ -123,6 +123,7 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/CMakeLists.txt"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_bridge.f90"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_host_support.f90"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_phase_trace.c"
             VERBATIM
     )
 

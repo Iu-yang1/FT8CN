@@ -51,6 +51,24 @@ int wsjtx3_bridge_get_result(int handle,
                              int index,
                              wsjtx3_bridge_decode_result_t *out_result);
 
+/*
+ * 仅用于诊断构建的轻量 phase tracing。Android 侧通过
+ * `setprop log.tag.WSJTX3Phase DEBUG` 开启，默认关闭。
+ */
+int wsjtx3_phase_trace_is_enabled(void);
+void wsjtx3_phase_trace_event(int handle,
+                              int active_context,
+                              int mode,
+                              int phase,
+                              long long utc_time,
+                              int decode_pass_count,
+                              int multi_decode_round_count,
+                              int q65_submode,
+                              int q65_tr_period,
+                              int sample_count,
+                              int result_count,
+                              long long duration_us);
+
 #ifdef __cplusplus
 }
 #endif
