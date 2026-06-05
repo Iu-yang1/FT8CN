@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <chrono>
+#include <android/log.h>
 
 extern "C" {
 #include "common/debug.h"
@@ -22,6 +24,18 @@ extern "C" {
 static const int SIGNAL_MODE_FT8 = 0;
 static const int SIGNAL_MODE_FT4 = 1;
 static const int SIGNAL_MODE_Q65 = 2;
+
+#ifndef NDEBUG
+#define FTX_JNI_BENCHMARK_LOG(...) \
+    __android_log_print(ANDROID_LOG_INFO, "FtxJniBenchmark", __VA_ARGS__)
+#else
+#define FTX_JNI_BENCHMARK_LOG(...) ((void) 0)
+#endif
+
+static long long elapsed_ms(std::chrono::steady_clock::time_point started_at) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started_at).count();
+}
 
 typedef struct {
     jclass messageClass;
@@ -580,6 +594,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
                                                                         jobjectArray hintGrids) {
     (void) thiz;
     (void) expectedSamples;
+    const auto total_started_at = std::chrono::steady_clock::now();
 
     auto *decoder = (ftx_decoder_t *) decoderHandle;
     if (decoder == nullptr || buffer == nullptr) {
@@ -627,10 +642,14 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
                                 : env->GetStringUTFChars(hintGridRefs[index], nullptr);
     }
     ftx_decoder_set_ap_hints(decoder, myCallBuffer, hintCalls, hintGridValues, (int) hintCount);
+    const long long setup_ms = elapsed_ms(total_started_at);
 
     jsize sampleCount = env->GetArrayLength(buffer);
+    const auto input_started_at = std::chrono::steady_clock::now();
     jfloat *samples = env->GetFloatArrayElements(buffer, nullptr);
+    const long long input_ms = elapsed_ms(input_started_at);
     int resultCount = -1;
+    const auto core_started_at = std::chrono::steady_clock::now();
     if (samples != nullptr && sampleCount > 0) {
         resultCount = ftx_decoder_process_float_slot(decoder,
                                                      samples,
@@ -640,6 +659,7 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
     } else if (samples != nullptr) {
         env->ReleaseFloatArrayElements(buffer, samples, JNI_ABORT);
     }
+    const long long core_ms = elapsed_ms(core_started_at);
 
     for (jsize index = 0; index < hintCount; ++index) {
         if (hintCalls[index] != nullptr) {
@@ -657,12 +677,19 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
     }
 
     if (resultCount < 0) {
+        FTX_JNI_BENCHMARK_LOG(
+                "decode-jni-benchmark mode=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=0 totalMs=%lld resultCount=%d",
+                decodeMode, sampleCount, setup_ms, input_ms, core_ms, elapsed_ms(total_started_at), resultCount);
         return nullptr;
     }
     if (resultCount == 0) {
+        FTX_JNI_BENCHMARK_LOG(
+                "decode-jni-benchmark mode=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=0 totalMs=%lld resultCount=0",
+                decodeMode, sampleCount, setup_ms, input_ms, core_ms, elapsed_ms(total_started_at));
         return env->NewObjectArray(0, g_ft8_message_jni_cache.messageClass, nullptr);
     }
 
+    const auto result_object_started_at = std::chrono::steady_clock::now();
     jobjectArray resultArray = env->NewObjectArray(resultCount,
                                                    g_ft8_message_jni_cache.messageClass,
                                                    nullptr);
@@ -688,6 +715,17 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
         env->DeleteLocalRef(messageObject);
     }
 
+    const long long result_object_ms = elapsed_ms(result_object_started_at);
+    FTX_JNI_BENCHMARK_LOG(
+            "decode-jni-benchmark mode=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=%lld totalMs=%lld resultCount=%d",
+            decodeMode,
+            sampleCount,
+            setup_ms,
+            input_ms,
+            core_ms,
+            result_object_ms,
+            elapsed_ms(total_started_at),
+            resultCount);
     return resultArray;
 }
 

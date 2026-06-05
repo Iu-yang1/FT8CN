@@ -80,6 +80,16 @@ public class FT8SignalListener {
         int bridgeRawCount;
         int mergedCount;
         long nativeDurationMs;
+        long decoderHandleMs;
+        long nativeLockWaitMs;
+        long decoderProcessMs;
+        long resultGetterMs;
+        long javaMessagePostProcessMs;
+    }
+    private static final class PublishDecodeResult {
+        int publishedCount;
+        long dedupeDurationMs;
+        long listenerCallbackDurationMs;
     }
     // The current WSJT-X bridge still routes callbacks through global active-context state.
     // Keep the batch decoder path serialized on the Java side until native callback routing
@@ -591,19 +601,23 @@ public class FT8SignalListener {
         return null;
     }
 
-    private int publishDecodeMessages(long utc,
-                                      int slotTimeM,
-                                      int decodeMode,
-                                      ArrayList<Ft8Message> messages,
-                                      ArrayList<Ft8Message> offsetMessages,
-                                      boolean isDeep,
-                                      boolean publishEmptyWhenSlotIsNew) {
+    private PublishDecodeResult publishDecodeMessages(long utc,
+                                                      int slotTimeM,
+                                                      int decodeMode,
+                                                      ArrayList<Ft8Message> messages,
+                                                      ArrayList<Ft8Message> offsetMessages,
+                                                      boolean isDeep,
+                                                      boolean publishEmptyWhenSlotIsNew) {
+        PublishDecodeResult result = new PublishDecodeResult();
+        long dedupeStartedAtMs = System.currentTimeMillis();
         SlotFilterResult filtered = filterNewSlotMessages(utc, decodeMode, messages);
+        result.dedupeDurationMs = System.currentTimeMillis() - dedupeStartedAtMs;
         if (filtered.messages.size() == 0 && (!publishEmptyWhenSlotIsNew || filtered.hadPublishedBefore)) {
-            return 0;
+            return result;
         }
 
         if (onFt8Listen != null) {
+            long callbackStartedAtMs = System.currentTimeMillis();
             onFt8Listen.afterDecode(
                     utc,
                     averageOffset(offsetMessages == null ? filtered.messages : offsetMessages),
@@ -611,8 +625,10 @@ public class FT8SignalListener {
                     filtered.messages,
                     isDeep
             );
+            result.listenerCallbackDurationMs = System.currentTimeMillis() - callbackStartedAtMs;
         }
-        return filtered.messages.size();
+        result.publishedCount = filtered.messages.size();
+        return result;
     }
 
     /**
@@ -826,7 +842,7 @@ public class FT8SignalListener {
         }
     }
 
-    private boolean shouldSkipScheduledDecode(DecodeRequest request) {
+    private String getScheduledDecodeSkipReason(DecodeRequest request) {
         long latestLiveUtc = getLatestScheduledLiveFullDecodeUtc(request.decodeMode);
         boolean skip = false;
         String reason = "keep";
@@ -852,12 +868,12 @@ public class FT8SignalListener {
                 isLiveFullDecodeRunning(request.decodeMode) ? "Y" : "N",
                 skip ? "Y" : "N",
                 reason));
-        return skip;
+        return skip ? reason : null;
     }
 
     private long getDecodeDeadlineMs(DecodeRequest request, DecodeStage stage) {
         if (stage == DecodeStage.DIAGNOSTIC_SAMPLE) {
-            return 0L;
+            return request.enqueueWallClockMs + 2000L;
         }
         if ("early".equals(request.profile.stageName)) {
             return request.enqueueWallClockMs + FT8Common.getEarlyDecodeTimeoutMs(request.decodeMode);
@@ -1043,7 +1059,9 @@ public class FT8SignalListener {
     private NativeBatchDecodeResult batchDecodeMessages(DecodeRequest request, float[] decoderInput) {
         NativeBatchDecodeResult result = new NativeBatchDecodeResult();
         long nativeStartedAtMs = System.currentTimeMillis();
+        long decoderHandleStartedAtMs = nativeStartedAtMs;
         long nativeHandle = acquirePersistentNativeDecoder(request.decodeMode, request.expectedSamples);
+        result.decoderHandleMs = System.currentTimeMillis() - decoderHandleStartedAtMs;
         if (nativeHandle == 0L) {
             Log.e(TAG, String.format(Locale.US,
                     "init batch decoder failed mode=%s stage=%s expectedSamples=%d",
@@ -1055,8 +1073,11 @@ public class FT8SignalListener {
         }
 
         Ft8Message[] nativeMessages;
+        long nativeLockRequestedAtMs = System.currentTimeMillis();
         synchronized (nativeBatchDecodeLock) {
+            result.nativeLockWaitMs = System.currentTimeMillis() - nativeLockRequestedAtMs;
             String[][] apHints = buildDecoderApHints();
+            long decoderProcessStartedAtMs = System.currentTimeMillis();
             nativeMessages = DecoderProcessBatch(
                     nativeHandle,
                     request.utc,
@@ -1076,14 +1097,18 @@ public class FT8SignalListener {
                     apHints[0],
                     apHints[1]
             );
+            result.decoderProcessMs = System.currentTimeMillis() - decoderProcessStartedAtMs;
+            long resultGetterStartedAtMs = System.currentTimeMillis();
             result.bridgeRawCount = DecoderGetLastBridgeRawCount(nativeHandle);
             result.mergedCount = DecoderGetLastMergedCount(nativeHandle);
+            result.resultGetterMs = System.currentTimeMillis() - resultGetterStartedAtMs;
         }
         result.nativeDurationMs = System.currentTimeMillis() - nativeStartedAtMs;
         if (nativeMessages == null) {
             return result;
         }
 
+        long javaMessagePostProcessStartedAtMs = System.currentTimeMillis();
         for (Ft8Message message : nativeMessages) {
             if (message == null) {
                 continue;
@@ -1094,6 +1119,7 @@ public class FT8SignalListener {
             message.isWeakSignal = request.profile.markWeakSignal;
             result.messages.add(message);
         }
+        result.javaMessagePostProcessMs = System.currentTimeMillis() - javaMessagePostProcessStartedAtMs;
         return result;
     }
 
@@ -1150,13 +1176,19 @@ public class FT8SignalListener {
                                 recordSkippedDecodeBenchmark(request, stage, "deadline-missed", startedAtMs);
                                 return;
                             }
-                            if (shouldSkipScheduledDecode(request)) {
+                            String scheduledSkipReason = getScheduledDecodeSkipReason(request);
+                            if (scheduledSkipReason != null) {
                                 Log.d(TAG, String.format(Locale.US,
                                         "skip stale decode stage=%s mode=%s utc=%d latestLiveUtc=%d",
                                         request.profile.stageName,
                                         FT8Common.modeToString(request.decodeMode),
                                         request.utc,
                                         getLatestScheduledLiveFullDecodeUtc(request.decodeMode)));
+                                recordSkippedDecodeBenchmark(
+                                        request,
+                                        stage,
+                                        scheduledSkipReason,
+                                        startedAtMs);
                                 return;
                             }
 
@@ -1245,7 +1277,8 @@ public class FT8SignalListener {
                                                int publishedCount,
                                                long startedAtMs,
                                                long finishedAtMs,
-                                               long publishDurationMs,
+                                               long prepareDurationMs,
+                                               PublishDecodeResult publishResult,
                                                String failureReason) {
         String modeLabel = request.decodeMode == FT8Common.Q65_MODE
                 ? FT8Common.getQ65ModeLabel(request.q65Submode, request.q65TrPeriodSeconds)
@@ -1256,7 +1289,9 @@ public class FT8SignalListener {
                 "decodeBenchmark mode=%s stage=%s profile[pass=%d round=%d qso=%d sens=%d wide=%s deep=%s] "
                         + "input[sourceRate=%d expected=%d actual=%d] scheduler[%s] "
                         + "result[raw=%d merged=%d nativeBatch=%d published=%d] "
-                        + "timing[queuedMs=%d nativeMs=%d publishMs=%d totalMs=%d deadlineMs=%d deadlineMissed=%s] "
+                        + "timing[queuedMs=%d prepareMs=%d nativeMs=%d nativeHandleMs=%d nativeLockWaitMs=%d "
+                        + "decoderProcessMs=%d resultGetterMs=%d javaMessagePostMs=%d dedupeMs=%d callbackMs=%d "
+                        + "publishMs=%d totalMs=%d startedAtMs=%d finishedAtMs=%d deadlineMs=%d deadlineMissed=%s] "
                         + "reason=%s source=%s enqueueReason=%s utc=%d",
                 modeLabel,
                 request.profile.stageName,
@@ -1275,9 +1310,19 @@ public class FT8SignalListener {
                 nativeResult.messages.size(),
                 publishedCount,
                 queueDurationMs,
+                prepareDurationMs,
                 nativeResult.nativeDurationMs,
-                publishDurationMs,
+                nativeResult.decoderHandleMs,
+                nativeResult.nativeLockWaitMs,
+                nativeResult.decoderProcessMs,
+                nativeResult.resultGetterMs,
+                nativeResult.javaMessagePostProcessMs,
+                publishResult.dedupeDurationMs,
+                publishResult.listenerCallbackDurationMs,
+                publishResult.dedupeDurationMs + publishResult.listenerCallbackDurationMs,
                 Math.max(0L, finishedAtMs - startedAtMs),
+                startedAtMs,
+                finishedAtMs,
                 request.deadlineMs,
                 deadlineMissed ? "Y" : "N",
                 failureReason,
@@ -1294,7 +1339,9 @@ public class FT8SignalListener {
                 "decodeBenchmark mode=%s stage=%s profile[pass=%d round=%d] "
                         + "input[sourceRate=%d expected=%d actual=%d] scheduler[%s] "
                         + "result[raw=0 merged=0 nativeBatch=0 published=0] "
-                        + "timing[queuedMs=%d nativeMs=0 publishMs=0 totalMs=0 deadlineMs=%d deadlineMissed=Y] "
+                        + "timing[queuedMs=%d prepareMs=0 nativeMs=0 nativeHandleMs=0 nativeLockWaitMs=0 "
+                        + "decoderProcessMs=0 resultGetterMs=0 javaMessagePostMs=0 dedupeMs=0 callbackMs=0 "
+                        + "publishMs=0 totalMs=0 startedAtMs=%d finishedAtMs=%d deadlineMs=%d deadlineMissed=Y] "
                         + "reason=%s source=%s enqueueReason=%s utc=%d",
                 request.decodeMode == FT8Common.Q65_MODE
                         ? FT8Common.getQ65ModeLabel(request.q65Submode, request.q65TrPeriodSeconds)
@@ -1307,6 +1354,8 @@ public class FT8SignalListener {
                 request.voiceData == null ? 0 : request.voiceData.length,
                 decodeScheduler.getStatusSummary(),
                 Math.max(0L, startedAtMs - request.enqueueWallClockMs),
+                startedAtMs,
+                startedAtMs,
                 request.deadlineMs,
                 reason,
                 request.sourceTag,
@@ -1339,12 +1388,14 @@ public class FT8SignalListener {
             onFt8Listen.beforeListen(request.utc);
         }
 
+        long prepareStartedAtMs = System.currentTimeMillis();
         final float[] decoderInput = resampleForDecoder(
                 request.voiceData,
                 request.sourceSampleRate,
                 request.decodeMode,
                 request.decodeStage
         );
+        final long prepareDurationMs = System.currentTimeMillis() - prepareStartedAtMs;
         if (decoderInput == null || decoderInput.length == 0) {
             Log.w(TAG, String.format(
                     "decode prepare failed: no usable decoder input, mode=%s, stage=%s, srcRate=%d",
@@ -1412,8 +1463,7 @@ public class FT8SignalListener {
         ArrayList<Ft8Message> msgs = nativeResult.messages;
         ArrayList<Ft8Message> allMsg = new ArrayList<>(msgs);
 
-        long publishStartedAtMs = System.currentTimeMillis();
-        int publishedCount = publishDecodeMessages(
+        PublishDecodeResult publishResult = publishDecodeMessages(
                 request.utc,
                 slotTimeM,
                 request.decodeMode,
@@ -1423,7 +1473,7 @@ public class FT8SignalListener {
                 request.profile.publishEmptyWhenSlotIsNew
         );
         long finishedAtMs = System.currentTimeMillis();
-        long publishDurationMs = finishedAtMs - publishStartedAtMs;
+        int publishedCount = publishResult.publishedCount;
         timeSec = finishedAtMs - time;
 
         String diagnosticReason = buildDecodeDiagnosticReason(request, decoderInput, nativeResult, publishedCount);
@@ -1456,7 +1506,8 @@ public class FT8SignalListener {
                 publishedCount,
                 time,
                 finishedAtMs,
-                publishDurationMs,
+                prepareDurationMs,
+                publishResult,
                 "results-published".equals(diagnosticReason) ? "none" : diagnosticReason);
         Log.i(TAG, lastDecodeStatusSummary);
 
