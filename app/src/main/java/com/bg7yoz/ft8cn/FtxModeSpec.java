@@ -132,7 +132,8 @@ public final class FtxModeSpec {
         if (slotDurationMs <= 0 || sampleRate <= 0) {
             return 0;
         }
-        return slotDurationMs * sampleRate / 1000;
+        long sampleCount = (long) slotDurationMs * sampleRate / 1000L;
+        return sampleCount > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) sampleCount;
     }
 
     public static FtxModeSpec forMode(int modeId) {
