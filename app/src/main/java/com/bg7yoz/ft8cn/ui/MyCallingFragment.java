@@ -30,7 +30,6 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
@@ -368,56 +367,23 @@ public class MyCallingFragment extends Fragment {
         if (emeTrackingDialog != null && emeTrackingDialog.isShowing()) {
             emeTrackingDialog.dismiss();
         }
-        LinearLayout root = new LinearLayout(requireContext());
-        root.setOrientation(LinearLayout.VERTICAL);
-        int padding = Math.round(getResources().getDisplayMetrics().density * 20.0f);
-        root.setPadding(padding, padding, padding, padding / 2);
-        ScrollView scrollView = new ScrollView(requireContext());
-        scrollView.setFillViewport(false);
-        scrollView.addView(root);
-
-        TextView headerView = new TextView(requireContext());
-        headerView.setTextSize(16.0f);
-        root.addView(headerView);
-
-        MoonSkyView moonSkyView = new MoonSkyView(requireContext());
-        root.addView(moonSkyView);
-
-        DopplerCorrectionView dopplerCorrectionView = new DopplerCorrectionView(requireContext());
-        root.addView(dopplerCorrectionView);
-
-        TextView statusView = new TextView(requireContext());
-        statusView.setPadding(0, padding / 2, 0, 0);
-        root.addView(statusView);
-
-        CheckBox useCurrentRigFrequencyCheckBox = new CheckBox(requireContext());
-        useCurrentRigFrequencyCheckBox.setText(R.string.eme_use_current_rig_frequency);
+        View panelView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_eme_tracking, null);
+        TextView headerView = panelView.findViewById(R.id.emeTrackingHeaderTextView);
+        MoonSkyView moonSkyView = panelView.findViewById(R.id.emeMoonSkyView);
+        DopplerCorrectionView dopplerCorrectionView = panelView.findViewById(R.id.emeDopplerCorrectionView);
+        TextView statusView = panelView.findViewById(R.id.emeTrackingStatusTextView);
+        CheckBox useCurrentRigFrequencyCheckBox =
+                panelView.findViewById(R.id.emeUseCurrentRigFrequencyCheckBox);
         useCurrentRigFrequencyCheckBox.setChecked(GeneralVariables.emeUseCurrentRigFrequency);
-        root.addView(useCurrentRigFrequencyCheckBox);
-
-        CheckBox allowTxCorrectionCheckBox = new CheckBox(requireContext());
-        allowTxCorrectionCheckBox.setText(R.string.eme_allow_correction_while_transmitting);
+        CheckBox allowTxCorrectionCheckBox =
+                panelView.findViewById(R.id.emeAllowTxCorrectionCheckBox);
         allowTxCorrectionCheckBox.setChecked(GeneralVariables.emeAllowCorrectionWhileTransmitting);
-        root.addView(allowTxCorrectionCheckBox);
-
-        EditText maxCorrectionEditor = new EditText(requireContext());
-        maxCorrectionEditor.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        maxCorrectionEditor.setHint(R.string.eme_max_correction_hint);
+        EditText maxCorrectionEditor = panelView.findViewById(R.id.emeMaxCorrectionEditText);
         maxCorrectionEditor.setText(String.format(Locale.US, "%.0f", GeneralVariables.emeMaxCorrectionHz));
-        root.addView(maxCorrectionEditor);
-
-        EditText minElevationEditor = new EditText(requireContext());
-        minElevationEditor.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
-                | InputType.TYPE_NUMBER_FLAG_SIGNED);
-        minElevationEditor.setHint(R.string.eme_min_elevation_hint);
+        EditText minElevationEditor = panelView.findViewById(R.id.emeMinElevationEditText);
         minElevationEditor.setText(String.format(Locale.US, "%.1f", GeneralVariables.emeMinElevationDeg));
-        root.addView(minElevationEditor);
-
-        EditText updateIntervalEditor = new EditText(requireContext());
-        updateIntervalEditor.setInputType(InputType.TYPE_CLASS_NUMBER);
-        updateIntervalEditor.setHint(R.string.eme_update_interval_hint);
+        EditText updateIntervalEditor = panelView.findViewById(R.id.emeUpdateIntervalEditText);
         updateIntervalEditor.setText(String.valueOf(GeneralVariables.emeUpdateIntervalSeconds));
-        root.addView(updateIntervalEditor);
 
         Runnable applyEditors = () -> {
             GeneralVariables.emeApplyMode = EmeAssistState.Mode.CAT_TRACKING;
@@ -505,7 +471,7 @@ public class MyCallingFragment extends Fragment {
 
         AlertDialog dialog = new AlertDialog.Builder(requireContext())
                 .setTitle(R.string.eme_tracking_title)
-                .setView(scrollView)
+                .setView(panelView)
                 .setPositiveButton(R.string.eme_tracking_start, null)
                 .setNegativeButton(R.string.eme_tracking_stop, null)
                 .setNeutralButton(R.string.eme_tracking_refresh, null)
