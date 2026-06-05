@@ -748,6 +748,22 @@ public class FT8SignalListener {
     }
 
     private DecodeProfile buildDecodeProfile(int decodeMode, int decodeStage, boolean deepSupplement) {
+        if (decodeMode == FT8Common.Q65_MODE) {
+            return new DecodeProfile(
+                    "live",
+                    1,
+                    1,
+                    clampInt(GeneralVariables.wsjtxQsoFreqSensitivity, 0, 1),
+                    1,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    false
+            );
+        }
         if (deepSupplement) {
             return new DecodeProfile(
                     "deep",
