@@ -493,6 +493,22 @@ public final class EmeAssistController {
         }
 
         EmeRigControlAdapter rigAdapter = environment.getRigControlAdapter();
+        EmeTrackingResult previousResult = trackingResult;
+        if (previousResult.catResult != null
+                && previousResult.catResult.reason.contains("local-cache-may-be-stale")) {
+            Log.w(TAG, "EME tracking paused for one tick: reason=rig-frequency-cache-stale previousCat="
+                    + previousResult.catResult.toSummary());
+            return buildTrackingResult(
+                    EmeTrackingStatus.PAUSED,
+                    "rig-frequency-cache-stale",
+                    rigAdapter,
+                    previousResult.frequencySource,
+                    previousResult.currentFrequencyHz,
+                    previousResult.rawCorrectionHz,
+                    0.0,
+                    state.moonEphemeris,
+                    nowMillis);
+        }
         if (rigAdapter == null || !rigAdapter.isAvailable()) {
             return buildTrackingResult(
                     EmeTrackingStatus.PAUSED,
