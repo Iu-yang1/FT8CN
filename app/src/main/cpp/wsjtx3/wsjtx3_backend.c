@@ -41,7 +41,14 @@ enum {
     WSJTX3_TRACE_Q65_DECODE = 6,
     WSJTX3_TRACE_Q65_FILES_CLOSE = 7,
     WSJTX3_TRACE_CALLBACK_SUMMARY = 8,
-    WSJTX3_TRACE_BRIDGE_EXIT = 9
+    WSJTX3_TRACE_BRIDGE_EXIT = 9,
+    WSJTX3_TRACE_FT8_SYNC_SEARCH = 101,
+    WSJTX3_TRACE_FT8_CANDIDATE_DECODE = 102,
+    WSJTX3_TRACE_FT8_PASS_TOTAL = 103,
+    WSJTX3_TRACE_Q65_DEC0 = 201,
+    WSJTX3_TRACE_Q65_ANA64 = 202,
+    WSJTX3_TRACE_Q65_LOOPS = 203,
+    WSJTX3_TRACE_Q65_CANDIDATE_LOOP = 204
 };
 
 static int64_t monotonic_time_us(void) {
@@ -72,9 +79,82 @@ static const char *trace_phase_label(int phase) {
             return "callback.summary";
         case WSJTX3_TRACE_BRIDGE_EXIT:
             return "bridge.exit";
+        case WSJTX3_TRACE_FT8_SYNC_SEARCH:
+            return "ft8.vendor.sync-search";
+        case WSJTX3_TRACE_FT8_CANDIDATE_DECODE:
+            return "ft8.vendor.candidate-decode";
+        case WSJTX3_TRACE_FT8_PASS_TOTAL:
+            return "ft8.vendor.pass-total";
+        case WSJTX3_TRACE_Q65_DEC0:
+            return "q65.vendor.dec0";
+        case WSJTX3_TRACE_Q65_ANA64:
+            return "q65.vendor.ana64";
+        case WSJTX3_TRACE_Q65_LOOPS:
+            return "q65.vendor.loops";
+        case WSJTX3_TRACE_Q65_CANDIDATE_LOOP:
+            return "q65.vendor.candidate-loop";
         default:
             return "unknown";
     }
+}
+
+int ft8cn_native_phase_trace_enabled(void);
+
+void ft8cn_vendor_phase_trace_sink(int handle,
+                                   int active_context,
+                                   int mode,
+                                   int phase,
+                                   long long utc_time,
+                                   int decode_pass_count,
+                                   int multi_decode_round_count,
+                                   int q65_submode,
+                                   int q65_tr_period,
+                                   int sample_count,
+                                   int pass_index,
+                                   int candidate_count,
+                                   int decoded_count,
+                                   long long duration_us) {
+#if defined(ANDROID)
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            WSJTX3_PHASE_LOG_TAG,
+            "vendorPhase phase=%s mode=%d handle=%d context=%d activeContext=%d utc=%lld "
+            "profilePass=%d profileRound=%d pass=%d candidates=%d decoded=%d "
+            "q65Submode=%d q65TrPeriod=%d samples=%d durationUs=%lld",
+            trace_phase_label(phase),
+            mode,
+            handle,
+            handle,
+            active_context,
+            utc_time,
+            decode_pass_count,
+            multi_decode_round_count,
+            pass_index,
+            candidate_count,
+            decoded_count,
+            q65_submode,
+            q65_tr_period,
+            sample_count,
+            duration_us);
+#else
+    (void) handle;
+    (void) active_context;
+    (void) mode;
+    (void) phase;
+    (void) utc_time;
+    (void) decode_pass_count;
+    (void) multi_decode_round_count;
+    (void) q65_submode;
+    (void) q65_tr_period;
+    (void) sample_count;
+    (void) pass_index;
+    (void) candidate_count;
+    (void) decoded_count;
+    (void) duration_us;
+#endif
 }
 
 int ft8cn_native_phase_trace_enabled(void) {

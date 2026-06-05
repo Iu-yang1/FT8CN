@@ -131,6 +131,19 @@ module wsjtx3_bridge
        integer(c_int), value :: result_count
        integer(c_long_long), value :: duration_us
      end subroutine wsjtx3_phase_trace_event
+
+     subroutine wsjtx3_vendor_trace_set_context(handle, active_context, mode, utc_time, decode_pass_count, &
+          multi_decode_round_count, q65_submode, q65_tr_period, sample_count) &
+          bind(C, name="wsjtx3_vendor_trace_set_context")
+       import :: c_int, c_long_long
+       integer(c_int), value :: handle, active_context, mode
+       integer(c_long_long), value :: utc_time
+       integer(c_int), value :: decode_pass_count, multi_decode_round_count
+       integer(c_int), value :: q65_submode, q65_tr_period, sample_count
+     end subroutine wsjtx3_vendor_trace_set_context
+
+     subroutine wsjtx3_vendor_trace_clear_context() bind(C, name="wsjtx3_vendor_trace_clear_context")
+     end subroutine wsjtx3_vendor_trace_clear_context
   end interface
 
 contains
@@ -666,11 +679,15 @@ contains
 
     result_count_before = g_contexts(handle)%result_count
     trace_started_at = phase_trace_now()
+    call wsjtx3_vendor_trace_set_context(handle, g_active_context, context%mode, context%utc_time, &
+         context%decode_pass_count, context%multi_decode_round_count, context%q65_submode, &
+         context%q65_tr_period, size(iwave))
     call g_ft8_decoders(handle)%decode(wsjtx3_ft8_callback, iwave, qso_progress, &
          context%qso_frequency_hz, context%tx_frequency_hz, newdat_flag, nutc, &
          FTX_DECODE_MIN_HZ, FT8_DECODE_MAX_HZ, &
          phase, ndepth, 0.0, 0, nagain, enable_ap, try_a8, .false., napwid, &
          context%my_call, context%his_call, context%his_grid, disk_data_flag)
+    call wsjtx3_vendor_trace_clear_context()
 
     call emit_phase_trace(handle, context, TRACE_FT8_DECODE, size(iwave), &
          g_contexts(handle)%result_count - result_count_before, phase_trace_elapsed_us(trace_started_at))
@@ -762,11 +779,15 @@ contains
     g_active_context = handle
     result_count_before = g_contexts(handle)%result_count
     trace_started_at = phase_trace_now()
+    call wsjtx3_vendor_trace_set_context(handle, g_active_context, context%mode, context%utc_time, &
+         context%decode_pass_count, context%multi_decode_round_count, context%q65_submode, &
+         context%q65_tr_period, sample_count)
     call g_q65_decoders(handle)%decode(wsjtx3_q65_callback, iwave, nqd, nutc, context%q65_tr_period, &
          context%q65_submode, context%qso_frequency_hz, q65_ntol_from_context(context), &
          q65_ndepth_from_context(context), FTX_DECODE_MIN_HZ, Q65_DECODE_MAX_HZ, .true., .true., .true., &
          0_c_int, .true., q65_emedelay_from_context(context), context%my_call, context%his_call, &
          context%his_grid, qso_progress_from_context(context), 0_c_int, .false., navg0, nqf)
+    call wsjtx3_vendor_trace_clear_context()
     call emit_phase_trace(handle, context, TRACE_Q65_DECODE, sample_count, &
          g_contexts(handle)%result_count - result_count_before, phase_trace_elapsed_us(trace_started_at))
     call emit_phase_trace(handle, context, TRACE_CALLBACK_SUMMARY, sample_count, &

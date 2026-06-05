@@ -68,6 +68,21 @@ void wsjtx3_phase_trace_event(int handle,
                               int sample_count,
                               int result_count,
                               long long duration_us);
+void wsjtx3_vendor_trace_set_context(int handle,
+                                     int active_context,
+                                     int mode,
+                                     long long utc_time,
+                                     int decode_pass_count,
+                                     int multi_decode_round_count,
+                                     int q65_submode,
+                                     int q65_tr_period,
+                                     int sample_count);
+void wsjtx3_vendor_trace_clear_context(void);
+void wsjtx3_vendor_trace_event(int phase,
+                               int pass_index,
+                               int candidate_count,
+                               int decoded_count,
+                               long long duration_us);
 
 #ifdef __cplusplus
 }
