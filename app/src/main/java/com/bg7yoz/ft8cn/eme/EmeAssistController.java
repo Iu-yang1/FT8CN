@@ -4,6 +4,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import androidx.lifecycle.LiveData;
+import androidx.lifecycle.MutableLiveData;
+
 import java.util.Locale;
 
 public final class EmeAssistController {
@@ -28,10 +31,11 @@ public final class EmeAssistController {
             "disabled");
     private volatile EmeTrackingResult trackingResult =
             EmeTrackingResult.off("disabled", 0L);
+    private final MutableLiveData<EmeTrackingResult> trackingResultLiveData =
+            new MutableLiveData<>(trackingResult);
     private volatile boolean trackingActive = false;
     private EmeTrackingEnvironment trackingEnvironment;
     private EmeTrackingPolicy trackingPolicy;
-    private Runnable trackingUpdateCallback;
     private final Runnable trackingRunnable = new Runnable() {
         @Override
         public void run() {
@@ -47,22 +51,20 @@ public final class EmeAssistController {
         return trackingResult;
     }
 
+    public LiveData<EmeTrackingResult> getTrackingResultLiveData() {
+        return trackingResultLiveData;
+    }
+
     public boolean isTrackingActive() {
         return trackingActive;
     }
 
-    public synchronized void setTrackingUpdateCallback(Runnable updateCallback) {
-        trackingUpdateCallback = updateCallback;
-    }
-
     public synchronized void startEmeTracking(EmeTrackingEnvironment environment,
-                                              EmeTrackingPolicy policy,
-                                              Runnable updateCallback) {
+                                              EmeTrackingPolicy policy) {
         trackingEnvironment = environment;
         trackingPolicy = policy;
-        trackingUpdateCallback = updateCallback;
         trackingActive = true;
-        trackingResult = new EmeTrackingResult(
+        publishTrackingResult(new EmeTrackingResult(
                 EmeTrackingStatus.ARMED,
                 "armed",
                 "-",
@@ -79,7 +81,7 @@ public final class EmeAssistController {
                 Double.NaN,
                 Double.NaN,
                 null,
-                System.currentTimeMillis());
+                System.currentTimeMillis()));
         trackingHandler.removeCallbacks(trackingRunnable);
         trackingHandler.post(trackingRunnable);
     }
@@ -87,13 +89,13 @@ public final class EmeAssistController {
     public synchronized void stopEmeTracking(String reason) {
         trackingActive = false;
         trackingHandler.removeCallbacks(trackingRunnable);
-        trackingResult = EmeTrackingResult.off(reason == null ? "stopped" : reason, System.currentTimeMillis());
-        notifyTrackingUpdated();
+        publishTrackingResult(EmeTrackingResult.off(
+                reason == null ? "stopped" : reason,
+                System.currentTimeMillis()));
         Log.i(TAG, "EME tracking stopped: " + trackingResult.toSummary());
     }
 
     public synchronized void releaseEmeTracking() {
-        trackingUpdateCallback = null;
         stopEmeTracking("released");
         trackingEnvironment = null;
         trackingPolicy = null;
@@ -453,9 +455,8 @@ public final class EmeAssistController {
             return;
         }
         EmeTrackingPolicy policy = trackingPolicy;
-        trackingResult = runTrackingTick(System.currentTimeMillis(), trackingEnvironment, policy);
+        publishTrackingResult(runTrackingTick(System.currentTimeMillis(), trackingEnvironment, policy));
         Log.i(TAG, "EME tracking tick: " + trackingResult.toSummary());
-        notifyTrackingUpdated();
         if (trackingActive) {
             long intervalMs = policy == null ? 10_000L : Math.max(1000L, policy.updateIntervalSeconds * 1000L);
             trackingHandler.postDelayed(trackingRunnable, intervalMs);
@@ -672,11 +673,11 @@ public final class EmeAssistController {
                 nowMillis);
     }
 
-    private void notifyTrackingUpdated() {
-        Runnable callback = trackingUpdateCallback;
-        if (callback != null) {
-            callback.run();
-        }
+    private void publishTrackingResult(EmeTrackingResult result) {
+        trackingResult = result == null
+                ? EmeTrackingResult.off("result-unavailable", System.currentTimeMillis())
+                : result;
+        trackingResultLiveData.postValue(trackingResult);
     }
 
     private long resolveTrackingFrequencyHz(EmeTrackingEnvironment environment,

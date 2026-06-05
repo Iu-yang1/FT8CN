@@ -54,9 +54,7 @@ import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.cq.CqCallEntry;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
 import com.bg7yoz.ft8cn.eme.EmeAssistState;
-import com.bg7yoz.ft8cn.eme.EmeDopplerCalculator;
 import com.bg7yoz.ft8cn.eme.EmeRigControlAdapter;
-import com.bg7yoz.ft8cn.eme.EmeRigControlResult;
 import com.bg7yoz.ft8cn.eme.EmeTrackingEnvironment;
 import com.bg7yoz.ft8cn.eme.EmeTrackingPolicy;
 import com.bg7yoz.ft8cn.eme.EmeTrackingResult;
@@ -86,7 +84,7 @@ public class MyCallingFragment extends Fragment {
     private boolean updatingSignalModeUi = false;
     private AlertDialog emeTrackingDialog;
     private boolean emeTrackingDialogAlive = false;
-    private Runnable emeTrackingUiCallback;
+    private Runnable emeTrackingPanelRefreshAction;
 
     private static final class FragmentSafeEmeTrackingEnvironment implements EmeTrackingEnvironment {
         private final WeakReference<MainViewModel> viewModelRef;
@@ -313,37 +311,6 @@ public class MyCallingFragment extends Fragment {
         mainViewModel.databaseOpr.writeConfig(key, value, null);
     }
 
-    private EmeAssistState.Mode[] getEmeApplyModes() {
-        return new EmeAssistState.Mode[]{
-                EmeAssistState.Mode.DISPLAY_ONLY,
-                EmeAssistState.Mode.CAT_MANUAL_APPLY,
-                EmeAssistState.Mode.CAT_TRACKING,
-                EmeAssistState.Mode.AUDIO_OFFSET_PREVIEW
-        };
-    }
-
-    private String getEmeApplyModeLabel(EmeAssistState.Mode mode) {
-        if (mode == EmeAssistState.Mode.CAT_MANUAL_APPLY) {
-            return getString(R.string.eme_apply_mode_cat_manual);
-        }
-        if (mode == EmeAssistState.Mode.CAT_TRACKING) {
-            return getString(R.string.eme_apply_mode_cat_tracking_guarded);
-        }
-        if (mode == EmeAssistState.Mode.AUDIO_OFFSET_PREVIEW) {
-            return getString(R.string.eme_apply_mode_audio_preview);
-        }
-        return getString(R.string.eme_apply_mode_display_only);
-    }
-
-    private int getEmeApplyModeIndex(EmeAssistState.Mode[] modes, EmeAssistState.Mode mode) {
-        for (int index = 0; index < modes.length; ++index) {
-            if (modes[index] == mode) {
-                return index;
-            }
-        }
-        return 0;
-    }
-
     private EmeAssistState updateEmePreview(boolean enabled, EmeAssistState.Mode mode) {
         return mainViewModel.emeAssistController.updateCorrectionPreview(
                 GeneralVariables.getMyMaidenheadGrid(),
@@ -373,13 +340,10 @@ public class MyCallingFragment extends Fragment {
         return new FragmentSafeEmeTrackingEnvironment(mainViewModel);
     }
 
-    private void detachEmeTrackingUiCallback(String reason) {
-        Log.i(TAG, "detach EME tracking UI callback: reason=" + reason);
+    private void detachEmeTrackingPanel(String reason) {
+        Log.i(TAG, "detach EME tracking panel: reason=" + reason);
         emeTrackingDialogAlive = false;
-        emeTrackingUiCallback = null;
-        if (mainViewModel != null && mainViewModel.emeAssistController != null) {
-            mainViewModel.emeAssistController.setTrackingUpdateCallback(null);
-        }
+        emeTrackingPanelRefreshAction = null;
     }
 
     private void saveEmeTrackingConfig() {
@@ -391,44 +355,6 @@ public class MyCallingFragment extends Fragment {
         writeEmeConfig("emeAllowCorrectionWhileTransmitting",
                 GeneralVariables.emeAllowCorrectionWhileTransmitting ? "1" : "0");
         writeEmeConfig("emeApplyMode", EmeAssistState.Mode.CAT_TRACKING.name());
-    }
-
-    private String formatEmeAssistDialogText(boolean enabled) {
-        EmeAssistState emeState = updateEmePreview(enabled, GeneralVariables.emeApplyMode);
-        if (emeState == null) {
-            return getString(R.string.eme_assist_status_unavailable);
-        }
-        if (!enabled) {
-            return getString(R.string.eme_assist_status_disabled);
-        }
-        if (emeState.moonEphemeris == null || !emeState.moonEphemeris.available) {
-            return getString(
-                    R.string.eme_assist_dialog_error,
-                    emeState.statusText);
-        }
-        double txCorrectionHz = EmeDopplerCalculator.calculateTxCorrectionHz(
-                emeState.sourceFrequencyHz,
-                emeState.moonEphemeris.rangeRateMps);
-        String horizon = emeState.moonEphemeris.elevationDeg < 0.0 ? " below horizon" : "";
-        return String.format(
-                Locale.US,
-                "Apply mode: %s\nGrid: %s  Lat/Lon: %.4f, %.4f\nMoon Az: %.1f deg  El: %.1f deg%s\nDistance: %.0f km  Range rate: %.2f m/s\nSource frequency: %d Hz\nRX Doppler: %.1f Hz  TX Doppler: %.1f Hz\nCorrected frequency preview: %d Hz\nLast CAT applied: %d Hz\nLast update: %s\nStatus: %s",
-                getEmeApplyModeLabel(emeState.mode),
-                emeState.observerLocation == null ? "-" : emeState.observerLocation.grid,
-                emeState.observerLocation == null ? Double.NaN : emeState.observerLocation.latitudeDeg,
-                emeState.observerLocation == null ? Double.NaN : emeState.observerLocation.longitudeDeg,
-                emeState.moonEphemeris.azimuthDeg,
-                emeState.moonEphemeris.elevationDeg,
-                horizon,
-                emeState.moonEphemeris.distanceKm,
-                emeState.moonEphemeris.rangeRateMps,
-                emeState.sourceFrequencyHz,
-                emeState.lastDopplerHz,
-                txCorrectionHz,
-                emeState.targetFrequencyHz,
-                emeState.lastAppliedRigFrequencyHz,
-                UtcTimer.getDatetimeStr(emeState.moonEphemeris.validTimeMillis),
-                emeState.statusText);
     }
 
     private void showEmeAssistDialog() {
@@ -575,7 +501,7 @@ public class MyCallingFragment extends Fragment {
             updateEmeAssistButtonUi();
             updateAutoSessionStatus();
         };
-        emeTrackingUiCallback = refreshPanel;
+        emeTrackingPanelRefreshAction = refreshPanel;
 
         AlertDialog dialog = new AlertDialog.Builder(requireContext())
                 .setTitle(R.string.eme_tracking_title)
@@ -587,7 +513,7 @@ public class MyCallingFragment extends Fragment {
         emeTrackingDialog = dialog;
         dialog.setOnDismissListener(dialogInterface -> {
             Log.i(TAG, "EME tracking dialog dismissed");
-            detachEmeTrackingUiCallback("dialog-dismiss");
+            detachEmeTrackingPanel("dialog-dismiss");
         });
         dialog.setOnShowListener(dialogInterface -> {
             emeTrackingDialogAlive = true;
@@ -599,8 +525,7 @@ public class MyCallingFragment extends Fragment {
                 Log.i(TAG, "start EME tracking from dialog");
                 mainViewModel.emeAssistController.startEmeTracking(
                         buildEmeTrackingEnvironment(),
-                        buildEmeTrackingPolicy(true),
-                        emeTrackingUiCallback);
+                        buildEmeTrackingPolicy(true));
                 refreshPanel.run();
             });
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view -> {
@@ -1153,32 +1078,20 @@ public class MyCallingFragment extends Fragment {
 
     private String buildEmeAssistStatusText() {
         if (mainViewModel == null || mainViewModel.emeAssistController == null) {
-            return "Display only: unavailable";
+            return "Tracking: unavailable";
         }
-        EmeAssistState emeState = updateEmePreview(
-                GeneralVariables.emeAssistEnabled,
-                GeneralVariables.emeApplyMode);
-        if (emeState == null || emeState.moonEphemeris == null || !emeState.moonEphemeris.available) {
-            return getEmeApplyModeLabel(GeneralVariables.emeApplyMode)
-                    + ": "
-                    + (emeState == null ? "unavailable" : emeState.statusText);
-        }
-        double txCorrectionHz = EmeDopplerCalculator.calculateTxCorrectionHz(
-                emeState.sourceFrequencyHz,
-                emeState.moonEphemeris.rangeRateMps);
+        EmeTrackingResult result = mainViewModel.emeAssistController.getTrackingResult();
         return String.format(
                 Locale.US,
-                "%s grid=%s Az %.1f El %.1f Dist %.0fkm dR %.2fm/s RX %.1fHz TX %.1fHz target %dHz lastCAT %dHz",
-                getEmeApplyModeLabel(emeState.mode),
-                emeState.observerLocation == null ? "-" : emeState.observerLocation.grid,
-                emeState.moonEphemeris.azimuthDeg,
-                emeState.moonEphemeris.elevationDeg,
-                emeState.moonEphemeris.distanceKm,
-                emeState.moonEphemeris.rangeRateMps,
-                emeState.lastDopplerHz,
-                txCorrectionHz,
-                emeState.targetFrequencyHz,
-                emeState.lastAppliedRigFrequencyHz);
+                "Tracking %s Az %.1f El %.1f dR %.2fm/s RX %.1fHz TX %.1fHz target %dHz reason=%s",
+                result.status,
+                result.moonAzimuthDeg,
+                result.moonElevationDeg,
+                result.rangeRateMps,
+                result.rxDopplerHz,
+                result.txDopplerHz,
+                result.targetFrequencyHz,
+                result.reason);
     }
 
     private void initCqQueuePanel() {
@@ -1820,9 +1733,28 @@ public class MyCallingFragment extends Fragment {
     }
 
     @Override
+    public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+        mainViewModel.emeAssistController.getTrackingResultLiveData().observe(
+                getViewLifecycleOwner(),
+                result -> {
+                    if (binding == null) {
+                        Log.i(TAG, "skip EME tracking observer update: reason=binding-null");
+                        return;
+                    }
+                    updateEmeAssistButtonUi();
+                    updateAutoSessionStatus();
+                    Runnable refreshAction = emeTrackingPanelRefreshAction;
+                    if (refreshAction != null) {
+                        refreshAction.run();
+                    }
+                });
+    }
+
+    @Override
     public void onDestroyView() {
-        Log.i(TAG, "MyCallingFragment onDestroyView: detach EME tracking UI");
-        detachEmeTrackingUiCallback("fragment-destroy-view");
+        Log.i(TAG, "MyCallingFragment onDestroyView: detach EME tracking panel");
+        detachEmeTrackingPanel("fragment-destroy-view");
         if (emeTrackingDialog != null) {
             emeTrackingDialog.setOnDismissListener(null);
             if (emeTrackingDialog.isShowing()) {
