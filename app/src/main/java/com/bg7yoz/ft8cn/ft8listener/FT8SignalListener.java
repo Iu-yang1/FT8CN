@@ -1271,6 +1271,18 @@ public class FT8SignalListener {
         return lastDecodeStatusSummary;
     }
 
+    private boolean isDecodeDeadlineMissed(DecodeRequest request,
+                                           DecodeStage stage,
+                                           long startedAtMs,
+                                           long finishedAtMs) {
+        if (request.deadlineMs <= 0L) {
+            return false;
+        }
+        // 可丢弃任务的 deadline 是启动窗口；live full 则记录是否超出整槽安全窗口。
+        long measuredAtMs = stage.droppable ? startedAtMs : finishedAtMs;
+        return measuredAtMs >= request.deadlineMs;
+    }
+
     private String buildDecodeBenchmarkSummary(DecodeRequest request,
                                                float[] decoderInput,
                                                NativeBatchDecodeResult nativeResult,
@@ -1284,7 +1296,11 @@ public class FT8SignalListener {
                 ? FT8Common.getQ65ModeLabel(request.q65Submode, request.q65TrPeriodSeconds)
                 : FT8Common.modeToString(request.decodeMode);
         long queueDurationMs = Math.max(0L, startedAtMs - request.enqueueWallClockMs);
-        boolean deadlineMissed = request.deadlineMs > 0L && finishedAtMs >= request.deadlineMs;
+        boolean deadlineMissed = isDecodeDeadlineMissed(
+                request,
+                resolveDecodeStage(request),
+                startedAtMs,
+                finishedAtMs);
         return String.format(Locale.US,
                 "decodeBenchmark mode=%s stage=%s profile[pass=%d round=%d qso=%d sens=%d wide=%s deep=%s] "
                         + "input[sourceRate=%d expected=%d actual=%d] scheduler[%s] "
@@ -1335,13 +1351,14 @@ public class FT8SignalListener {
                                               DecodeStage stage,
                                               String reason,
                                               long startedAtMs) {
+        boolean deadlineMissed = isDecodeDeadlineMissed(request, stage, startedAtMs, startedAtMs);
         lastDecodeStatusSummary = String.format(Locale.US,
                 "decodeBenchmark mode=%s stage=%s profile[pass=%d round=%d] "
                         + "input[sourceRate=%d expected=%d actual=%d] scheduler[%s] "
                         + "result[raw=0 merged=0 nativeBatch=0 published=0] "
                         + "timing[queuedMs=%d prepareMs=0 nativeMs=0 nativeHandleMs=0 nativeLockWaitMs=0 "
                         + "decoderProcessMs=0 resultGetterMs=0 javaMessagePostMs=0 dedupeMs=0 callbackMs=0 "
-                        + "publishMs=0 totalMs=0 startedAtMs=%d finishedAtMs=%d deadlineMs=%d deadlineMissed=Y] "
+                        + "publishMs=0 totalMs=0 startedAtMs=%d finishedAtMs=%d deadlineMs=%d deadlineMissed=%s] "
                         + "reason=%s source=%s enqueueReason=%s utc=%d",
                 request.decodeMode == FT8Common.Q65_MODE
                         ? FT8Common.getQ65ModeLabel(request.q65Submode, request.q65TrPeriodSeconds)
@@ -1357,6 +1374,7 @@ public class FT8SignalListener {
                 startedAtMs,
                 startedAtMs,
                 request.deadlineMs,
+                deadlineMissed ? "Y" : "N",
                 reason,
                 request.sourceTag,
                 request.enqueueReason,
