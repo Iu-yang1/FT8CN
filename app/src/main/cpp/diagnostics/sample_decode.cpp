@@ -221,6 +221,11 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                                                       (int) q65TrPeriodSeconds);
     const int expected_samples = expected_samples_for_mode((int) decodeMode,
                                                            (int) q65TrPeriodSeconds);
+    long long load_ms = 0;
+    long long init_ms = 0;
+    long long setup_ms = 0;
+    long long core_ms = 0;
+    long long result_ms = 0;
 
     if (path.empty()) {
         append_line(&output, "error: wav path is empty");
@@ -244,7 +249,9 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     std::vector<float> samples((size_t) capacity, 0.0f);
     int sample_count = capacity;
     int sample_rate = 0;
+    const auto load_started_at = std::chrono::steady_clock::now();
     const int load_result = load_wav(samples.data(), &sample_count, &sample_rate, path.c_str());
+    load_ms = elapsed_ms(load_started_at);
     append_line(&output,
                 "input mode=%s path=%s load=%d sourceSampleRate=%d expectedSamples=%d actualSamples=%d maxSeconds=%d",
                 mode_label((int) decodeMode),
@@ -279,10 +286,12 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
 
     samples.resize((size_t) sample_count);
 
+    const auto init_started_at = std::chrono::steady_clock::now();
     decoder_t *decoder = (decoder_t *) init_decoder((int64_t) utcTime,
                                                     sample_rate,
                                                     sample_count,
                                                     (int) decodeMode);
+    init_ms = elapsed_ms(init_started_at);
     if (decoder == nullptr) {
         append_line(&output, "error: init_decoder failed");
         append_line(&output,
@@ -297,6 +306,7 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                 backend_name(decoder),
                 decoder->kLDPC_iterations);
 
+    const auto setup_started_at = std::chrono::steady_clock::now();
     wsjtx_decoder_options_t options{};
     options.decode_pass_count = decodePassCount;
     options.multi_decode_round_count = multiDecodeRoundCount;
@@ -317,7 +327,10 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     decoder_set_ap_hints(decoder, use_hints ? &hints : nullptr);
 
     decoder_monitor_press_samples(samples.data(), decoder, sample_count);
+    setup_ms = elapsed_ms(setup_started_at);
+    const auto core_started_at = std::chrono::steady_clock::now();
     const int candidate_count = decoder_ft8_find_sync(decoder);
+    core_ms = elapsed_ms(core_started_at);
     const int bridge_raw_count = decoder_get_last_bridge_raw_count(decoder);
     const int merged_count = decoder_get_last_merged_count(decoder);
     append_line(&output,
@@ -339,6 +352,7 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
 
     int valid_count = 0;
     int text_count = 0;
+    const auto result_started_at = std::chrono::steady_clock::now();
     for (int idx = 0; idx < candidate_count; ++idx) {
         ft8_message message = decoder_ft8_analysis(idx, decoder);
         if (!message.isValid) {
@@ -358,6 +372,7 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                     message.candidate.score,
                     message.message.text);
     }
+    result_ms = elapsed_ms(result_started_at);
 
     const char *failure_reason = "none";
     if (bridge_raw_count == 0) {
@@ -379,6 +394,7 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                 "profile[pass=%d round=%d qso=%d sens=%d wide=%d deep=%d] "
                 "sourceSampleRate=%d expectedSamples=%d actualSamples=%d "
                 "bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d javaPublishedCount=%d "
+                "timing[loadMs=%lld initMs=%lld setupMs=%lld coreMs=%lld resultMs=%lld totalMs=%lld] "
                 "durationMs=%lld scheduler=direct-native-diagnostic failureReason=%s",
                 path.c_str(),
                 mode_config.c_str(),
@@ -395,6 +411,12 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                 merged_count,
                 candidate_count,
                 text_count,
+                load_ms,
+                init_ms,
+                setup_ms,
+                core_ms,
+                result_ms,
+                elapsed_ms(start_time),
                 elapsed_ms(start_time),
                 failure_reason);
     delete_decoder(decoder);

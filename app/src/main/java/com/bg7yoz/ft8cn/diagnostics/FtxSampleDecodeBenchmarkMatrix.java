@@ -1,5 +1,7 @@
 package com.bg7yoz.ft8cn.diagnostics;
 
+import com.bg7yoz.ft8cn.FT8Common;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,12 +53,14 @@ public final class FtxSampleDecodeBenchmarkMatrix {
                     || benchmarkCase.wavPath.isEmpty()
                     || !new File(benchmarkCase.wavPath).isFile()) {
                 reports.add(String.format(Locale.US,
-                        "sampleBenchmark case=%s path=%s mode=%d q65Submode=%d q65TrPeriod=%d "
-                                + "failureReason=no-sample",
+                        "sampleBenchmark case=%s path=%s mode=%s q65Submode=%s q65TrPeriod=%d "
+                                + "expectedSamples=0 actualSamples=0 bridgeRawCount=0 mergedCount=0 "
+                                + "nativeBatchCount=0 javaPublishedCount=0 durationMs=0 "
+                                + "queue=not-started deadline=not-started failureReason=no-sample",
                         benchmarkCase == null ? "null" : benchmarkCase.name,
                         benchmarkCase == null ? "-" : benchmarkCase.wavPath,
-                        benchmarkCase == null ? -1 : benchmarkCase.mode,
-                        benchmarkCase == null ? -1 : benchmarkCase.q65Submode,
+                        benchmarkCase == null ? "unknown" : FT8Common.modeToString(benchmarkCase.mode),
+                        benchmarkCase == null ? "-" : FT8Common.getQ65SubmodeLabel(benchmarkCase.q65Submode),
                         benchmarkCase == null ? 0 : benchmarkCase.q65TrPeriodSeconds));
                 continue;
             }
@@ -75,9 +79,12 @@ public final class FtxSampleDecodeBenchmarkMatrix {
                     benchmarkCase.q65Submode,
                     benchmarkCase.q65TrPeriodSeconds);
             reports.add(String.format(Locale.US,
-                    "sampleBenchmark case=%s path=%s%n%s",
+                    "sampleBenchmark case=%s path=%s mode=%s q65Submode=%s q65TrPeriod=%d%n%s",
                     benchmarkCase.name,
                     benchmarkCase.wavPath,
+                    FT8Common.modeToString(benchmarkCase.mode),
+                    FT8Common.getQ65SubmodeLabel(benchmarkCase.q65Submode),
+                    benchmarkCase.q65TrPeriodSeconds,
                     nativeReport == null ? "failureReason=native-null-report" : nativeReport));
         }
         return reports;
