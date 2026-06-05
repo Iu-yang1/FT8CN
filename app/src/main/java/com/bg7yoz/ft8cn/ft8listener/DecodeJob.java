@@ -12,6 +12,7 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
     final long enqueueWallClockMs;
     final Runnable delegate;
     private Runnable beforeRun;
+    private Runnable afterRun;
 
     DecodeJob(long requestSequence,
               long triggerSequence,
@@ -39,12 +40,22 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
         this.beforeRun = beforeRun;
     }
 
+    void setAfterRun(Runnable afterRun) {
+        this.afterRun = afterRun;
+    }
+
     @Override
     public void run() {
         if (beforeRun != null) {
             beforeRun.run();
         }
-        delegate.run();
+        try {
+            delegate.run();
+        } finally {
+            if (afterRun != null) {
+                afterRun.run();
+            }
+        }
     }
 
     @Override

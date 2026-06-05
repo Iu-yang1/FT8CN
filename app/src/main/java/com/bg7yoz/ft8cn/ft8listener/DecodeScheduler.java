@@ -4,6 +4,7 @@ import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 final class DecodeScheduler {
     interface Logger {
@@ -19,6 +20,8 @@ final class DecodeScheduler {
     private volatile ThreadPoolExecutor executor;
     private volatile String lastDropReason = "none";
     private volatile String lastExecutedStage = "none";
+    private final AtomicIntegerArray activePriorities =
+            new AtomicIntegerArray(DecodePriority.values().length);
 
     DecodeScheduler(String threadNamePrefix,
                     long threadStackBytes,
@@ -81,6 +84,13 @@ final class DecodeScheduler {
                 @Override
                 public void run() {
                     lastExecutedStage = job.stage.name();
+                    activePriorities.incrementAndGet(job.priority.ordinal());
+                }
+            });
+            job.setAfterRun(new Runnable() {
+                @Override
+                public void run() {
+                    activePriorities.decrementAndGet(job.priority.ordinal());
                 }
             });
             executor.execute(job);
@@ -108,6 +118,7 @@ final class DecodeScheduler {
                 + " workerCount=" + workerConfig.workerCount
                 + " activeCount=" + currentExecutor.getActiveCount()
                 + " pendingCount=" + currentExecutor.getQueue().size()
+                + " activePriorities=" + getActivePrioritySummary()
                 + " lastDropReason=" + lastDropReason
                 + " lastExecutedStage=" + lastExecutedStage;
     }
@@ -156,14 +167,19 @@ final class DecodeScheduler {
             if (queueSize > workerConfig.earlyBacklogLimit) {
                 return "early-backlog";
             }
-            if (hasPendingStage(executor, DecodeStage.LIVE_FULL)) {
-                return "pending-live-full";
+            if (hasPendingPriorityAtLeast(executor, DecodePriority.Q65_FULL)
+                    || hasActivePriorityAtLeast(DecodePriority.Q65_FULL)) {
+                return "higher-priority-live-active-or-pending";
             }
             return null;
         }
         if (job.stage == DecodeStage.DEEP_SUPPLEMENT) {
-            if (concurrencyPolicy != DecodeConcurrencyPolicy.PARALLEL_NATIVE && activeCount > 0) {
-                return "deep-native-serial-active";
+            if (hasPendingPriorityAtLeast(executor, DecodePriority.Q65_FULL)) {
+                return "pending-live-or-q65-full";
+            }
+            if (concurrencyPolicy != DecodeConcurrencyPolicy.PARALLEL_NATIVE
+                    && hasActivePriorityAtLeast(DecodePriority.Q65_FULL)) {
+                return "active-live-or-q65-full";
             }
             if (queueSize > workerConfig.lowPriorityBacklogLimit) {
                 return "deep-backlog";
@@ -184,6 +200,31 @@ final class DecodeScheduler {
         return null;
     }
 
+    private boolean hasActivePriorityAtLeast(DecodePriority priority) {
+        for (DecodePriority candidate : DecodePriority.values()) {
+            if (candidate.sortOrder >= priority.sortOrder
+                    && activePriorities.get(candidate.ordinal()) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String getActivePrioritySummary() {
+        StringBuilder summary = new StringBuilder();
+        for (DecodePriority priority : DecodePriority.values()) {
+            int count = activePriorities.get(priority.ordinal());
+            if (count <= 0) {
+                continue;
+            }
+            if (summary.length() > 0) {
+                summary.append(',');
+            }
+            summary.append(priority.name()).append(':').append(count);
+        }
+        return summary.length() == 0 ? "none" : summary.toString();
+    }
+
     private boolean hasPendingPriorityAtLeast(ThreadPoolExecutor executor, DecodePriority priority) {
         for (Runnable runnable : executor.getQueue()) {
             if (!(runnable instanceof DecodeJob)) {
@@ -197,16 +238,4 @@ final class DecodeScheduler {
         return false;
     }
 
-    private boolean hasPendingStage(ThreadPoolExecutor executor, DecodeStage stage) {
-        for (Runnable runnable : executor.getQueue()) {
-            if (!(runnable instanceof DecodeJob)) {
-                continue;
-            }
-            DecodeJob pending = (DecodeJob) runnable;
-            if (pending.stage == stage) {
-                return true;
-            }
-        }
-        return false;
-    }
 }

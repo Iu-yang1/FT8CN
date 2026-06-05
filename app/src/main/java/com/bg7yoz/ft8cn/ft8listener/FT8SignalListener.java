@@ -187,6 +187,7 @@ public class FT8SignalListener {
         final long triggerSequence;
         final long enqueueWallClockMs;
         final DecodeProfile profile;
+        long deadlineMs;
 
         DecodeRequest(long requestSequence,
                       long utc,
@@ -222,6 +223,7 @@ public class FT8SignalListener {
             this.triggerSequence = triggerSequence;
             this.enqueueWallClockMs = enqueueWallClockMs;
             this.profile = profile;
+            this.deadlineMs = 0L;
         }
     }
 
@@ -837,14 +839,20 @@ public class FT8SignalListener {
         return skip;
     }
 
-    private long getDecodeDeadlineMs(int decodeMode, DecodeProfile profile) {
-        if ("early".equals(profile.stageName)) {
-            return System.currentTimeMillis() + FT8Common.getEarlyDecodeTimeoutMs(decodeMode);
+    private long getDecodeDeadlineMs(DecodeRequest request, DecodeStage stage) {
+        if (stage == DecodeStage.DIAGNOSTIC_SAMPLE) {
+            return 0L;
         }
-        if ("deep".equals(profile.stageName)) {
-            return System.currentTimeMillis() + FT8Common.DEEP_DECODE_TIMEOUT;
+        if ("early".equals(request.profile.stageName)) {
+            return request.enqueueWallClockMs + FT8Common.getEarlyDecodeTimeoutMs(request.decodeMode);
         }
-        return 0L;
+        if ("deep".equals(request.profile.stageName)) {
+            return request.enqueueWallClockMs + FT8Common.DEEP_DECODE_TIMEOUT;
+        }
+        long slotDurationMs = request.decodeMode == FT8Common.Q65_MODE
+                ? Math.max(1, request.q65TrPeriodSeconds) * 1000L
+                : FT8Common.getSlotTimeMillisecond(request.decodeMode);
+        return request.enqueueWallClockMs + Math.max(1L, slotDurationMs);
     }
 
     private int getEarlyStageSampleFloor(int expectedSamples) {
@@ -912,20 +920,6 @@ public class FT8SignalListener {
                     decodeScheduler.getWorkerCount()));
             return;
         }
-        if (decodeScheduler.getConcurrencyPolicy() != DecodeConcurrencyPolicy.PARALLEL_NATIVE
-                && decodeScheduler.getActiveJobCount() > 0) {
-            Log.d(TAG, String.format(Locale.US,
-                    "decode deep-skip listener=%d request=%d trigger=%d mode=%s utc=%d active=%d policy=%s reason=deep-native-serial-active-before-enqueue",
-                    listenerInstanceId,
-                    request.requestSequence,
-                    request.triggerSequence,
-                    FT8Common.modeToString(request.decodeMode),
-                    request.utc,
-                    decodeScheduler.getActiveJobCount(),
-                    decodeScheduler.getConcurrencyPolicy()));
-            return;
-        }
-
         Log.d(TAG, String.format(Locale.US,
                 "decode deep-schedule listener=%d request=%d trigger=%d mode=%s utc=%d expectedSamples=%d source=%s",
                 listenerInstanceId,
@@ -1133,6 +1127,13 @@ public class FT8SignalListener {
                     @Override
                     public void run() {
                         try {
+                            long startedAtMs = System.currentTimeMillis();
+                            boolean deadlineMissed = request.deadlineMs > 0L
+                                    && startedAtMs >= request.deadlineMs;
+                            if (deadlineMissed && stage.droppable) {
+                                recordSkippedDecodeBenchmark(request, stage, "deadline-missed", startedAtMs);
+                                return;
+                            }
                             if (shouldSkipScheduledDecode(request)) {
                                 Log.d(TAG, String.format(Locale.US,
                                         "skip stale decode stage=%s mode=%s utc=%d latestLiveUtc=%d",
@@ -1161,6 +1162,7 @@ public class FT8SignalListener {
         }
         long latestLiveUtcAfterEnqueue = getLatestScheduledLiveFullDecodeUtc(request.decodeMode);
         DecodeJob job = buildDecodeJob(request);
+        request.deadlineMs = getDecodeDeadlineMs(request, job.stage);
 
         Log.d(TAG, String.format(Locale.US,
                 "decode enqueue listener=%d request=%d trigger=%d stage=%s jobStage=%s priority=%s mode=%s utc=%d expectedSamples=%d voiceSamples=%d sourceSampleRate=%d liveFull=%s latestLiveUtcBefore=%d latestLiveUtcAfter=%d liveFullRunning=%s source=%s reason=%s schedulerWorkers=%d schedulerPending=%d policy=%s",
@@ -1233,11 +1235,12 @@ public class FT8SignalListener {
                 ? FT8Common.getQ65ModeLabel(request.q65Submode, request.q65TrPeriodSeconds)
                 : FT8Common.modeToString(request.decodeMode);
         long queueDurationMs = Math.max(0L, startedAtMs - request.enqueueWallClockMs);
+        boolean deadlineMissed = request.deadlineMs > 0L && finishedAtMs >= request.deadlineMs;
         return String.format(Locale.US,
                 "decodeBenchmark mode=%s stage=%s profile[pass=%d round=%d qso=%d sens=%d wide=%s deep=%s] "
                         + "input[sourceRate=%d expected=%d actual=%d] scheduler[%s] "
                         + "result[raw=%d merged=%d nativeBatch=%d published=%d] "
-                        + "timing[queuedMs=%d nativeMs=%d publishMs=%d totalMs=%d deadline=no-deadline deadlineMissed=N] "
+                        + "timing[queuedMs=%d nativeMs=%d publishMs=%d totalMs=%d deadlineMs=%d deadlineMissed=%s] "
                         + "reason=%s source=%s enqueueReason=%s utc=%d",
                 modeLabel,
                 request.profile.stageName,
@@ -1259,10 +1262,41 @@ public class FT8SignalListener {
                 nativeResult.nativeDurationMs,
                 publishDurationMs,
                 Math.max(0L, finishedAtMs - startedAtMs),
+                request.deadlineMs,
+                deadlineMissed ? "Y" : "N",
                 failureReason,
                 request.sourceTag,
                 request.enqueueReason,
                 request.utc);
+    }
+
+    private void recordSkippedDecodeBenchmark(DecodeRequest request,
+                                              DecodeStage stage,
+                                              String reason,
+                                              long startedAtMs) {
+        lastDecodeStatusSummary = String.format(Locale.US,
+                "decodeBenchmark mode=%s stage=%s profile[pass=%d round=%d] "
+                        + "input[sourceRate=%d expected=%d actual=%d] scheduler[%s] "
+                        + "result[raw=0 merged=0 nativeBatch=0 published=0] "
+                        + "timing[queuedMs=%d nativeMs=0 publishMs=0 totalMs=0 deadlineMs=%d deadlineMissed=Y] "
+                        + "reason=%s source=%s enqueueReason=%s utc=%d",
+                request.decodeMode == FT8Common.Q65_MODE
+                        ? FT8Common.getQ65ModeLabel(request.q65Submode, request.q65TrPeriodSeconds)
+                        : FT8Common.modeToString(request.decodeMode),
+                stage,
+                request.profile.decodePassCount,
+                request.profile.multiDecodeRoundCount,
+                request.sourceSampleRate,
+                request.expectedSamples,
+                request.voiceData == null ? 0 : request.voiceData.length,
+                decodeScheduler.getStatusSummary(),
+                Math.max(0L, startedAtMs - request.enqueueWallClockMs),
+                request.deadlineMs,
+                reason,
+                request.sourceTag,
+                request.enqueueReason,
+                request.utc);
+        Log.i(TAG, lastDecodeStatusSummary);
     }
 
     public void setDecodeConcurrencyPolicy(DecodeConcurrencyPolicy concurrencyPolicy) {
