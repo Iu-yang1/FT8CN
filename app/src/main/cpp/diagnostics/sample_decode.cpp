@@ -14,6 +14,7 @@ extern "C" {
 #include "../common/wave.h"
 #include "../ft8Decoder.h"
 #include "../ftx_core/include/ftx_types.h"
+#include "../wsjtx3/wsjtx3_bridge.h"
 }
 
 namespace {
@@ -328,11 +329,14 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
 
     decoder_monitor_press_samples(samples.data(), decoder, sample_count);
     setup_ms = elapsed_ms(setup_started_at);
+    wsjtx3_parallel_experiment_reset((int) decodeMode);
     const auto core_started_at = std::chrono::steady_clock::now();
     const int candidate_count = decoder_ft8_find_sync(decoder);
     core_ms = elapsed_ms(core_started_at);
     const int bridge_raw_count = decoder_get_last_bridge_raw_count(decoder);
     const int merged_count = decoder_get_last_merged_count(decoder);
+    wsjtx3_parallel_experiment_snapshot_t parallel_snapshot{};
+    wsjtx3_parallel_experiment_get_snapshot(&parallel_snapshot);
     append_line(&output,
                 "decode mode=%s utc=%lld sampleCount=%d candidates=%d bridgeRawCount=%d mergedCount=%d nativeBatchCount=%d passes=%d rounds=%d early=%d deep=%d q65Submode=%d q65TrPeriod=%d myCall=%s",
                 mode_config.c_str(),
@@ -389,6 +393,22 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
                 text_count,
                 bridge_raw_count,
                 merged_count);
+    append_line(&output,
+                "parallel summary candidateParallelEnabled=%d candidateParallelActuallyUsed=%d "
+                "candidateParallelThreads=%d osdParallelEnabled=%d osdParallelActuallyUsed=%d "
+                "nativeParallelEnabled=%d nativeParallelActuallyUsed=%d downgradeReason=%s "
+                "resultRegression=%d callbackMismatch=%d fallbackCount=%d",
+                parallel_snapshot.candidate_parallel_enabled,
+                parallel_snapshot.candidate_parallel_actually_used,
+                parallel_snapshot.candidate_parallel_threads,
+                parallel_snapshot.osd_parallel_enabled,
+                parallel_snapshot.osd_parallel_actually_used,
+                parallel_snapshot.native_parallel_enabled,
+                parallel_snapshot.native_parallel_actually_used,
+                parallel_snapshot.downgrade_reason,
+                parallel_snapshot.result_regression,
+                parallel_snapshot.callback_mismatch,
+                parallel_snapshot.fallback_count);
     append_line(&output,
                 "smoke summary path=%s mode=%s stage=diagnostic-sample "
                 "profile[pass=%d round=%d qso=%d sens=%d wide=%d deep=%d] "

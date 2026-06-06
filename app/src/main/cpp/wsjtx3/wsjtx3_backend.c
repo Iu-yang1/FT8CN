@@ -26,6 +26,9 @@
 #define WSJTX3_LOG_TAG "WSJTX3Backend"
 #define WSJTX3_PHASE_LOG_TAG "WSJTX3Phase"
 #define WSJTX3_CALLBACK_SLOT_LOG_TAG "WSJTX3CallbackSlot"
+#define FT8_CANDIDATE_PARALLEL_EXPERIMENTAL_LOG_TAG "FT8CandidateParallel"
+#define FT8_OSD_PARALLEL_EXPERIMENTAL_LOG_TAG "FT8OSDParallel"
+#define NATIVE_PARALLEL_EXPERIMENTAL_LOG_TAG "NativeParallel"
 #define WSJTX3_LOGI(...) __android_log_print(ANDROID_LOG_INFO, WSJTX3_LOG_TAG, __VA_ARGS__)
 #define WSJTX3_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, WSJTX3_LOG_TAG, __VA_ARGS__)
 #else
@@ -115,6 +118,37 @@ static int android_log_tag_debug_enabled(const char *tag) {
     (void) tag;
     return 0;
 #endif
+}
+
+static int android_log_tag_experimental_threads(const char *tag) {
+#if defined(ANDROID)
+    char property_name[PROP_NAME_MAX] = {0};
+    char property_value[PROP_VALUE_MAX] = {0};
+    snprintf(property_name, sizeof(property_name), "log.tag.%s", tag);
+    __system_property_get(property_name, property_value);
+    if (strcmp(property_value, "VERBOSE") == 0 || strcmp(property_value, "V") == 0) {
+        return 4;
+    }
+    if (strcmp(property_value, "DEBUG") == 0 || strcmp(property_value, "D") == 0) {
+        return 2;
+    }
+    return 0;
+#else
+    (void) tag;
+    return 0;
+#endif
+}
+
+int ft8cn_candidate_parallel_experimental_threads(void) {
+    return android_log_tag_experimental_threads(FT8_CANDIDATE_PARALLEL_EXPERIMENTAL_LOG_TAG);
+}
+
+int ft8cn_osd_parallel_experimental_threads(void) {
+    return android_log_tag_experimental_threads(FT8_OSD_PARALLEL_EXPERIMENTAL_LOG_TAG);
+}
+
+int ft8cn_native_parallel_experimental_threads(void) {
+    return android_log_tag_experimental_threads(NATIVE_PARALLEL_EXPERIMENTAL_LOG_TAG);
 }
 
 void ft8cn_vendor_phase_trace_sink(int handle,
