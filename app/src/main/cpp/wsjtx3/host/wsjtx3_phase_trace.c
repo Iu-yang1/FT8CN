@@ -33,6 +33,7 @@ extern void ft8cn_vendor_phase_trace_sink(int handle,
                                           int decoded_count,
                                           long long duration_us) __attribute__((weak));
 extern int ft8cn_callback_slot_enabled(void) __attribute__((weak));
+extern int ft8cn_osd_experimental_enabled(void) __attribute__((weak));
 extern void ft8cn_callback_slot_trace_sink(int active_context,
                                            int explicit_context,
                                            int callback_slot,
@@ -84,6 +85,8 @@ extern void ft8cn_osd_trace_sink(int handle,
                                  int call_count,
                                  int success_count,
                                  int fail_count,
+                                 int experimental_enabled,
+                                 int reused_encode_count,
                                  long long total_us,
                                  long long max_us,
                                  long long success_total_us,
@@ -161,6 +164,7 @@ static wsjtx3_ldpc_trace_accumulator_t g_ldpc_trace;
 typedef struct {
     int call_count;
     int success_count;
+    int reused_encode_count;
     long long total_us;
     long long max_us;
     long long success_total_us;
@@ -320,7 +324,17 @@ int wsjtx3_osd_trace_is_enabled(void) {
     return g_ft8b_trace.active;
 }
 
+int wsjtx3_osd_experimental_enabled(void) {
+#if defined(__GNUC__) || defined(__clang__)
+    return ft8cn_osd_experimental_enabled != 0
+            && ft8cn_osd_experimental_enabled() != 0;
+#else
+    return 0;
+#endif
+}
+
 void wsjtx3_osd_trace_add(int success,
+                          int reused_encode_count,
                           long long total_us,
                           long long allocation_init_us,
                           long long generator_init_us,
@@ -339,6 +353,7 @@ void wsjtx3_osd_trace_add(int success,
     }
     g_osd_trace.call_count++;
     g_osd_trace.success_count += success != 0;
+    g_osd_trace.reused_encode_count += reused_encode_count;
     g_osd_trace.total_us += total_us;
     if (total_us > g_osd_trace.max_us) {
         g_osd_trace.max_us = total_us;
@@ -510,6 +525,8 @@ void wsjtx3_ft8b_trace_flush(int new_decode_count) {
                              g_osd_trace.call_count,
                              g_osd_trace.success_count,
                              g_osd_trace.call_count - g_osd_trace.success_count,
+                             wsjtx3_osd_experimental_enabled(),
+                             g_osd_trace.reused_encode_count,
                              g_osd_trace.total_us,
                              g_osd_trace.max_us,
                              g_osd_trace.success_total_us,

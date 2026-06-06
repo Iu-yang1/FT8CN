@@ -26,6 +26,7 @@
 #define WSJTX3_LOG_TAG "WSJTX3Backend"
 #define WSJTX3_PHASE_LOG_TAG "WSJTX3Phase"
 #define WSJTX3_CALLBACK_SLOT_LOG_TAG "WSJTX3CallbackSlot"
+#define FT8_OSD_EXPERIMENTAL_LOG_TAG "FT8OSDExperimental"
 #define WSJTX3_LOGI(...) __android_log_print(ANDROID_LOG_INFO, WSJTX3_LOG_TAG, __VA_ARGS__)
 #define WSJTX3_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, WSJTX3_LOG_TAG, __VA_ARGS__)
 #else
@@ -297,6 +298,8 @@ void ft8cn_osd_trace_sink(int handle,
                           int call_count,
                           int success_count,
                           int fail_count,
+                          int experimental_enabled,
+                          int reused_encode_count,
                           long long total_us,
                           long long max_us,
                           long long success_total_us,
@@ -328,13 +331,15 @@ void ft8cn_osd_trace_sink(int handle,
             WSJTX3_PHASE_LOG_TAG,
             "osdTrace handle=%d context=%d activeContext=%d utc=%lld profilePass=%d "
             "profileRound=%d pass=%d calls=%d success=%d fail=%d totalUs=%lld avgUs=%lld "
+            "experimental=%d reusedEncode=%d "
             "maxUs=%lld successTotalUs=%lld successAvgUs=%lld successMaxUs=%lld "
             "failTotalUs=%lld failAvgUs=%lld failMaxUs=%lld allocationInitUs=%lld "
             "generatorInitUs=%lld inputPrepareUs=%lld sortUs=%lld matrixCopyUs=%lld "
             "gaussianElimUs=%lld matrixPermuteUs=%lld order0Us=%lld order1SearchUs=%lld "
             "higherOrderSearchUs=%lld secondPreprocessUs=%lld validationUs=%lld otherUs=%lld",
             handle, handle, active_context, utc_time, profile_pass_count, profile_round_count,
-            pass_index, call_count, success_count, fail_count, total_us, average_us, max_us,
+            pass_index, call_count, success_count, fail_count, total_us, average_us,
+            experimental_enabled, reused_encode_count, max_us,
             success_total_us, success_average_us, success_max_us, fail_total_us, fail_average_us,
             fail_max_us, allocation_init_us, generator_init_us, input_prepare_us, sort_us,
             matrix_copy_us, gaussian_elim_us, matrix_permute_us, order0_us, order1_search_us,
@@ -349,6 +354,8 @@ void ft8cn_osd_trace_sink(int handle,
     (void) call_count;
     (void) success_count;
     (void) fail_count;
+    (void) experimental_enabled;
+    (void) reused_encode_count;
     (void) total_us;
     (void) max_us;
     (void) success_total_us;
@@ -391,6 +398,19 @@ int ft8cn_callback_slot_enabled(void) {
         return cached_enabled;
     }
     cached_enabled = android_log_tag_debug_enabled(WSJTX3_CALLBACK_SLOT_LOG_TAG);
+    return cached_enabled;
+#else
+    return 0;
+#endif
+}
+
+int ft8cn_osd_experimental_enabled(void) {
+#if defined(ANDROID)
+    static int cached_enabled = -1;
+    if (cached_enabled >= 0) {
+        return cached_enabled;
+    }
+    cached_enabled = android_log_tag_debug_enabled(FT8_OSD_EXPERIMENTAL_LOG_TAG);
     return cached_enabled;
 #else
     return 0;
