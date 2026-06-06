@@ -141,6 +141,7 @@ void wsjtx3_callback_slot_trace_event(int active_context,
                                       int mismatch);
 void wsjtx3_parallel_experiment_reset(int mode);
 void wsjtx3_parallel_experiment_get_snapshot(wsjtx3_parallel_experiment_snapshot_t *out_snapshot);
+int wsjtx3_openmp_probe(void);
 
 #ifdef __cplusplus
 }

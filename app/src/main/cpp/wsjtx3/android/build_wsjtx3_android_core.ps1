@@ -63,6 +63,7 @@ $ndkBin = Join-Path $NdkRoot 'toolchains\llvm\prebuilt\windows-x86_64\bin'
 $clang = Join-Path $ndkBin 'clang.exe'
 $clangxx = Join-Path $ndkBin 'clang++.exe'
 $llvmAr = Join-Path $ndkBin 'llvm-ar.exe'
+$openMpArchive = Join-Path $NdkRoot 'toolchains\llvm\prebuilt\windows-x86_64\lib64\clang\12.0.8\lib\linux\aarch64\libomp.a'
 
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $scriptDir 'out\arm64-v8a'
@@ -89,6 +90,7 @@ Assert-Path $BoostHeaders 'Boost headers'
 Assert-Path $clang 'Android clang'
 Assert-Path $clangxx 'Android clang++'
 Assert-Path $llvmAr 'Android llvm-ar'
+Assert-Path $openMpArchive 'Android OpenMP runtime'
 
 New-Item -ItemType Directory -Force -Path $OutputDir, $runtimeBuildDir, $objDir, $modDir, $logDir, $probeDir | Out-Null
 Remove-Item $compileLog, $linkLog -ErrorAction SilentlyContinue
@@ -103,7 +105,8 @@ $vendorFortranSources = New-Object System.Collections.Generic.List[string]
 $vendorCppSources = New-Object System.Collections.Generic.List[string]
 $vendorCSources = New-Object System.Collections.Generic.List[string]
 $hostSupportFortranSources = @(
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\wsjtx3_bridge.f90')
+    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\wsjtx3_bridge.f90'),
+    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\wsjtx3_openmp_probe.f90')
 )
 $hostSupportCSources = @(
     (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\shmem_stub.c'),
@@ -175,6 +178,9 @@ while ($pending.Count -gt 0) {
         )
         foreach ($includeDir in $fortranIncludeDirs) {
             $cmdArgs += @('-I', $includeDir)
+        }
+        if ([System.IO.Path]::GetFileName($src) -eq 'wsjtx3_openmp_probe.f90') {
+            $cmdArgs += '-fopenmp'
         }
         $cmdArgs += @('-c', $src, '-o', $objPath)
         $result = Invoke-NativeCapture -command $FlangPath -arguments $cmdArgs
@@ -328,6 +334,7 @@ $linkArgs = @(
     $coreArchive,
     '-Wl,--no-whole-archive',
     $runtimeArchive,
+    $openMpArchive,
     '-lm',
     '-lc',
     '-ldl'

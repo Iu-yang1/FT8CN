@@ -102,6 +102,8 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
     set(WSJTX3_ANDROID_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/wsjtx3_android/${ANDROID_ABI}")
     set(WSJTX3_ANDROID_CORE_LIB "${WSJTX3_ANDROID_OUT_DIR}/libwsjtx3_official_core.a")
     set(WSJTX3_ANDROID_RUNTIME_LIB "${WSJTX3_ANDROID_OUT_DIR}/libflang_rt.runtime.a")
+    set(WSJTX3_ANDROID_OPENMP_LIB
+            "${FT8CN_WSJTX3_NDK_ROOT}/toolchains/llvm/prebuilt/windows-x86_64/lib64/clang/12.0.8/lib/linux/aarch64/libomp.a")
 
     add_custom_command(
             OUTPUT "${WSJTX3_ANDROID_CORE_LIB}" "${WSJTX3_ANDROID_RUNTIME_LIB}"
@@ -124,6 +126,7 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_bridge.f90"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_host_support.f90"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_phase_trace.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_openmp_probe.f90"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/ft8_decode.f90"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/ft8/ft8b.f90"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/q65_decode.f90"
@@ -143,7 +146,11 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
             IMPORTED_LOCATION "${WSJTX3_ANDROID_RUNTIME_LIB}")
     add_dependencies(wsjtx3_flang_rt wsjtx3_android_core_build)
 
-    target_link_libraries(ftx_core PUBLIC wsjtx3_official_core wsjtx3_flang_rt)
+    add_library(wsjtx3_openmp_runtime STATIC IMPORTED GLOBAL)
+    set_target_properties(wsjtx3_openmp_runtime PROPERTIES
+            IMPORTED_LOCATION "${WSJTX3_ANDROID_OPENMP_LIB}")
+
+    target_link_libraries(ftx_core PUBLIC wsjtx3_official_core wsjtx3_flang_rt wsjtx3_openmp_runtime)
     set(FT8CN_WSJTX3_BACKEND_ACTIVE 1)
 endif ()
 

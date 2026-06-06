@@ -26,6 +26,7 @@ set(WSJTX3_HOST_SUPPORT_SOURCES
         ${CMAKE_CURRENT_LIST_DIR}/shmem_stub.c
         ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_phase_trace.c
         ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_bridge.f90
+        ${CMAKE_CURRENT_LIST_DIR}/wsjtx3_openmp_probe.f90
 )
 
 set(WSJTX3_VENDOR_CPP_SOURCES
