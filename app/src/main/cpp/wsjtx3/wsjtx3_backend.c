@@ -288,6 +288,89 @@ void ft8cn_ldpc_trace_sink(int handle,
 #endif
 }
 
+void ft8cn_osd_trace_sink(int handle,
+                          int active_context,
+                          long long utc_time,
+                          int profile_pass_count,
+                          int profile_round_count,
+                          int pass_index,
+                          int call_count,
+                          int success_count,
+                          int fail_count,
+                          long long total_us,
+                          long long max_us,
+                          long long success_total_us,
+                          long long success_max_us,
+                          long long fail_total_us,
+                          long long fail_max_us,
+                          long long allocation_init_us,
+                          long long generator_init_us,
+                          long long input_prepare_us,
+                          long long sort_us,
+                          long long matrix_copy_us,
+                          long long gaussian_elim_us,
+                          long long matrix_permute_us,
+                          long long order0_us,
+                          long long order1_search_us,
+                          long long higher_order_search_us,
+                          long long second_preprocess_us,
+                          long long validation_us,
+                          long long other_us) {
+#if defined(ANDROID)
+    long long average_us = call_count > 0 ? total_us / call_count : 0;
+    long long success_average_us = success_count > 0 ? success_total_us / success_count : 0;
+    long long fail_average_us = fail_count > 0 ? fail_total_us / fail_count : 0;
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            WSJTX3_PHASE_LOG_TAG,
+            "osdTrace handle=%d context=%d activeContext=%d utc=%lld profilePass=%d "
+            "profileRound=%d pass=%d calls=%d success=%d fail=%d totalUs=%lld avgUs=%lld "
+            "maxUs=%lld successTotalUs=%lld successAvgUs=%lld successMaxUs=%lld "
+            "failTotalUs=%lld failAvgUs=%lld failMaxUs=%lld allocationInitUs=%lld "
+            "generatorInitUs=%lld inputPrepareUs=%lld sortUs=%lld matrixCopyUs=%lld "
+            "gaussianElimUs=%lld matrixPermuteUs=%lld order0Us=%lld order1SearchUs=%lld "
+            "higherOrderSearchUs=%lld secondPreprocessUs=%lld validationUs=%lld otherUs=%lld",
+            handle, handle, active_context, utc_time, profile_pass_count, profile_round_count,
+            pass_index, call_count, success_count, fail_count, total_us, average_us, max_us,
+            success_total_us, success_average_us, success_max_us, fail_total_us, fail_average_us,
+            fail_max_us, allocation_init_us, generator_init_us, input_prepare_us, sort_us,
+            matrix_copy_us, gaussian_elim_us, matrix_permute_us, order0_us, order1_search_us,
+            higher_order_search_us, second_preprocess_us, validation_us, other_us);
+#else
+    (void) handle;
+    (void) active_context;
+    (void) utc_time;
+    (void) profile_pass_count;
+    (void) profile_round_count;
+    (void) pass_index;
+    (void) call_count;
+    (void) success_count;
+    (void) fail_count;
+    (void) total_us;
+    (void) max_us;
+    (void) success_total_us;
+    (void) success_max_us;
+    (void) fail_total_us;
+    (void) fail_max_us;
+    (void) allocation_init_us;
+    (void) generator_init_us;
+    (void) input_prepare_us;
+    (void) sort_us;
+    (void) matrix_copy_us;
+    (void) gaussian_elim_us;
+    (void) matrix_permute_us;
+    (void) order0_us;
+    (void) order1_search_us;
+    (void) higher_order_search_us;
+    (void) second_preprocess_us;
+    (void) validation_us;
+    (void) other_us;
+#endif
+}
+
 int ft8cn_native_phase_trace_enabled(void) {
 #if defined(ANDROID)
     static int cached_enabled = -1;

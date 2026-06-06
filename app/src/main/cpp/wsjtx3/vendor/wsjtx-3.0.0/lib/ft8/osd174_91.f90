@@ -12,6 +12,7 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
 !
 ! Valid values for k are in the range [77,91].
 !
+   use iso_c_binding, only: c_int,c_long_long
    character*14 c14
    integer, parameter:: N=174
    integer*1 apmask(N),apmaskr(N)
@@ -27,13 +28,58 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
    real llr(N),rx(N),absrx(N)
 
    logical first,reset
+   integer(c_int) trace_enabled,trace_success
+   integer(c_long_long) trace_total_started,trace_phase_started
+   integer(c_long_long) trace_allocation_init_us,trace_generator_init_us
+   integer(c_long_long) trace_input_prepare_us,trace_sort_us,trace_matrix_copy_us
+   integer(c_long_long) trace_gaussian_elim_us,trace_matrix_permute_us,trace_order0_us
+   integer(c_long_long) trace_order1_search_us,trace_higher_order_search_us
+   integer(c_long_long) trace_second_preprocess_us,trace_validation_us
+   integer(c_long_long) osd174_trace_elapsed_us
    data first/.true./
    save first
 
+   interface
+      integer(c_int) function wsjtx3_osd_trace_is_enabled() bind(C, name="wsjtx3_osd_trace_is_enabled")
+        import :: c_int
+      end function wsjtx3_osd_trace_is_enabled
+
+      subroutine wsjtx3_osd_trace_add(success,total_us,allocation_init_us,generator_init_us,input_prepare_us, &
+           sort_us,matrix_copy_us,gaussian_elim_us,matrix_permute_us,order0_us,order1_search_us, &
+           higher_order_search_us,second_preprocess_us,validation_us) bind(C, name="wsjtx3_osd_trace_add")
+        import :: c_int,c_long_long
+        integer(c_int), value :: success
+        integer(c_long_long), value :: total_us,allocation_init_us,generator_init_us,input_prepare_us,sort_us
+        integer(c_long_long), value :: matrix_copy_us,gaussian_elim_us,matrix_permute_us,order0_us
+        integer(c_long_long), value :: order1_search_us,higher_order_search_us,second_preprocess_us,validation_us
+      end subroutine wsjtx3_osd_trace_add
+   end interface
+
+   trace_enabled=wsjtx3_osd_trace_is_enabled()
+   trace_success=0
+   trace_total_started=0
+   trace_allocation_init_us=0
+   trace_generator_init_us=0
+   trace_input_prepare_us=0
+   trace_sort_us=0
+   trace_matrix_copy_us=0
+   trace_gaussian_elim_us=0
+   trace_matrix_permute_us=0
+   trace_order0_us=0
+   trace_order1_search_us=0
+   trace_higher_order_search_us=0
+   trace_second_preprocess_us=0
+   trace_validation_us=0
+   if(trace_enabled.ne.0) then
+      call system_clock(count=trace_total_started)
+      call system_clock(count=trace_phase_started)
+   endif
    allocate( genmrb(k,N), g2(N,k) )
    allocate( temp(k), m0(k), me(k), mi(k), misub(k), e2sub(N-k), e2(N-k), ui(N-k) )
    allocate( r2pat(N-k), decoded(k) )
+   if(trace_enabled.ne.0) trace_allocation_init_us=osd174_trace_elapsed_us(trace_phase_started)
 
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
    if( first ) then ! fill the generator matrix
 !
 ! Create generator matrix for partial CRC cascaded with LDPC code.
@@ -63,7 +109,9 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
 
       first=.false.
    endif
+   if(trace_enabled.ne.0) trace_generator_init_us=osd174_trace_elapsed_us(trace_phase_started)
 
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
    rx=llr
    apmaskr=apmask
 
@@ -73,16 +121,23 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
 
 ! Use magnitude of received symbols as a measure of reliability.
    absrx=abs(rx)
+   if(trace_enabled.ne.0) trace_input_prepare_us=osd174_trace_elapsed_us(trace_phase_started)
+
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
    call indexx(absrx,N,indx)
+   if(trace_enabled.ne.0) trace_sort_us=osd174_trace_elapsed_us(trace_phase_started)
 
 ! Re-order the columns of the generator matrix in order of decreasing reliability.
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
    do i=1,N
       genmrb(1:k,i)=gen(1:k,indx(N+1-i))
       indices(i)=indx(N+1-i)
    enddo
+   if(trace_enabled.ne.0) trace_matrix_copy_us=osd174_trace_elapsed_us(trace_phase_started)
 
 ! Do gaussian elimination to create a generator matrix with the most reliable
 ! received bits in positions 1:k in order of decreasing reliability (more or less).
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
    do id=1,k ! diagonal element indices
       do icol=id,k+20  ! The 20 is ad hoc - beware
          iflag=0
@@ -105,7 +160,9 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
          endif
       enddo
    enddo
+   if(trace_enabled.ne.0) trace_gaussian_elim_us=osd174_trace_elapsed_us(trace_phase_started)
 
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
    g2=transpose(genmrb)
 
 ! The hard decisions for the k MRB bits define the order 0 message, m0.
@@ -119,7 +176,9 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
    absrx=absrx(indices)
    rx=rx(indices)
    apmaskr=apmaskr(indices)
+   if(trace_enabled.ne.0) trace_matrix_permute_us=osd174_trace_elapsed_us(trace_phase_started)
 
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
    call mrbencode91(m0,c0,g2,N,k)
    nxor=ieor(c0,hdec)
    nhardmin=sum(nxor)
@@ -130,6 +189,7 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
    nrejected=0
    npre1=0
    npre2=0
+   if(trace_enabled.ne.0) trace_order0_us=osd174_trace_elapsed_us(trace_phase_started)
 
    if(ndeep.eq.0) goto 998  ! norder=0
    if(ndeep.gt.6) ndeep=6
@@ -177,6 +237,7 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
    endif
 
    do iorder=1,nord
+      if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
       misub(1:k-iorder)=0
       misub(k-iorder+1:k)=1
       iflag=k-iorder+1
@@ -225,8 +286,16 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
 ! when the last pattern with weight iorder has been generated.
          call nextpat91(misub,k,iorder,iflag)
       enddo
+      if(trace_enabled.ne.0) then
+         if(iorder.eq.1) then
+            trace_order1_search_us=trace_order1_search_us+osd174_trace_elapsed_us(trace_phase_started)
+         else
+            trace_higher_order_search_us=trace_higher_order_search_us+osd174_trace_elapsed_us(trace_phase_started)
+         endif
+      endif
    enddo
 
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
    if(npre2.eq.1) then
       reset=.true.
       ntotal=0
@@ -277,8 +346,10 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
          call nextpat91(misub,k,nord,iflag)
       enddo
    endif
+   if(trace_enabled.ne.0) trace_second_preprocess_us=osd174_trace_elapsed_us(trace_phase_started)
 
 998 continue
+   if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
 ! Re-order the codeword to [message bits][parity bits] format.
    cw(indices)=cw
    hdec(indices)=hdec
@@ -288,9 +359,33 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
    m96(83:96)=cw(78:91)
    call get_crc14(m96,96,nbadcrc)
    if(nbadcrc.ne.0) nhardmin=-nhardmin
+   if(trace_enabled.ne.0) then
+      trace_validation_us=osd174_trace_elapsed_us(trace_phase_started)
+      if(nhardmin.gt.0) trace_success=1
+      call wsjtx3_osd_trace_add(trace_success,osd174_trace_elapsed_us(trace_total_started), &
+           trace_allocation_init_us,trace_generator_init_us,trace_input_prepare_us,trace_sort_us, &
+           trace_matrix_copy_us,trace_gaussian_elim_us,trace_matrix_permute_us,trace_order0_us, &
+           trace_order1_search_us,trace_higher_order_search_us,trace_second_preprocess_us,trace_validation_us)
+   endif
 
    return
 end subroutine osd174_91
+
+integer(kind=8) function osd174_trace_elapsed_us(started_at)
+   use iso_c_binding, only: c_long_long
+   integer(c_long_long), intent(in) :: started_at
+   integer(c_long_long) finished_at,count_rate
+   if(started_at.le.0) then
+      osd174_trace_elapsed_us=0
+      return
+   endif
+   call system_clock(count=finished_at,count_rate=count_rate)
+   if(count_rate.le.0) then
+      osd174_trace_elapsed_us=0
+      return
+   endif
+   osd174_trace_elapsed_us=((finished_at-started_at)*1000000_c_long_long)/count_rate
+end function osd174_trace_elapsed_us
 
 subroutine mrbencode91(me,codeword,g2,N,K)
    integer*1 me(K),codeword(N),g2(N,K)

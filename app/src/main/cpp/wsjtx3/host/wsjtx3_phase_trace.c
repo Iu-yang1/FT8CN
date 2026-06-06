@@ -75,6 +75,34 @@ extern void ft8cn_ldpc_trace_sink(int handle,
                                   long long bp_check_to_var_us,
                                   long long osd_us,
                                   long long other_us) __attribute__((weak));
+extern void ft8cn_osd_trace_sink(int handle,
+                                 int active_context,
+                                 long long utc_time,
+                                 int profile_pass_count,
+                                 int profile_round_count,
+                                 int pass_index,
+                                 int call_count,
+                                 int success_count,
+                                 int fail_count,
+                                 long long total_us,
+                                 long long max_us,
+                                 long long success_total_us,
+                                 long long success_max_us,
+                                 long long fail_total_us,
+                                 long long fail_max_us,
+                                 long long allocation_init_us,
+                                 long long generator_init_us,
+                                 long long input_prepare_us,
+                                 long long sort_us,
+                                 long long matrix_copy_us,
+                                 long long gaussian_elim_us,
+                                 long long matrix_permute_us,
+                                 long long order0_us,
+                                 long long order1_search_us,
+                                 long long higher_order_search_us,
+                                 long long second_preprocess_us,
+                                 long long validation_us,
+                                 long long other_us) __attribute__((weak));
 #endif
 
 typedef struct {
@@ -129,6 +157,31 @@ typedef struct {
 } wsjtx3_ldpc_trace_accumulator_t;
 
 static wsjtx3_ldpc_trace_accumulator_t g_ldpc_trace;
+
+typedef struct {
+    int call_count;
+    int success_count;
+    long long total_us;
+    long long max_us;
+    long long success_total_us;
+    long long success_max_us;
+    long long fail_total_us;
+    long long fail_max_us;
+    long long allocation_init_us;
+    long long generator_init_us;
+    long long input_prepare_us;
+    long long sort_us;
+    long long matrix_copy_us;
+    long long gaussian_elim_us;
+    long long matrix_permute_us;
+    long long order0_us;
+    long long order1_search_us;
+    long long higher_order_search_us;
+    long long second_preprocess_us;
+    long long validation_us;
+} wsjtx3_osd_trace_accumulator_t;
+
+static wsjtx3_osd_trace_accumulator_t g_osd_trace;
 
 int wsjtx3_phase_trace_is_enabled(void) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -250,6 +303,7 @@ void wsjtx3_vendor_trace_event(int phase,
 void wsjtx3_ft8b_trace_reset(int pass_index, int candidate_count) {
     memset(&g_ft8b_trace, 0, sizeof(g_ft8b_trace));
     memset(&g_ldpc_trace, 0, sizeof(g_ldpc_trace));
+    memset(&g_osd_trace, 0, sizeof(g_osd_trace));
     if (!g_vendor_trace_context.active || !wsjtx3_phase_trace_is_enabled()) {
         return;
     }
@@ -260,6 +314,58 @@ void wsjtx3_ft8b_trace_reset(int pass_index, int candidate_count) {
 
 int wsjtx3_ldpc_trace_is_enabled(void) {
     return g_ft8b_trace.active;
+}
+
+int wsjtx3_osd_trace_is_enabled(void) {
+    return g_ft8b_trace.active;
+}
+
+void wsjtx3_osd_trace_add(int success,
+                          long long total_us,
+                          long long allocation_init_us,
+                          long long generator_init_us,
+                          long long input_prepare_us,
+                          long long sort_us,
+                          long long matrix_copy_us,
+                          long long gaussian_elim_us,
+                          long long matrix_permute_us,
+                          long long order0_us,
+                          long long order1_search_us,
+                          long long higher_order_search_us,
+                          long long second_preprocess_us,
+                          long long validation_us) {
+    if (!g_ft8b_trace.active) {
+        return;
+    }
+    g_osd_trace.call_count++;
+    g_osd_trace.success_count += success != 0;
+    g_osd_trace.total_us += total_us;
+    if (total_us > g_osd_trace.max_us) {
+        g_osd_trace.max_us = total_us;
+    }
+    if (success != 0) {
+        g_osd_trace.success_total_us += total_us;
+        if (total_us > g_osd_trace.success_max_us) {
+            g_osd_trace.success_max_us = total_us;
+        }
+    } else {
+        g_osd_trace.fail_total_us += total_us;
+        if (total_us > g_osd_trace.fail_max_us) {
+            g_osd_trace.fail_max_us = total_us;
+        }
+    }
+    g_osd_trace.allocation_init_us += allocation_init_us;
+    g_osd_trace.generator_init_us += generator_init_us;
+    g_osd_trace.input_prepare_us += input_prepare_us;
+    g_osd_trace.sort_us += sort_us;
+    g_osd_trace.matrix_copy_us += matrix_copy_us;
+    g_osd_trace.gaussian_elim_us += gaussian_elim_us;
+    g_osd_trace.matrix_permute_us += matrix_permute_us;
+    g_osd_trace.order0_us += order0_us;
+    g_osd_trace.order1_search_us += order1_search_us;
+    g_osd_trace.higher_order_search_us += higher_order_search_us;
+    g_osd_trace.second_preprocess_us += second_preprocess_us;
+    g_osd_trace.validation_us += validation_us;
 }
 
 void wsjtx3_ldpc_trace_add(int bp_iterations,
@@ -378,6 +484,51 @@ void wsjtx3_ft8b_trace_flush(int new_decode_count) {
                               g_ldpc_trace.bp_check_to_var_us,
                               g_ldpc_trace.osd_us,
                               other_us);
+    }
+    if (ft8cn_osd_trace_sink != 0 && g_osd_trace.call_count > 0) {
+        measured_us = g_osd_trace.allocation_init_us
+                + g_osd_trace.generator_init_us
+                + g_osd_trace.input_prepare_us
+                + g_osd_trace.sort_us
+                + g_osd_trace.matrix_copy_us
+                + g_osd_trace.gaussian_elim_us
+                + g_osd_trace.matrix_permute_us
+                + g_osd_trace.order0_us
+                + g_osd_trace.order1_search_us
+                + g_osd_trace.higher_order_search_us
+                + g_osd_trace.second_preprocess_us
+                + g_osd_trace.validation_us;
+        other_us = g_osd_trace.total_us > measured_us
+                ? g_osd_trace.total_us - measured_us
+                : 0;
+        ft8cn_osd_trace_sink(g_vendor_trace_context.handle,
+                             g_vendor_trace_context.active_context,
+                             g_vendor_trace_context.utc_time,
+                             g_vendor_trace_context.decode_pass_count,
+                             g_vendor_trace_context.multi_decode_round_count,
+                             g_ft8b_trace.pass_index,
+                             g_osd_trace.call_count,
+                             g_osd_trace.success_count,
+                             g_osd_trace.call_count - g_osd_trace.success_count,
+                             g_osd_trace.total_us,
+                             g_osd_trace.max_us,
+                             g_osd_trace.success_total_us,
+                             g_osd_trace.success_max_us,
+                             g_osd_trace.fail_total_us,
+                             g_osd_trace.fail_max_us,
+                             g_osd_trace.allocation_init_us,
+                             g_osd_trace.generator_init_us,
+                             g_osd_trace.input_prepare_us,
+                             g_osd_trace.sort_us,
+                             g_osd_trace.matrix_copy_us,
+                             g_osd_trace.gaussian_elim_us,
+                             g_osd_trace.matrix_permute_us,
+                             g_osd_trace.order0_us,
+                             g_osd_trace.order1_search_us,
+                             g_osd_trace.higher_order_search_us,
+                             g_osd_trace.second_preprocess_us,
+                             g_osd_trace.validation_us,
+                             other_us);
     }
 #else
     (void) new_decode_count;

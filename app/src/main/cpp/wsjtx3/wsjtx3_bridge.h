@@ -103,6 +103,21 @@ void wsjtx3_ldpc_trace_add(int bp_iterations,
                            long long bp_bit_to_check_us,
                            long long bp_check_to_var_us,
                            long long osd_us);
+int wsjtx3_osd_trace_is_enabled(void);
+void wsjtx3_osd_trace_add(int success,
+                          long long total_us,
+                          long long allocation_init_us,
+                          long long generator_init_us,
+                          long long input_prepare_us,
+                          long long sort_us,
+                          long long matrix_copy_us,
+                          long long gaussian_elim_us,
+                          long long matrix_permute_us,
+                          long long order0_us,
+                          long long order1_search_us,
+                          long long higher_order_search_us,
+                          long long second_preprocess_us,
+                          long long validation_us);
 void wsjtx3_ft8b_trace_flush(int new_decode_count);
 int wsjtx3_callback_slot_is_enabled(void);
 void wsjtx3_callback_slot_trace_event(int active_context,
