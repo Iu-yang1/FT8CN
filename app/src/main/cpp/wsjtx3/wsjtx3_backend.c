@@ -601,6 +601,33 @@ static const char *backend_mode_label(int mode) {
     }
 }
 
+static void callback_slot_lifecycle_trace(const wsjtx3_backend_state_t *state,
+                                          const char *operation,
+                                          int result_count) {
+#if defined(ANDROID)
+    if (state == NULL || !ft8cn_callback_slot_enabled()) {
+        return;
+    }
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            WSJTX3_CALLBACK_SLOT_LOG_TAG,
+            "slotLifecycleNative operation=%s workerId=-1 handle=%d callbackSlot=%d "
+            "bridgeContextId=%d mode=%s expectedSamples=%d resultCount=%d mismatch=0 "
+            "fallbackReason=none",
+            operation == NULL ? "unknown" : operation,
+            state->bridge_handle,
+            state->bridge_handle,
+            state->bridge_handle,
+            backend_mode_label(state->mode),
+            state->expected_samples,
+            result_count);
+#else
+    (void) state;
+    (void) operation;
+    (void) result_count;
+#endif
+}
+
 static void backend_trace(const wsjtx3_backend_state_t *state,
                           const char *phase,
                           int pass_index,
@@ -1502,6 +1529,7 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
     decoder->backend_state = state;
     reset_backend_results(decoder, state);
     sync_bridge_options(state);
+    callback_slot_lifecycle_trace(state, "create", 0);
     WSJTX3_LOGI("init ok: handle=%d mode=%s sampleRate=%d numSamples=%d",
                 state->bridge_handle,
                 backend_mode_label(mode),
@@ -1524,6 +1552,7 @@ void wsjtx3_backend_free_decoder(decoder_t *decoder) {
         return;
     }
 #if FT8CN_ENABLE_WSJTX3_BACKEND
+    callback_slot_lifecycle_trace(state, "destroy", state->last_merged_count);
     if (state->bridge_handle > 0) {
         bridge_destroy_locked(state->bridge_handle);
     }
@@ -1581,6 +1610,7 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
     const int64_t started_us = trace_enabled ? monotonic_time_us() : 0;
     const int sample_count = state->last_sample_count > 0 ? state->last_sample_count : state->expected_samples;
 
+    callback_slot_lifecycle_trace(state, "process-begin", state->last_merged_count);
     reset_backend_results(decoder, state);
     total_bridge_count = run_wsjtx3_session(decoder, state, sample_count);
     const int merged_count = finalize_wsjtx3_session(decoder, state, total_bridge_count);
@@ -1595,6 +1625,7 @@ int wsjtx3_backend_find_sync(decoder_t *decoder) {
                       monotonic_time_us() - started_us,
                       0);
     }
+    callback_slot_lifecycle_trace(state, "results-ready", merged_count);
     return merged_count;
 #else
     (void) decoder;
@@ -1636,6 +1667,7 @@ void wsjtx3_backend_reset(decoder_t *decoder, long utcTime, int num_samples) {
         bridge_reset_locked(state->bridge_handle, utcTime, num_samples);
         sync_bridge_options(state);
     }
+    callback_slot_lifecycle_trace(state, "reset", 0);
 #endif
 }
 
@@ -1678,6 +1710,7 @@ void wsjtx3_backend_set_ldpc_iterations(decoder_t *decoder, int iterations) {
     }
     state->ldpc_iterations = iterations;
     sync_bridge_options(state);
+    callback_slot_lifecycle_trace(state, "configure-ldpc", state->last_merged_count);
 }
 
 void wsjtx3_backend_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints) {
@@ -1691,6 +1724,8 @@ void wsjtx3_backend_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints)
         memcpy(&state->ap_hints, ap_hints, sizeof(state->ap_hints));
     }
     sync_bridge_options(state);
+    callback_slot_lifecycle_trace(state, "configure-options", state->last_merged_count);
+    callback_slot_lifecycle_trace(state, "configure-ap-hints", state->last_merged_count);
 }
 
 void wsjtx3_backend_set_options(decoder_t *decoder, const wsjtx_decoder_options_t *options) {
@@ -1714,6 +1749,7 @@ void wsjtx3_backend_set_q65_config(decoder_t *decoder, int q65_submode, int q65_
     state->q65_submode = sanitize_q65_submode(q65_submode);
     state->q65_tr_period_seconds = sanitize_q65_tr_period_seconds(q65_tr_period_seconds);
     sync_bridge_options(state);
+    callback_slot_lifecycle_trace(state, "configure-q65", state->last_merged_count);
 }
 
 void wsjtx3_backend_configure_runtime_dirs(const char *temp_dir, const char *data_dir) {
