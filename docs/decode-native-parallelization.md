@@ -59,3 +59,24 @@ live、deep、diagnostic 不共享 decoder handle 和 result buffer。Q65 使用
 - 允许 Java worker 并发准备、重采样、排队和丢弃 stale job。
 - 允许 scheduler 使用多个 worker 改善优先级响应，但不能宣称 native decode 真并行。
 - Native bridge 入口仍由 Java `nativeBatchDecodeLock` 和 C backend bridge mutex 双重串行保护。
+
+## Fixed callback slot 原型状态
+
+固定 callback slot 已在 debug property 控制下完成单线程一致性验证。它消除了 slot path 正常写入时
+对 `g_active_context` 的目标选择依赖，但当前仍保留 active-context 回退，并且没有解决以下并发风险：
+
+- `g_contexts` 与 mode decoder 数组仍是全局 `save` 状态。
+- Q65 仍使用固定 Fortran 文件单元 14/17 和共享 runtime 目录。
+- vendor decoder 内部仍有共享 module 状态、FFTW 和 critical section。
+- create/reset/options/process/get-result/destroy 生命周期仍由 C bridge mutex 整体保护。
+
+因此当前策略保持 `PARALLEL_PREPARE_SERIAL_NATIVE`。`PARALLEL_NATIVE` 仍必须拒绝，
+Java `nativeBatchDecodeLock` 与 C bridge mutex 均不得移除。
+
+后续准入顺序：
+
+1. 每个 DecodeScheduler worker 固定绑定独立 native handle、bridge slot、输入和结果 buffer。
+2. 对 FT8/FT4/Q65 分别执行并发 callback、reset/get-result/destroy 压力测试。
+3. 将 Q65 文件单元和 runtime 临时资源改为 context 独占，或保留 Q65 专用串行 lane。
+4. 审计并隔离 vendor module 可变状态。
+5. 先缩小 C bridge mutex 粒度并保留 Java 锁验证，再考虑移除 Java 锁。

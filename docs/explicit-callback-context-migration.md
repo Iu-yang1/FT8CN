@@ -104,3 +104,32 @@
 - Reset/get-result/destroy 不读取其他 context 的 result。
 - Q65 文件和 runtime 资源没有冲突。
 - 完成以上验证前，`PARALLEL_NATIVE` 必须继续拒绝。
+
+## 2026-06-06 fixed callback slot 原型结果
+
+已实现默认关闭的 fixed callback slot 原型：
+
+- `WSJTX3_MAX_CONTEXTS=4` 对应 FT8、FT4、Q65 各四个固定 callback wrapper。
+- decoder call 根据当前 handle 选择 slot wrapper。
+- slot wrapper 调用 `append_result_to_context(context_id, callback_slot, ...)`，不依赖
+  `g_active_context` 决定正常写入目标。
+- `append_active_result()` 与 `g_active_context` 继续保留为默认路径和故障回退路径。
+- 仅在进程启动前设置 `adb shell setprop log.tag.WSJTX3CallbackSlot DEBUG` 时启用原型。
+- 显式 context 无效或与 active context 不一致时，自动回退旧 active-context 路径并输出
+  `mismatch=1 fallback=active-context`。
+
+单线程设备验证结果：
+
+| Sample | Active-context path | Fixed-slot path | Slot mismatch |
+| --- | --- | --- | --- |
+| FT8 multi | 20/20/20/20, 9422ms core | 20/20/20/20, 9340ms core | 0 |
+| FT4 multi | 16/16/16/16, 1495ms core | 16/16/16/16, 1493ms core | 0 |
+| Q65A/60 | 1/1/1/1, 288ms core | 1/1/1/1, 293ms core | 0 |
+| Q65F/60 | 1/1/1/1, 9996ms core | 1/1/1/1, 9999ms core | 0 |
+
+这只证明固定 slot 在现有串行锁下与旧路径一致，不证明 decoder、Fortran module、FFTW 或
+Q65 文件资源可并行。
+
+下一阶段应把 Java worker 与固定 bridge slot/decoder handle 绑定，并完成 lifecycle 与并发压力测试。
+在移除 Java `nativeBatchDecodeLock` 或缩小 C bridge mutex 前，还必须隔离 Q65 固定文件单元
+14/17、runtime 目录和 vendor module 可变状态。
