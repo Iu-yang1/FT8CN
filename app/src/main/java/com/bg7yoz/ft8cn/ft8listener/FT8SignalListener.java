@@ -71,8 +71,11 @@ public class FT8SignalListener {
     private final Object decodeScheduleLock = new Object();
     private final long[] latestScheduledFullDecodeUtc = new long[]{Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE};
     private final Object nativeDecoderHandleLock = new Object();
-    private final long[] nativeDecoderHandles = new long[]{0L, 0L, 0L};
-    private final int[] nativeDecoderExpectedSamples = new int[]{0, 0, 0};
+    private final NativeDecodeWorkerContext[] nativeWorkerContexts = new NativeDecodeWorkerContext[]{
+            new NativeDecodeWorkerContext(0, FT8Common.FT8_MODE),
+            new NativeDecodeWorkerContext(0, FT8Common.FT4_MODE),
+            new NativeDecodeWorkerContext(0, FT8Common.Q65_MODE)
+    };
     private final Object nativeRuntimeDirLock = new Object();
     private boolean nativeRuntimeDirsConfigured = false;
     private static final class NativeBatchDecodeResult {
@@ -983,18 +986,20 @@ public class FT8SignalListener {
         ));
     }
 
-    private long acquirePersistentNativeDecoder(int decodeMode, int expectedSamples) {
+    private NativeDecodeWorkerContext acquirePersistentNativeDecoder(int decodeMode,
+                                                                      int expectedSamples,
+                                                                      long traceId) {
         synchronized (nativeDecoderHandleLock) {
             ensureNativeRuntimeDirectoriesConfigured();
             int modeIndex = getLiveDecodeModeIndex(decodeMode);
-            long existingHandle = nativeDecoderHandles[modeIndex];
-            if (existingHandle != 0L && nativeDecoderExpectedSamples[modeIndex] == expectedSamples) {
-                return existingHandle;
+            NativeDecodeWorkerContext workerContext = nativeWorkerContexts[modeIndex];
+            if (workerContext.matches(expectedSamples)) {
+                workerContext.configure(traceId);
+                return workerContext;
             }
-            if (existingHandle != 0L) {
-                DeleteBatchDecoder(existingHandle);
-                nativeDecoderHandles[modeIndex] = 0L;
-                nativeDecoderExpectedSamples[modeIndex] = 0;
+            if (workerContext.nativeDecoderHandle != 0L) {
+                DeleteBatchDecoder(workerContext.nativeDecoderHandle);
+                workerContext.destroyed();
             }
 
             long handle = InitBatchDecoder(
@@ -1003,10 +1008,10 @@ public class FT8SignalListener {
                     decodeMode
             );
             if (handle != 0L) {
-                nativeDecoderHandles[modeIndex] = handle;
-                nativeDecoderExpectedSamples[modeIndex] = expectedSamples;
+                workerContext.created(handle, DecoderGetBridgeContextId(handle), expectedSamples);
+                workerContext.configure(traceId);
             }
-            return handle;
+            return workerContext;
         }
     }
 
@@ -1046,12 +1051,11 @@ public class FT8SignalListener {
 
     private void releasePersistentNativeDecoders() {
         synchronized (nativeDecoderHandleLock) {
-            for (int index = 0; index < nativeDecoderHandles.length; ++index) {
-                if (nativeDecoderHandles[index] != 0L) {
-                    DeleteBatchDecoder(nativeDecoderHandles[index]);
-                    nativeDecoderHandles[index] = 0L;
+            for (NativeDecodeWorkerContext workerContext : nativeWorkerContexts) {
+                if (workerContext.nativeDecoderHandle != 0L) {
+                    DeleteBatchDecoder(workerContext.nativeDecoderHandle);
+                    workerContext.destroyed();
                 }
-                nativeDecoderExpectedSamples[index] = 0;
             }
         }
     }
@@ -1060,7 +1064,11 @@ public class FT8SignalListener {
         NativeBatchDecodeResult result = new NativeBatchDecodeResult();
         long nativeStartedAtMs = System.currentTimeMillis();
         long decoderHandleStartedAtMs = nativeStartedAtMs;
-        long nativeHandle = acquirePersistentNativeDecoder(request.decodeMode, request.expectedSamples);
+        NativeDecodeWorkerContext workerContext = acquirePersistentNativeDecoder(
+                request.decodeMode,
+                request.expectedSamples,
+                request.requestSequence);
+        long nativeHandle = workerContext.nativeDecoderHandle;
         result.decoderHandleMs = System.currentTimeMillis() - decoderHandleStartedAtMs;
         if (nativeHandle == 0L) {
             Log.e(TAG, String.format(Locale.US,
@@ -1078,6 +1086,7 @@ public class FT8SignalListener {
             result.nativeLockWaitMs = System.currentTimeMillis() - nativeLockRequestedAtMs;
             String[][] apHints = buildDecoderApHints();
             long decoderProcessStartedAtMs = System.currentTimeMillis();
+            workerContext.processing();
             nativeMessages = DecoderProcessBatch(
                     nativeHandle,
                     request.utc,
@@ -1101,6 +1110,7 @@ public class FT8SignalListener {
             long resultGetterStartedAtMs = System.currentTimeMillis();
             result.bridgeRawCount = DecoderGetLastBridgeRawCount(nativeHandle);
             result.mergedCount = DecoderGetLastMergedCount(nativeHandle);
+            workerContext.resultsReady(nativeMessages == null ? 0 : nativeMessages.length);
             result.resultGetterMs = System.currentTimeMillis() - resultGetterStartedAtMs;
         }
         result.nativeDurationMs = System.currentTimeMillis() - nativeStartedAtMs;
@@ -2131,6 +2141,7 @@ public class FT8SignalListener {
     public native void DeleteBatchDecoder(long decoderHandle);
     public native int DecoderGetLastBridgeRawCount(long decoderHandle);
     public native int DecoderGetLastMergedCount(long decoderHandle);
+    public native int DecoderGetBridgeContextId(long decoderHandle);
     public native Ft8Message[] DecoderProcessBatch(long decoderHandle,
                                                    long utcTime,
                                                    int expectedSamples,

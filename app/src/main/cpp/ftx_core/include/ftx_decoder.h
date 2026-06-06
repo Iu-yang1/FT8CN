@@ -69,6 +69,10 @@ int ftx_decoder_get_last_merged_count(
         const ftx_decoder_t *decoder
 );
 
+int ftx_decoder_get_bridge_context_id(
+        const ftx_decoder_t *decoder
+);
+
 int ftx_decoder_get_result(
         const ftx_decoder_t *decoder,
         int index,

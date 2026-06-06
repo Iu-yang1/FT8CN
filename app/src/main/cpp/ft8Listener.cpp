@@ -572,6 +572,16 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetLastMergedCount(JN
 }
 
 extern "C"
+JNIEXPORT jint JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetBridgeContextId(JNIEnv *env,
+                                                                               jobject thiz,
+                                                                               jlong decoderHandle) {
+    (void) env;
+    (void) thiz;
+    return (jint) ftx_decoder_get_bridge_context_id((ftx_decoder_t *) decoderHandle);
+}
+
+extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *env,
                                                                         jobject thiz,

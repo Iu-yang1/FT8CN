@@ -290,6 +290,13 @@ int ftx_decoder_get_last_merged_count(const ftx_decoder_t *decoder) {
     return decoder_get_last_merged_count(decoder->impl);
 }
 
+int ftx_decoder_get_bridge_context_id(const ftx_decoder_t *decoder) {
+    if (decoder == NULL) {
+        return 0;
+    }
+    return decoder_get_bridge_context_id(decoder->impl);
+}
+
 int ftx_decoder_get_result(const ftx_decoder_t *decoder, int index, ftx_decode_result_t *out) {
     if (decoder == NULL || out == NULL) {
         return -1;

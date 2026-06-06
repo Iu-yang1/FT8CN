@@ -1663,6 +1663,11 @@ int wsjtx3_backend_get_last_merged_count(decoder_t *decoder) {
     return state->last_merged_count;
 }
 
+int wsjtx3_backend_get_bridge_context_id(decoder_t *decoder) {
+    wsjtx3_backend_state_t *state = get_state(decoder);
+    return state == NULL ? 0 : state->bridge_handle;
+}
+
 void wsjtx3_backend_set_ldpc_iterations(decoder_t *decoder, int iterations) {
     wsjtx3_backend_state_t *state = get_state(decoder);
     if (state == NULL) {
