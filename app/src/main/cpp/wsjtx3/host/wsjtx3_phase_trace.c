@@ -57,6 +57,24 @@ extern void ft8cn_ft8b_trace_sink(int handle,
                                   long long unpack_us,
                                   long long subtract_us,
                                   long long other_us) __attribute__((weak));
+extern void ft8cn_ldpc_trace_sink(int handle,
+                                  int active_context,
+                                  long long utc_time,
+                                  int profile_pass_count,
+                                  int profile_round_count,
+                                  int pass_index,
+                                  int call_count,
+                                  int bp_iterations,
+                                  int osd_calls,
+                                  int bp_success_count,
+                                  int osd_success_count,
+                                  long long total_us,
+                                  long long setup_us,
+                                  long long bp_llr_syndrome_us,
+                                  long long bp_bit_to_check_us,
+                                  long long bp_check_to_var_us,
+                                  long long osd_us,
+                                  long long other_us) __attribute__((weak));
 #endif
 
 typedef struct {
@@ -95,6 +113,22 @@ typedef struct {
 } wsjtx3_ft8b_trace_accumulator_t;
 
 static wsjtx3_ft8b_trace_accumulator_t g_ft8b_trace;
+
+typedef struct {
+    int call_count;
+    int bp_iterations;
+    int osd_calls;
+    int bp_success_count;
+    int osd_success_count;
+    long long total_us;
+    long long setup_us;
+    long long bp_llr_syndrome_us;
+    long long bp_bit_to_check_us;
+    long long bp_check_to_var_us;
+    long long osd_us;
+} wsjtx3_ldpc_trace_accumulator_t;
+
+static wsjtx3_ldpc_trace_accumulator_t g_ldpc_trace;
 
 int wsjtx3_phase_trace_is_enabled(void) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -215,12 +249,43 @@ void wsjtx3_vendor_trace_event(int phase,
 
 void wsjtx3_ft8b_trace_reset(int pass_index, int candidate_count) {
     memset(&g_ft8b_trace, 0, sizeof(g_ft8b_trace));
+    memset(&g_ldpc_trace, 0, sizeof(g_ldpc_trace));
     if (!g_vendor_trace_context.active || !wsjtx3_phase_trace_is_enabled()) {
         return;
     }
     g_ft8b_trace.active = 1;
     g_ft8b_trace.pass_index = pass_index;
     g_ft8b_trace.candidate_count = candidate_count;
+}
+
+int wsjtx3_ldpc_trace_is_enabled(void) {
+    return g_ft8b_trace.active;
+}
+
+void wsjtx3_ldpc_trace_add(int bp_iterations,
+                           int osd_calls,
+                           int bp_success,
+                           int osd_success,
+                           long long total_us,
+                           long long setup_us,
+                           long long bp_llr_syndrome_us,
+                           long long bp_bit_to_check_us,
+                           long long bp_check_to_var_us,
+                           long long osd_us) {
+    if (!g_ft8b_trace.active) {
+        return;
+    }
+    g_ldpc_trace.call_count++;
+    g_ldpc_trace.bp_iterations += bp_iterations;
+    g_ldpc_trace.osd_calls += osd_calls;
+    g_ldpc_trace.bp_success_count += bp_success != 0;
+    g_ldpc_trace.osd_success_count += osd_success != 0;
+    g_ldpc_trace.total_us += total_us;
+    g_ldpc_trace.setup_us += setup_us;
+    g_ldpc_trace.bp_llr_syndrome_us += bp_llr_syndrome_us;
+    g_ldpc_trace.bp_bit_to_check_us += bp_bit_to_check_us;
+    g_ldpc_trace.bp_check_to_var_us += bp_check_to_var_us;
+    g_ldpc_trace.osd_us += osd_us;
 }
 
 void wsjtx3_ft8b_trace_add(int success,
@@ -286,6 +351,34 @@ void wsjtx3_ft8b_trace_flush(int new_decode_count) {
                           g_ft8b_trace.unpack_us,
                           g_ft8b_trace.subtract_us,
                           other_us);
+    if (ft8cn_ldpc_trace_sink != 0 && g_ldpc_trace.call_count > 0) {
+        measured_us = g_ldpc_trace.setup_us
+                + g_ldpc_trace.bp_llr_syndrome_us
+                + g_ldpc_trace.bp_bit_to_check_us
+                + g_ldpc_trace.bp_check_to_var_us
+                + g_ldpc_trace.osd_us;
+        other_us = g_ldpc_trace.total_us > measured_us
+                ? g_ldpc_trace.total_us - measured_us
+                : 0;
+        ft8cn_ldpc_trace_sink(g_vendor_trace_context.handle,
+                              g_vendor_trace_context.active_context,
+                              g_vendor_trace_context.utc_time,
+                              g_vendor_trace_context.decode_pass_count,
+                              g_vendor_trace_context.multi_decode_round_count,
+                              g_ft8b_trace.pass_index,
+                              g_ldpc_trace.call_count,
+                              g_ldpc_trace.bp_iterations,
+                              g_ldpc_trace.osd_calls,
+                              g_ldpc_trace.bp_success_count,
+                              g_ldpc_trace.osd_success_count,
+                              g_ldpc_trace.total_us,
+                              g_ldpc_trace.setup_us,
+                              g_ldpc_trace.bp_llr_syndrome_us,
+                              g_ldpc_trace.bp_bit_to_check_us,
+                              g_ldpc_trace.bp_check_to_var_us,
+                              g_ldpc_trace.osd_us,
+                              other_us);
+    }
 #else
     (void) new_decode_count;
 #endif

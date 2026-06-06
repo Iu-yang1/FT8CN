@@ -232,6 +232,62 @@ void ft8cn_ft8b_trace_sink(int handle,
 #endif
 }
 
+void ft8cn_ldpc_trace_sink(int handle,
+                           int active_context,
+                           long long utc_time,
+                           int profile_pass_count,
+                           int profile_round_count,
+                           int pass_index,
+                           int call_count,
+                           int bp_iterations,
+                           int osd_calls,
+                           int bp_success_count,
+                           int osd_success_count,
+                           long long total_us,
+                           long long setup_us,
+                           long long bp_llr_syndrome_us,
+                           long long bp_bit_to_check_us,
+                           long long bp_check_to_var_us,
+                           long long osd_us,
+                           long long other_us) {
+#if defined(ANDROID)
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            WSJTX3_PHASE_LOG_TAG,
+            "ldpcTrace handle=%d context=%d activeContext=%d utc=%lld profilePass=%d "
+            "profileRound=%d pass=%d calls=%d bpIterations=%d osdCalls=%d "
+            "bpSuccess=%d osdSuccess=%d totalUs=%lld setupUs=%lld "
+            "bpLlrSyndromeUs=%lld bpBitToCheckUs=%lld bpCheckToVarUs=%lld "
+            "osdUs=%lld otherUs=%lld",
+            handle, handle, active_context, utc_time, profile_pass_count, profile_round_count,
+            pass_index, call_count, bp_iterations, osd_calls, bp_success_count, osd_success_count,
+            total_us, setup_us, bp_llr_syndrome_us, bp_bit_to_check_us, bp_check_to_var_us,
+            osd_us, other_us);
+#else
+    (void) handle;
+    (void) active_context;
+    (void) utc_time;
+    (void) profile_pass_count;
+    (void) profile_round_count;
+    (void) pass_index;
+    (void) call_count;
+    (void) bp_iterations;
+    (void) osd_calls;
+    (void) bp_success_count;
+    (void) osd_success_count;
+    (void) total_us;
+    (void) setup_us;
+    (void) bp_llr_syndrome_us;
+    (void) bp_bit_to_check_us;
+    (void) bp_check_to_var_us;
+    (void) osd_us;
+    (void) other_us;
+#endif
+}
+
 int ft8cn_native_phase_trace_enabled(void) {
 #if defined(ANDROID)
     static int cached_enabled = -1;

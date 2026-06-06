@@ -84,6 +84,7 @@ void wsjtx3_vendor_trace_event(int phase,
                                int decoded_count,
                                long long duration_us);
 void wsjtx3_ft8b_trace_reset(int pass_index, int candidate_count);
+int wsjtx3_ldpc_trace_is_enabled(void);
 void wsjtx3_ft8b_trace_add(int success,
                            long long total_us,
                            long long downsample_us,
@@ -92,6 +93,16 @@ void wsjtx3_ft8b_trace_add(int success,
                            long long validation_us,
                            long long unpack_us,
                            long long subtract_us);
+void wsjtx3_ldpc_trace_add(int bp_iterations,
+                           int osd_calls,
+                           int bp_success,
+                           int osd_success,
+                           long long total_us,
+                           long long setup_us,
+                           long long bp_llr_syndrome_us,
+                           long long bp_bit_to_check_us,
+                           long long bp_check_to_var_us,
+                           long long osd_us);
 void wsjtx3_ft8b_trace_flush(int new_decode_count);
 int wsjtx3_callback_slot_is_enabled(void);
 void wsjtx3_callback_slot_trace_event(int active_context,
