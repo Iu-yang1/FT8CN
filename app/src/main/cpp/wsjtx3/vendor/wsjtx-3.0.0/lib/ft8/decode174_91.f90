@@ -223,5 +223,9 @@ integer(kind=8) function decode174_trace_elapsed_us(started_at)
       return
    endif
    call system_clock(count=finished_at,count_rate=count_rate)
+   if(count_rate.le.0) then
+      decode174_trace_elapsed_us=0
+      return
+   endif
    decode174_trace_elapsed_us=((finished_at-started_at)*1000000_c_long_long)/count_rate
 end function decode174_trace_elapsed_us
