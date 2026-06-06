@@ -83,6 +83,16 @@ void wsjtx3_vendor_trace_event(int phase,
                                int candidate_count,
                                int decoded_count,
                                long long duration_us);
+void wsjtx3_ft8b_trace_reset(int pass_index, int candidate_count);
+void wsjtx3_ft8b_trace_add(int success,
+                           long long total_us,
+                           long long downsample_us,
+                           long long ap_us,
+                           long long ldpc_us,
+                           long long validation_us,
+                           long long unpack_us,
+                           long long subtract_us);
+void wsjtx3_ft8b_trace_flush(int new_decode_count);
 int wsjtx3_callback_slot_is_enabled(void);
 void wsjtx3_callback_slot_trace_event(int active_context,
                                       int explicit_context,

@@ -42,6 +42,16 @@ module ft8_decode
        integer(c_int), value :: phase, pass_index, candidate_count, decoded_count
        integer(c_long_long), value :: duration_us
      end subroutine wsjtx3_vendor_trace_event
+
+     subroutine wsjtx3_ft8b_trace_reset(pass_index, candidate_count) bind(C, name="wsjtx3_ft8b_trace_reset")
+       import :: c_int
+       integer(c_int), value :: pass_index, candidate_count
+     end subroutine wsjtx3_ft8b_trace_reset
+
+     subroutine wsjtx3_ft8b_trace_flush(new_decode_count) bind(C, name="wsjtx3_ft8b_trace_flush")
+       import :: c_int
+       integer(c_int), value :: new_decode_count
+     end subroutine wsjtx3_ft8b_trace_flush
   end interface
 
 contains
@@ -243,6 +253,7 @@ contains
       call timer('sync8   ',1)
       call wsjtx3_vendor_trace_event(101_c_int, ipass, ncand, ndecodes-ndecoded_before_pass, &
            vendor_trace_elapsed_us(trace_phase_started))
+      call wsjtx3_ft8b_trace_reset(ipass, ncand)
       trace_phase_started=vendor_trace_now()
       do icand=1,ncand
         sync=candidate(3,icand)
@@ -288,6 +299,7 @@ contains
       enddo  ! icand
       call wsjtx3_vendor_trace_event(102_c_int, ipass, ncand, ndecodes-ndecoded_before_pass, &
            vendor_trace_elapsed_us(trace_phase_started))
+      call wsjtx3_ft8b_trace_flush(ndecodes-ndecoded_before_pass)
       call wsjtx3_vendor_trace_event(103_c_int, ipass, ncand, ndecodes-ndecoded_before_pass, &
            vendor_trace_elapsed_us(trace_pass_started))
    enddo  ! ipass

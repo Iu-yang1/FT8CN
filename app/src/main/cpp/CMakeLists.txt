@@ -125,6 +125,7 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_host_support.f90"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_phase_trace.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/ft8_decode.f90"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/ft8/ft8b.f90"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/q65_decode.f90"
             VERBATIM
     )

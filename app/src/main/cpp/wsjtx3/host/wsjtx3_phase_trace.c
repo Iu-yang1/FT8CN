@@ -38,6 +38,25 @@ extern void ft8cn_callback_slot_trace_sink(int active_context,
                                            int callback_slot,
                                            int result_count,
                                            int mismatch) __attribute__((weak));
+extern void ft8cn_ft8b_trace_sink(int handle,
+                                  int active_context,
+                                  long long utc_time,
+                                  int profile_pass_count,
+                                  int profile_round_count,
+                                  int pass_index,
+                                  int candidate_count,
+                                  int success_count,
+                                  int fail_count,
+                                  int new_decode_count,
+                                  long long total_us,
+                                  long long max_us,
+                                  long long downsample_us,
+                                  long long ap_us,
+                                  long long ldpc_us,
+                                  long long validation_us,
+                                  long long unpack_us,
+                                  long long subtract_us,
+                                  long long other_us) __attribute__((weak));
 #endif
 
 typedef struct {
@@ -58,6 +77,24 @@ typedef struct {
  * 真正启用 native 并行前必须把它改为显式参数或线程局部存储。
  */
 static wsjtx3_vendor_trace_context_t g_vendor_trace_context;
+
+typedef struct {
+    int active;
+    int pass_index;
+    int candidate_count;
+    int success_count;
+    int call_count;
+    long long total_us;
+    long long max_us;
+    long long downsample_us;
+    long long ap_us;
+    long long ldpc_us;
+    long long validation_us;
+    long long unpack_us;
+    long long subtract_us;
+} wsjtx3_ft8b_trace_accumulator_t;
+
+static wsjtx3_ft8b_trace_accumulator_t g_ft8b_trace;
 
 int wsjtx3_phase_trace_is_enabled(void) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -139,6 +176,7 @@ void wsjtx3_vendor_trace_set_context(int handle,
 
 void wsjtx3_vendor_trace_clear_context(void) {
     g_vendor_trace_context.active = 0;
+    g_ft8b_trace.active = 0;
 }
 
 void wsjtx3_vendor_trace_event(int phase,
@@ -173,6 +211,85 @@ void wsjtx3_vendor_trace_event(int phase,
     (void) decoded_count;
     (void) duration_us;
 #endif
+}
+
+void wsjtx3_ft8b_trace_reset(int pass_index, int candidate_count) {
+    memset(&g_ft8b_trace, 0, sizeof(g_ft8b_trace));
+    if (!g_vendor_trace_context.active || !wsjtx3_phase_trace_is_enabled()) {
+        return;
+    }
+    g_ft8b_trace.active = 1;
+    g_ft8b_trace.pass_index = pass_index;
+    g_ft8b_trace.candidate_count = candidate_count;
+}
+
+void wsjtx3_ft8b_trace_add(int success,
+                           long long total_us,
+                           long long downsample_us,
+                           long long ap_us,
+                           long long ldpc_us,
+                           long long validation_us,
+                           long long unpack_us,
+                           long long subtract_us) {
+    if (!g_ft8b_trace.active) {
+        return;
+    }
+    g_ft8b_trace.call_count++;
+    g_ft8b_trace.success_count += success != 0;
+    g_ft8b_trace.total_us += total_us;
+    if (total_us > g_ft8b_trace.max_us) {
+        g_ft8b_trace.max_us = total_us;
+    }
+    g_ft8b_trace.downsample_us += downsample_us;
+    g_ft8b_trace.ap_us += ap_us;
+    g_ft8b_trace.ldpc_us += ldpc_us;
+    g_ft8b_trace.validation_us += validation_us;
+    g_ft8b_trace.unpack_us += unpack_us;
+    g_ft8b_trace.subtract_us += subtract_us;
+}
+
+void wsjtx3_ft8b_trace_flush(int new_decode_count) {
+#if defined(__GNUC__) || defined(__clang__)
+    long long measured_us;
+    long long other_us;
+    if (!g_ft8b_trace.active
+            || ft8cn_ft8b_trace_sink == 0
+            || !wsjtx3_phase_trace_is_enabled()) {
+        g_ft8b_trace.active = 0;
+        return;
+    }
+    measured_us = g_ft8b_trace.downsample_us
+            + g_ft8b_trace.ap_us
+            + g_ft8b_trace.ldpc_us
+            + g_ft8b_trace.validation_us
+            + g_ft8b_trace.unpack_us
+            + g_ft8b_trace.subtract_us;
+    other_us = g_ft8b_trace.total_us > measured_us
+            ? g_ft8b_trace.total_us - measured_us
+            : 0;
+    ft8cn_ft8b_trace_sink(g_vendor_trace_context.handle,
+                          g_vendor_trace_context.active_context,
+                          g_vendor_trace_context.utc_time,
+                          g_vendor_trace_context.decode_pass_count,
+                          g_vendor_trace_context.multi_decode_round_count,
+                          g_ft8b_trace.pass_index,
+                          g_ft8b_trace.candidate_count,
+                          g_ft8b_trace.success_count,
+                          g_ft8b_trace.call_count - g_ft8b_trace.success_count,
+                          new_decode_count,
+                          g_ft8b_trace.total_us,
+                          g_ft8b_trace.max_us,
+                          g_ft8b_trace.downsample_us,
+                          g_ft8b_trace.ap_us,
+                          g_ft8b_trace.ldpc_us,
+                          g_ft8b_trace.validation_us,
+                          g_ft8b_trace.unpack_us,
+                          g_ft8b_trace.subtract_us,
+                          other_us);
+#else
+    (void) new_decode_count;
+#endif
+    g_ft8b_trace.active = 0;
 }
 
 int wsjtx3_callback_slot_is_enabled(void) {

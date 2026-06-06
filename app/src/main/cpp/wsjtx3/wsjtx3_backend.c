@@ -174,6 +174,64 @@ void ft8cn_vendor_phase_trace_sink(int handle,
 #endif
 }
 
+void ft8cn_ft8b_trace_sink(int handle,
+                           int active_context,
+                           long long utc_time,
+                           int profile_pass_count,
+                           int profile_round_count,
+                           int pass_index,
+                           int candidate_count,
+                           int success_count,
+                           int fail_count,
+                           int new_decode_count,
+                           long long total_us,
+                           long long max_us,
+                           long long downsample_us,
+                           long long ap_us,
+                           long long ldpc_us,
+                           long long validation_us,
+                           long long unpack_us,
+                           long long subtract_us,
+                           long long other_us) {
+#if defined(ANDROID)
+    long long average_us = candidate_count > 0 ? total_us / candidate_count : 0;
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            WSJTX3_PHASE_LOG_TAG,
+            "ft8bTrace handle=%d context=%d activeContext=%d utc=%lld profilePass=%d "
+            "profileRound=%d pass=%d candidates=%d success=%d fail=%d newDecodes=%d "
+            "totalUs=%lld avgUs=%lld maxUs=%lld downsampleUs=%lld apUs=%lld ldpcUs=%lld "
+            "validationUs=%lld unpackUs=%lld subtractUs=%lld otherUs=%lld",
+            handle, handle, active_context, utc_time, profile_pass_count, profile_round_count,
+            pass_index, candidate_count, success_count, fail_count, new_decode_count,
+            total_us, average_us, max_us, downsample_us, ap_us, ldpc_us, validation_us,
+            unpack_us, subtract_us, other_us);
+#else
+    (void) handle;
+    (void) active_context;
+    (void) utc_time;
+    (void) profile_pass_count;
+    (void) profile_round_count;
+    (void) pass_index;
+    (void) candidate_count;
+    (void) success_count;
+    (void) fail_count;
+    (void) new_decode_count;
+    (void) total_us;
+    (void) max_us;
+    (void) downsample_us;
+    (void) ap_us;
+    (void) ldpc_us;
+    (void) validation_us;
+    (void) unpack_us;
+    (void) subtract_us;
+    (void) other_us;
+#endif
+}
+
 int ft8cn_native_phase_trace_enabled(void) {
 #if defined(ANDROID)
     static int cached_enabled = -1;
