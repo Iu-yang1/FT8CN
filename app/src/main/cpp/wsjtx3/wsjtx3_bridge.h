@@ -104,9 +104,7 @@ void wsjtx3_ldpc_trace_add(int bp_iterations,
                            long long bp_check_to_var_us,
                            long long osd_us);
 int wsjtx3_osd_trace_is_enabled(void);
-int wsjtx3_osd_experimental_enabled(void);
 void wsjtx3_osd_trace_add(int success,
-                          int reused_encode_count,
                           long long total_us,
                           long long allocation_init_us,
                           long long generator_init_us,

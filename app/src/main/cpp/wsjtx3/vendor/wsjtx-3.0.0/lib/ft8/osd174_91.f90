@@ -28,7 +28,7 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
    real llr(N),rx(N),absrx(N)
 
    logical first,reset
-   integer(c_int) trace_enabled,trace_success,experimental_enabled,reused_encode_count
+   integer(c_int) trace_enabled,trace_success
    integer(c_long_long) trace_total_started,trace_phase_started
    integer(c_long_long) trace_allocation_init_us,trace_generator_init_us
    integer(c_long_long) trace_input_prepare_us,trace_sort_us,trace_matrix_copy_us
@@ -44,16 +44,11 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
         import :: c_int
       end function wsjtx3_osd_trace_is_enabled
 
-      integer(c_int) function wsjtx3_osd_experimental_enabled() bind(C, name="wsjtx3_osd_experimental_enabled")
-        import :: c_int
-      end function wsjtx3_osd_experimental_enabled
-
-      subroutine wsjtx3_osd_trace_add(success,reused_encode_count,total_us,allocation_init_us,generator_init_us, &
-           input_prepare_us, &
+      subroutine wsjtx3_osd_trace_add(success,total_us,allocation_init_us,generator_init_us,input_prepare_us, &
            sort_us,matrix_copy_us,gaussian_elim_us,matrix_permute_us,order0_us,order1_search_us, &
            higher_order_search_us,second_preprocess_us,validation_us) bind(C, name="wsjtx3_osd_trace_add")
         import :: c_int,c_long_long
-        integer(c_int), value :: success,reused_encode_count
+        integer(c_int), value :: success
         integer(c_long_long), value :: total_us,allocation_init_us,generator_init_us,input_prepare_us,sort_us
         integer(c_long_long), value :: matrix_copy_us,gaussian_elim_us,matrix_permute_us,order0_us
         integer(c_long_long), value :: order1_search_us,higher_order_search_us,second_preprocess_us,validation_us
@@ -61,9 +56,7 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
    end interface
 
    trace_enabled=wsjtx3_osd_trace_is_enabled()
-   experimental_enabled=wsjtx3_osd_experimental_enabled()
    trace_success=0
-   reused_encode_count=0
    trace_total_started=0
    trace_allocation_init_us=0
    trace_generator_init_us=0
@@ -272,11 +265,7 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
                nd1kpt=sum(e2(1:nt))+2
             endif
             if(nd1kpt .le. ntheta) then
-               if(experimental_enabled.ne.0 .and. n1.eq.iflag) then
-                  reused_encode_count=reused_encode_count+1
-               else
-                  call mrbencode91(me,ce,g2,N,k)
-               endif
+               call mrbencode91(me,ce,g2,N,k)
                nxor=ieor(ce,hdec)
                if(n1.eq.iflag) then
                   dd=d1+sum(e2sub*absrx(k+1:N))
@@ -373,7 +362,7 @@ subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)
    if(trace_enabled.ne.0) then
       trace_validation_us=osd174_trace_elapsed_us(trace_phase_started)
       if(nhardmin.gt.0) trace_success=1
-      call wsjtx3_osd_trace_add(trace_success,reused_encode_count,osd174_trace_elapsed_us(trace_total_started), &
+      call wsjtx3_osd_trace_add(trace_success,osd174_trace_elapsed_us(trace_total_started), &
            trace_allocation_init_us,trace_generator_init_us,trace_input_prepare_us,trace_sort_us, &
            trace_matrix_copy_us,trace_gaussian_elim_us,trace_matrix_permute_us,trace_order0_us, &
            trace_order1_search_us,trace_higher_order_search_us,trace_second_preprocess_us,trace_validation_us)
