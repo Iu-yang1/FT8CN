@@ -176,11 +176,6 @@ int ftx_core_run_selftests(char *report, int report_capacity) {
                 "SUMMARY %d/%d passed\n",
                 passed,
                 total);
-    append_line(report,
-                report_capacity,
-                &used,
-                "TODO synthetic waveform decode test not implemented yet.\n");
-
     return (passed == total) ? 0 : -1;
 }
 

@@ -17,20 +17,6 @@ typedef struct {
     char decoded[38];
 } wsjtx3_bridge_decode_result_t;
 
-typedef struct {
-    int candidate_parallel_enabled;
-    int candidate_parallel_actually_used;
-    int candidate_parallel_threads;
-    int osd_parallel_enabled;
-    int osd_parallel_actually_used;
-    int native_parallel_enabled;
-    int native_parallel_actually_used;
-    int result_regression;
-    int callback_mismatch;
-    int fallback_count;
-    char downgrade_reason[96];
-} wsjtx3_parallel_experiment_snapshot_t;
-
 int wsjtx3_bridge_create(int mode,
                          int sample_rate,
                          int expected_samples,
@@ -139,10 +125,6 @@ void wsjtx3_callback_slot_trace_event(int active_context,
                                       int callback_slot,
                                       int result_count,
                                       int mismatch);
-void wsjtx3_parallel_experiment_reset(int mode);
-void wsjtx3_parallel_experiment_get_snapshot(wsjtx3_parallel_experiment_snapshot_t *out_snapshot);
-int wsjtx3_openmp_probe(void);
-
 #ifdef __cplusplus
 }
 #endif

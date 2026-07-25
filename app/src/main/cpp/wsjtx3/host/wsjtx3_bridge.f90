@@ -734,14 +734,17 @@ contains
     integer, intent(in) :: ntrperiod
     real :: qual
 
+    if (nutc < 0 .or. ntrperiod <= 0) return
     qual = real(nused)
     call append_active_result(snr1, nsnr, dt, freq, decoded, idec, qual)
   end subroutine wsjtx3_q65_callback
 
-  subroutine append_q65_result_to_context(context_id, callback_slot, snr1, nsnr, dt, freq, decoded, idec, nused)
-    integer, intent(in) :: context_id, callback_slot, nsnr, idec, nused
+  subroutine append_q65_result_to_context(context_id, callback_slot, nutc, snr1, nsnr, dt, freq, &
+       decoded, idec, nused, ntrperiod)
+    integer, intent(in) :: context_id, callback_slot, nutc, nsnr, idec, nused, ntrperiod
     real, intent(in) :: snr1, dt, freq
     character(len=37), intent(in) :: decoded
+    if (nutc < 0 .or. ntrperiod <= 0) return
     call append_result_to_context(context_id, callback_slot, snr1, nsnr, dt, freq, decoded, idec, real(nused))
   end subroutine append_q65_result_to_context
 
@@ -750,7 +753,7 @@ contains
     integer, intent(in) :: nutc, nsnr, idec, nused, ntrperiod
     real, intent(in) :: snr1, dt, freq
     character(len=37), intent(in) :: decoded
-    call append_q65_result_to_context(1, 1, snr1, nsnr, dt, freq, decoded, idec, nused)
+    call append_q65_result_to_context(1, 1, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
   end subroutine wsjtx3_q65_callback_slot1
 
   subroutine wsjtx3_q65_callback_slot2(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
@@ -758,7 +761,7 @@ contains
     integer, intent(in) :: nutc, nsnr, idec, nused, ntrperiod
     real, intent(in) :: snr1, dt, freq
     character(len=37), intent(in) :: decoded
-    call append_q65_result_to_context(2, 2, snr1, nsnr, dt, freq, decoded, idec, nused)
+    call append_q65_result_to_context(2, 2, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
   end subroutine wsjtx3_q65_callback_slot2
 
   subroutine wsjtx3_q65_callback_slot3(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
@@ -766,7 +769,7 @@ contains
     integer, intent(in) :: nutc, nsnr, idec, nused, ntrperiod
     real, intent(in) :: snr1, dt, freq
     character(len=37), intent(in) :: decoded
-    call append_q65_result_to_context(3, 3, snr1, nsnr, dt, freq, decoded, idec, nused)
+    call append_q65_result_to_context(3, 3, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
   end subroutine wsjtx3_q65_callback_slot3
 
   subroutine wsjtx3_q65_callback_slot4(this, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
@@ -774,7 +777,7 @@ contains
     integer, intent(in) :: nutc, nsnr, idec, nused, ntrperiod
     real, intent(in) :: snr1, dt, freq
     character(len=37), intent(in) :: decoded
-    call append_q65_result_to_context(4, 4, snr1, nsnr, dt, freq, decoded, idec, nused)
+    call append_q65_result_to_context(4, 4, nutc, snr1, nsnr, dt, freq, decoded, idec, nused, ntrperiod)
   end subroutine wsjtx3_q65_callback_slot4
 
   logical function ft8_allow_followup_rounds(context, phase)
@@ -833,17 +836,19 @@ contains
     end if
 
     selected_callback => wsjtx3_ft8_callback
-    if (capture_results .and. wsjtx3_callback_slot_is_enabled() /= 0) then
-       select case (handle)
-       case (1)
-          selected_callback => wsjtx3_ft8_callback_slot1
-       case (2)
-          selected_callback => wsjtx3_ft8_callback_slot2
-       case (3)
-          selected_callback => wsjtx3_ft8_callback_slot3
-       case (4)
-          selected_callback => wsjtx3_ft8_callback_slot4
-       end select
+    if (capture_results) then
+       if (wsjtx3_callback_slot_is_enabled() /= 0) then
+          select case (handle)
+          case (1)
+             selected_callback => wsjtx3_ft8_callback_slot1
+          case (2)
+             selected_callback => wsjtx3_ft8_callback_slot2
+          case (3)
+             selected_callback => wsjtx3_ft8_callback_slot3
+          case (4)
+             selected_callback => wsjtx3_ft8_callback_slot4
+          end select
+       end if
     end if
 
     result_count_before = g_contexts(handle)%result_count

@@ -1,6 +1,5 @@
 #include "../wsjtx3_bridge.h"
 
-#include <stdio.h>
 #include <string.h>
 
 /*
@@ -36,9 +35,6 @@ extern void ft8cn_vendor_phase_trace_sink(int handle,
                                           int decoded_count,
                                           long long duration_us) __attribute__((weak));
 extern int ft8cn_callback_slot_enabled(void) __attribute__((weak));
-extern int ft8cn_candidate_parallel_experimental_threads(void) __attribute__((weak));
-extern int ft8cn_osd_parallel_experimental_threads(void) __attribute__((weak));
-extern int ft8cn_native_parallel_experimental_threads(void) __attribute__((weak));
 extern void ft8cn_callback_slot_trace_sink(int active_context,
                                            int explicit_context,
                                            int callback_slot,
@@ -188,76 +184,6 @@ typedef struct {
 } wsjtx3_osd_trace_accumulator_t;
 
 static wsjtx3_osd_trace_accumulator_t g_osd_trace;
-static wsjtx3_parallel_experiment_snapshot_t g_parallel_experiment;
-
-static int experimental_threads(int (*thread_provider)(void)) {
-    return thread_provider == 0 ? 0 : thread_provider();
-}
-
-void wsjtx3_parallel_experiment_reset(int mode) {
-    int candidate_threads;
-    int osd_threads;
-    int native_threads;
-    memset(&g_parallel_experiment, 0, sizeof(g_parallel_experiment));
-#if defined(__GNUC__) || defined(__clang__)
-    candidate_threads = experimental_threads(ft8cn_candidate_parallel_experimental_threads);
-    osd_threads = experimental_threads(ft8cn_osd_parallel_experimental_threads);
-    native_threads = experimental_threads(ft8cn_native_parallel_experimental_threads);
-#else
-    candidate_threads = 0;
-    osd_threads = 0;
-    native_threads = 0;
-#endif
-    /* Bridge mode values are fixed by ftx_mode_t: FT8=0, FT4=1, Q65=2. */
-    g_parallel_experiment.candidate_parallel_threads = mode == 0 ? candidate_threads : 0;
-    g_parallel_experiment.candidate_parallel_enabled = mode == 0 && candidate_threads > 0;
-    g_parallel_experiment.osd_parallel_enabled = mode == 0 && osd_threads > 0;
-    g_parallel_experiment.native_parallel_enabled = mode != 2 && native_threads > 0;
-    if (mode == 2 && (candidate_threads > 0 || osd_threads > 0 || native_threads > 0)) {
-        snprintf(g_parallel_experiment.downgrade_reason,
-                 sizeof(g_parallel_experiment.downgrade_reason),
-                 "%s",
-                 "q65-serial-lane");
-        g_parallel_experiment.fallback_count++;
-    } else if (mode != 0 && (candidate_threads > 0 || osd_threads > 0)) {
-        snprintf(g_parallel_experiment.downgrade_reason,
-                 sizeof(g_parallel_experiment.downgrade_reason),
-                 "%s",
-                 "candidate-and-osd-parallel-ft8-only");
-        g_parallel_experiment.fallback_count++;
-    } else if (candidate_threads > 0) {
-        snprintf(g_parallel_experiment.downgrade_reason,
-                 sizeof(g_parallel_experiment.downgrade_reason),
-                 "%s",
-                 "candidate-shared-state-not-isolated");
-        g_parallel_experiment.fallback_count++;
-    } else if (osd_threads > 0) {
-        snprintf(g_parallel_experiment.downgrade_reason,
-                 sizeof(g_parallel_experiment.downgrade_reason),
-                 "%s",
-                 "osd-shared-state-not-isolated");
-        g_parallel_experiment.fallback_count++;
-    } else if (native_threads > 0) {
-        snprintf(g_parallel_experiment.downgrade_reason,
-                 sizeof(g_parallel_experiment.downgrade_reason),
-                 "%s",
-                 "native-global-active-context");
-        g_parallel_experiment.fallback_count++;
-    } else {
-        snprintf(g_parallel_experiment.downgrade_reason,
-                 sizeof(g_parallel_experiment.downgrade_reason),
-                 "%s",
-                 "none");
-    }
-}
-
-void wsjtx3_parallel_experiment_get_snapshot(wsjtx3_parallel_experiment_snapshot_t *out_snapshot) {
-    if (out_snapshot == 0) {
-        return;
-    }
-    *out_snapshot = g_parallel_experiment;
-}
-
 int wsjtx3_phase_trace_is_enabled(void) {
 #if defined(__GNUC__) || defined(__clang__)
     return ft8cn_native_phase_trace_enabled != 0
@@ -625,10 +551,6 @@ void wsjtx3_callback_slot_trace_event(int active_context,
                                       int callback_slot,
                                       int result_count,
                                       int mismatch) {
-    if (mismatch != 0) {
-        g_parallel_experiment.callback_mismatch++;
-        g_parallel_experiment.fallback_count++;
-    }
 #if defined(__GNUC__) || defined(__clang__)
     if (ft8cn_callback_slot_trace_sink == 0 || !wsjtx3_callback_slot_is_enabled()) {
         return;

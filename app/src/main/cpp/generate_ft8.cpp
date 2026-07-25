@@ -198,9 +198,15 @@ Java_com_bg7yoz_ft8cn_ft8transmit_FT8TransmitSignal_GenerateFt8(JNIEnv *env, job
     jshort *_buffer;
     _buffer = (*env).GetShortArrayElements(buffer, nullptr);
     char *str = Jstring2CStr(env, message);
-    generateFt8ToBuffer(str, frequency, _buffer);
+    const int generated = generateFt8ToBuffer(str, frequency, _buffer);
     (*env).ReleaseShortArrayElements(buffer, _buffer, JNI_COMMIT);
     free(str);
+    if (generated <= 0) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) {
+            env->ThrowNew(exceptionClass, "FT8 waveform generation failed");
+        }
+    }
 }
 
 extern "C"
@@ -256,10 +262,22 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFT8_synth_1gfsk(JNIEnv *env, jclass cl
     jfloat *_signal;
     _symbols = (*env).GetByteArrayElements(symbols, nullptr);
     _signal = (*env).GetFloatArrayElements(signal, nullptr);
-    synth_gfsk((uint8_t *) _symbols, n_sym, f0, symbol_bt, symbol_period, signal_rate, _signal + offset);
+    const int generated = synth_gfsk((uint8_t *) _symbols,
+                                     n_sym,
+                                     f0,
+                                     symbol_bt,
+                                     symbol_period,
+                                     signal_rate,
+                                     _signal + offset);
 
     (*env).ReleaseByteArrayElements(symbols, _symbols, JNI_COMMIT);
     (*env).ReleaseFloatArrayElements(signal, _signal, JNI_COMMIT);
+    if (generated <= 0) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass != nullptr) {
+            env->ThrowNew(exceptionClass, "GFSK waveform generation failed");
+        }
+    }
 }
 
 /**
@@ -349,7 +367,7 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
     }
     memset(signal, 0, sizeof(float) * numSamples);
 
-    synth_gfsk(
+    const int generated = synth_gfsk(
             tones,
             nn,
             frequency,
@@ -358,6 +376,13 @@ Java_com_bg7yoz_ft8cn_ft8transmit_GenerateFTx_generateFtXNative(
             sampleRate,
             signal
     );
+    if (generated != numSamples) {
+        LOGE("FTX waveform generation failed: mode=%d sampleRate=%d text=%s rc=%d",
+             mode, sampleRate, text, generated);
+        free(tones);
+        free(signal);
+        return nullptr;
+    }
 
     jfloatArray result = env->NewFloatArray(numSamples);
     if (result == nullptr) {

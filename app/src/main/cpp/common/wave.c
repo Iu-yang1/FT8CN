@@ -109,7 +109,8 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     fread((void*)subChunk2ID, sizeof(subChunk2ID), 1, f);
     fread((void*)&subChunk2Size, sizeof(subChunk2Size), 1, f);
 
-    if (subChunk2Size / blockAlign > *num_samples)
+    if (blockAlign == 0 || *num_samples < 0 ||
+        subChunk2Size / blockAlign > (uint32_t)*num_samples)
         return -2;
 
     *num_samples = subChunk2Size / blockAlign;

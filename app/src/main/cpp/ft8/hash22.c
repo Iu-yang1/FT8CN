@@ -8,7 +8,8 @@
 uint32_t hashcall(char* call, int m)
 {
     const char *chars = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/";
-    char callsign[11]="           ";
+    char callsign[11];
+    memset(callsign, ' ', sizeof(callsign));
 
     char *temp=call;
 

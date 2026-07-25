@@ -18,18 +18,24 @@ int ftx_pack_message(const char *message, uint8_t payload[FTX_PAYLOAD_BYTES]) {
 }
 
 int ftx_unpack_message(const uint8_t payload[FTX_PAYLOAD_BYTES], char *message, int message_capacity) {
-    char unpacked[80];
+    message_t unpacked;
+    size_t text_length;
 
     if (payload == NULL || message == NULL || message_capacity <= 0) {
         return -1;
     }
 
-    memset(unpacked, 0, sizeof(unpacked));
-    if (unpack77(payload, unpacked) < 0) {
+    memset(&unpacked, 0, sizeof(unpacked));
+    if (unpackToMessage_t(payload, &unpacked) < 0) {
         return -1;
     }
 
-    snprintf(message, (size_t) message_capacity, "%s", unpacked);
+    text_length = strlen(unpacked.text);
+    if (text_length >= (size_t) message_capacity) {
+        message[0] = '\0';
+        return -2;
+    }
+    memcpy(message, unpacked.text, text_length + 1u);
     return 0;
 }
 
@@ -76,6 +82,7 @@ int ftx_build_a91(const uint8_t payload[FTX_PAYLOAD_BYTES], uint8_t a91[FTX_PAYL
 }
 
 int ftx_check_crc(const uint8_t a91[FTX_PAYLOAD_BYTES]) {
+    uint8_t crc_input[FTX_PAYLOAD_BYTES];
     uint16_t extracted;
     uint16_t calculated;
 
@@ -84,7 +91,12 @@ int ftx_check_crc(const uint8_t a91[FTX_PAYLOAD_BYTES]) {
     }
 
     extracted = ftx_extract_crc(a91);
-    calculated = ftx_compute_crc(a91, 77);
+    memcpy(crc_input, a91, sizeof(crc_input));
+    /* 官方 decoder 对 77 bit payload 后补 5 个零，再计算前 82 bit。 */
+    crc_input[9] &= 0xF8u;
+    crc_input[10] = 0u;
+    crc_input[11] = 0u;
+    calculated = ftx_compute_crc(crc_input, 82);
     return extracted == calculated;
 }
 

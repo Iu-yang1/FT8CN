@@ -157,11 +157,11 @@ int main(void) {
     const char *his_call = read_env_string("FT8CN_SMOKE_HIS_CALL", "");
     const char *his_grid = read_env_string("FT8CN_SMOKE_HIS_GRID", "");
     const char *ft8_sample_path = read_env_string("FT8CN_SMOKE_FT8_PATH",
-                                                  "H:/iu_yang1/study/FT8CN/ft8cn/.tmp_wsjtx/samples/FT8/210703_133430.wav");
+                                                  ".tmp_wsjtx/samples/FT8/210703_133430.wav");
     const char *ft4_sample_path = read_env_string("FT8CN_SMOKE_FT4_PATH",
-                                                  "H:/iu_yang1/study/FT8CN/ft8cn/.tmp_wsjtx/samples/FT4/000000_000002.wav");
+                                                  ".tmp_wsjtx/samples/FT4/000000_000002.wav");
     const char *q65_sample_path = read_env_string("FT8CN_SMOKE_Q65_PATH",
-                                                  "H:/iu_yang1/study/FT8CN/ft8cn/.tmp_wsjtx/samples/Q65/60A_EME_6m/210106_1621.wav");
+                                                  ".tmp_wsjtx/samples/Q65/60A_EME_6m/210106_1621.wav");
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
 

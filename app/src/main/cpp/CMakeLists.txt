@@ -4,15 +4,17 @@ project("ft8cn")
 
 option(FT8CN_ENABLE_WSJTX3_BACKEND "Enable official WSJT-X 3.0 backend bridge" ON)
 
-if (DEFINED ANDROID_NDK AND NOT ANDROID_NDK STREQUAL "")
-    set(FT8CN_WSJTX3_NDK_ROOT_DEFAULT "${ANDROID_NDK}")
-else ()
-    set(FT8CN_WSJTX3_NDK_ROOT_DEFAULT "H:/iu_yang1/AndroidSDKLIB/ndk/23.1.7779620")
+set(FT8CN_WSJTX3_NDK_ROOT "${ANDROID_NDK}" CACHE PATH "Android NDK root; empty lets the build script discover it")
+set(FT8CN_WSJTX3_FLANG_PATH "$ENV{FT8CN_FLANG_PATH}" CACHE FILEPATH "Android-capable Flang; empty enables discovery")
+set(FT8CN_WSJTX3_BOOST_HEADERS "$ENV{BOOST_ROOT}" CACHE PATH "Boost headers; empty enables discovery")
+set(FT8CN_WSJTX3_LLVM_SOURCE_ROOT "$ENV{LLVM_SOURCE_ROOT}" CACHE PATH "LLVM source root used for isolated flang-rt build")
+set(FT8CN_WSJTX3_BUILD_PROFILE "Auto" CACHE STRING "WSJT-X core profile: Auto, Debug, Profile, or Release")
+set_property(CACHE FT8CN_WSJTX3_BUILD_PROFILE PROPERTY STRINGS Auto Debug Profile Release)
+set(FT8CN_WSJTX3_OPTIMIZATION "O2" CACHE STRING "WSJT-X release optimization: O2 or O3")
+set_property(CACHE FT8CN_WSJTX3_OPTIMIZATION PROPERTY STRINGS O2 O3)
+if (NOT FT8CN_WSJTX3_OPTIMIZATION MATCHES "^O[23]$")
+    message(FATAL_ERROR "FT8CN_WSJTX3_OPTIMIZATION must be O2 or O3")
 endif ()
-
-set(FT8CN_WSJTX3_FLANG_PATH "H:/tools/build/llvm-flang-22.1.5-clangcl/bin/flang.exe" CACHE FILEPATH "Path to the Android-capable flang compiler")
-set(FT8CN_WSJTX3_BOOST_HEADERS "H:/tools/boost_headers" CACHE PATH "Path to standalone Boost headers used by wsjtx3 Android bridge")
-set(FT8CN_WSJTX3_NDK_ROOT "${FT8CN_WSJTX3_NDK_ROOT_DEFAULT}" CACHE PATH "Path to Android NDK root used by wsjtx3 Android bridge")
 
 add_library(
         ftx_core
@@ -82,28 +84,54 @@ target_include_directories(
 set(FT8CN_WSJTX3_BACKEND_ACTIVE 0)
 set(FT8CN_WSJTX3_BACKEND_REQUESTED ${FT8CN_ENABLE_WSJTX3_BACKEND})
 
-# 统一到官方 WSJT-X 3.0 backend 后，Android 侧必须显式启用官方 core。
-if (NOT FT8CN_ENABLE_WSJTX3_BACKEND
-        AND ANDROID
-        AND CMAKE_HOST_WIN32
-        AND ANDROID_ABI STREQUAL "arm64-v8a"
-        AND EXISTS "${FT8CN_WSJTX3_FLANG_PATH}"
-        AND EXISTS "${FT8CN_WSJTX3_BOOST_HEADERS}")
-    message(STATUS "Overriding cached FT8CN_ENABLE_WSJTX3_BACKEND=OFF for arm64-v8a official WSJT-X core build")
-    set(FT8CN_WSJTX3_BACKEND_REQUESTED ON)
-endif ()
-
 if (FT8CN_WSJTX3_BACKEND_REQUESTED
         AND ANDROID
         AND CMAKE_HOST_WIN32
-        AND ANDROID_ABI STREQUAL "arm64-v8a"
-        AND EXISTS "${FT8CN_WSJTX3_FLANG_PATH}"
-        AND EXISTS "${FT8CN_WSJTX3_BOOST_HEADERS}")
+        AND ANDROID_ABI STREQUAL "arm64-v8a")
     set(WSJTX3_ANDROID_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/wsjtx3_android/${ANDROID_ABI}")
     set(WSJTX3_ANDROID_CORE_LIB "${WSJTX3_ANDROID_OUT_DIR}/libwsjtx3_official_core.a")
     set(WSJTX3_ANDROID_RUNTIME_LIB "${WSJTX3_ANDROID_OUT_DIR}/libflang_rt.runtime.a")
-    set(WSJTX3_ANDROID_OPENMP_LIB
-            "${FT8CN_WSJTX3_NDK_ROOT}/toolchains/llvm/prebuilt/windows-x86_64/lib64/clang/12.0.8/lib/linux/aarch64/libomp.a")
+    set(WSJTX3_SOURCE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/wsjtx3-sources.manifest")
+    set(WSJTX3_MANIFEST_DEPENDS "${WSJTX3_SOURCE_MANIFEST}")
+    file(STRINGS "${WSJTX3_SOURCE_MANIFEST}" WSJTX3_MANIFEST_LINES)
+    foreach (manifest_line IN LISTS WSJTX3_MANIFEST_LINES)
+        string(STRIP "${manifest_line}" manifest_line)
+        if (manifest_line STREQUAL "" OR manifest_line MATCHES "^#")
+            continue()
+        endif ()
+        string(REPLACE "|" ";" manifest_fields "${manifest_line}")
+        list(LENGTH manifest_fields manifest_field_count)
+        if (NOT manifest_field_count EQUAL 2)
+            message(FATAL_ERROR "Invalid WSJT-X source manifest line: ${manifest_line}")
+        endif ()
+        list(GET manifest_fields 1 source_relative_path)
+        set(manifest_source "${CMAKE_CURRENT_SOURCE_DIR}/${source_relative_path}")
+        if (NOT EXISTS "${manifest_source}")
+            message(FATAL_ERROR "WSJT-X manifest source does not exist: ${manifest_source}")
+        endif ()
+        list(APPEND WSJTX3_MANIFEST_DEPENDS "${manifest_source}")
+    endforeach ()
+
+    if (FT8CN_WSJTX3_BUILD_PROFILE STREQUAL "Auto")
+        if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+            set(WSJTX3_EFFECTIVE_BUILD_PROFILE "Debug")
+        else ()
+            set(WSJTX3_EFFECTIVE_BUILD_PROFILE "Release")
+        endif ()
+    else ()
+        set(WSJTX3_EFFECTIVE_BUILD_PROFILE "${FT8CN_WSJTX3_BUILD_PROFILE}")
+    endif ()
+    set(WSJTX3_TOOL_STAMP "${CMAKE_CURRENT_BINARY_DIR}/wsjtx3-tool-config.stamp")
+    file(GENERATE OUTPUT "${WSJTX3_TOOL_STAMP}" CONTENT
+            "profile=${WSJTX3_EFFECTIVE_BUILD_PROFILE}\noptimization=${FT8CN_WSJTX3_OPTIMIZATION}\nflang=${FT8CN_WSJTX3_FLANG_PATH}\nndk=${FT8CN_WSJTX3_NDK_ROOT}\nboost=${FT8CN_WSJTX3_BOOST_HEADERS}\nllvm=${FT8CN_WSJTX3_LLVM_SOURCE_ROOT}\n")
+
+    set(WSJTX3_TOOL_DEPENDS "${WSJTX3_TOOL_STAMP}")
+    foreach (tool_path IN ITEMS "${FT8CN_WSJTX3_FLANG_PATH}"
+            "${FT8CN_WSJTX3_NDK_ROOT}/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe")
+        if (EXISTS "${tool_path}")
+            list(APPEND WSJTX3_TOOL_DEPENDS "${tool_path}")
+        endif ()
+    endforeach ()
 
     add_custom_command(
             OUTPUT "${WSJTX3_ANDROID_CORE_LIB}" "${WSJTX3_ANDROID_RUNTIME_LIB}"
@@ -115,21 +143,16 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
             -NdkRoot "${FT8CN_WSJTX3_NDK_ROOT}"
             -FlangPath "${FT8CN_WSJTX3_FLANG_PATH}"
             -BoostHeaders "${FT8CN_WSJTX3_BOOST_HEADERS}"
+            -LlvmSourceRoot "${FT8CN_WSJTX3_LLVM_SOURCE_ROOT}"
+            -BuildProfile "${WSJTX3_EFFECTIVE_BUILD_PROFILE}"
+            -Optimization "${FT8CN_WSJTX3_OPTIMIZATION}"
             DEPENDS
+            ${WSJTX3_MANIFEST_DEPENDS}
+            ${WSJTX3_TOOL_DEPENDS}
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/build_flang_rt_android.ps1"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/build_wsjtx3_android_core.ps1"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/fftw3f_kiss_shim.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/complex_math_shim.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/fft/kiss_fft.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/fft/kiss_fftr.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/CMakeLists.txt"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_bridge.f90"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_host_support.f90"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_phase_trace.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_openmp_probe.f90"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/ft8_decode.f90"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/ft8/ft8b.f90"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/vendor/wsjtx-3.0.0/lib/q65_decode.f90"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/patches/flang-rt-android-time.patch"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../../../scripts/toolchain-common.ps1"
             VERBATIM
     )
 
@@ -146,11 +169,7 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
             IMPORTED_LOCATION "${WSJTX3_ANDROID_RUNTIME_LIB}")
     add_dependencies(wsjtx3_flang_rt wsjtx3_android_core_build)
 
-    add_library(wsjtx3_openmp_runtime STATIC IMPORTED GLOBAL)
-    set_target_properties(wsjtx3_openmp_runtime PROPERTIES
-            IMPORTED_LOCATION "${WSJTX3_ANDROID_OPENMP_LIB}")
-
-    target_link_libraries(ftx_core PUBLIC wsjtx3_official_core wsjtx3_flang_rt wsjtx3_openmp_runtime)
+    target_link_libraries(ftx_core PUBLIC wsjtx3_official_core wsjtx3_flang_rt)
     set(FT8CN_WSJTX3_BACKEND_ACTIVE 1)
 endif ()
 

@@ -109,7 +109,10 @@ static bool synthesize_message(const char *text,
 
     const int wave_samples = (int) std::lround(nn * symbol_period * kSampleRate);
     std::vector<float> wave((size_t) wave_samples, 0.0f);
-    synth_gfsk(tones.data(), nn, frequency, symbol_bt, symbol_period, kSampleRate, wave.data());
+    if (synth_gfsk(tones.data(), nn, frequency, symbol_bt, symbol_period, kSampleRate, wave.data()) !=
+        wave_samples) {
+        return false;
+    }
 
     slot->assign((size_t) slot_samples_for_mode(mode), 0.0f);
     const int copy_count = std::min((int) slot->size(), wave_samples);
