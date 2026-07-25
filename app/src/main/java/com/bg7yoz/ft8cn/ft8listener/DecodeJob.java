@@ -11,6 +11,7 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
     final String enqueueReason;
     final long enqueueWallClockMs;
     final Runnable delegate;
+    final Runnable afterSchedulerRelease;
     private Runnable beforeRun;
     private Runnable afterRun;
 
@@ -23,7 +24,8 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
               String sourceTag,
               String enqueueReason,
               long enqueueWallClockMs,
-              Runnable delegate) {
+              Runnable delegate,
+              Runnable afterSchedulerRelease) {
         this.requestSequence = requestSequence;
         this.triggerSequence = triggerSequence;
         this.stage = stage;
@@ -34,6 +36,7 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
         this.enqueueReason = enqueueReason;
         this.enqueueWallClockMs = enqueueWallClockMs;
         this.delegate = delegate;
+        this.afterSchedulerRelease = afterSchedulerRelease;
     }
 
     void setBeforeRun(Runnable beforeRun) {

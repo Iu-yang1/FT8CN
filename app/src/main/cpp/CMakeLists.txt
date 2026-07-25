@@ -37,6 +37,7 @@ add_library(
         ft8/encode.c
         ft8/pack.c
 
+        common/resampler.c
         common/wave.c
         monitor_opr.c
         ft8Decoder.c
@@ -59,6 +60,7 @@ add_library(
         generate_ft8.cpp
         diagnostics/ap_regression.cpp
         diagnostics/sample_decode.cpp
+        ft8Resample.cpp
         ft8Listener.cpp
         ft8Spectrum.cpp
         experimentalCodec.cpp

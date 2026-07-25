@@ -25,7 +25,16 @@ void wsjtx3_backend_set_ldpc_iterations(decoder_t *decoder, int iterations);
 void wsjtx3_backend_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
 void wsjtx3_backend_set_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
 void wsjtx3_backend_set_q65_config(decoder_t *decoder, int q65_submode, int q65_tr_period_seconds);
+void wsjtx3_backend_set_input_context(decoder_t *decoder,
+                                      bool input_is_live,
+                                      int qso_frequency_hz,
+                                      int tx_frequency_hz,
+                                      int source_sample_rate,
+                                      int decode_stage);
 void wsjtx3_backend_configure_runtime_dirs(const char *temp_dir, const char *data_dir);
+int wsjtx3_backend_q65_required_samples(int q65_tr_period,
+                                        int sample_rate,
+                                        size_t *required_samples);
 int wsjtx3_backend_generate_q65_wave(const char *message,
                                      int q65_submode,
                                      int q65_tr_period,

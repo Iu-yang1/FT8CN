@@ -13,9 +13,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <climits>
 
 extern "C" {
 #include "common/debug.h"
+#include "common/q65_wave_size.h"
 #include "ft8Encoder.h"
 #include "ft8/pack.h"
 #include "ft8/encode.h"
@@ -29,10 +31,8 @@ extern "C" {
 static constexpr jint SIGNAL_MODE_FT8 = 0;
 static constexpr jint SIGNAL_MODE_FT4 = 1;
 static constexpr jint SIGNAL_MODE_Q65 = 2;
-static constexpr int Q65_SYMBOL_COUNT = 85;
-
 static int normalizeQ65Submode(int q65Submode) {
-    if (q65Submode < 0 || q65Submode > 5) {
+    if (q65Submode < 0 || q65Submode > 4) {
         return 0;
     }
     return q65Submode;
@@ -48,22 +48,6 @@ static int normalizeQ65TrPeriodSeconds(int q65TrPeriodSeconds) {
             return q65TrPeriodSeconds;
         default:
             return 60;
-    }
-}
-
-static int q65BaseNspsForPeriod12k(int q65TrPeriodSeconds) {
-    switch (normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds)) {
-        case 15:
-            return 1800;
-        case 30:
-            return 3600;
-        case 120:
-            return 16000;
-        case 300:
-            return 41472;
-        case 60:
-        default:
-            return 7200;
     }
 }
 
@@ -127,22 +111,38 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
     q65Submode = normalizeQ65Submode(q65Submode);
     q65TrPeriodSeconds = normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds);
 
-    const int baseNsps12k = q65BaseNspsForPeriod12k(q65TrPeriodSeconds);
-    const int modeFactor = 1 << q65Submode;
-    int scaledNsps = static_cast<int>(std::lround(
-            static_cast<double>(baseNsps12k * modeFactor) * static_cast<double>(sampleRate) / 12000.0));
-    if (scaledNsps < 1) {
-        scaledNsps = 1;
-    }
-
-    const int capacity = Q65_SYMBOL_COUNT * scaledNsps;
-    float *signal = static_cast<float *>(malloc(sizeof(float) * capacity));
-    if (signal == nullptr) {
-        LOGE("Q65 TX waveform generation failed: reason=malloc-null mode=Q65 submode=%c trPeriod=%d sampleRate=%d freq=%.1f text=%s capacity=%d",
-             'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, messageText, capacity);
+    size_t capacitySize = 0;
+    if (!ftx_q65_required_samples(q65TrPeriodSeconds, sampleRate, &capacitySize)
+        || capacitySize > static_cast<size_t>(INT_MAX)) {
+        LOGE("Q65 TX waveform generation failed: reason=invalid-capacity submode=%c trPeriod=%d sampleRate=%d",
+             'A' + q65Submode, q65TrPeriodSeconds, sampleRate);
         return nullptr;
     }
-    memset(signal, 0, sizeof(float) * capacity);
+
+    const int capacity = static_cast<int>(capacitySize);
+    const int scaledNsps = capacity / 85;
+    const int modeFactor = 1 << q65Submode;
+    const double toneSpacing = static_cast<double>(sampleRate)
+                               / static_cast<double>(scaledNsps) * modeFactor;
+    const double highestToneHz = static_cast<double>(frequency) + 64.0 * toneSpacing;
+    if (!std::isfinite(frequency) || frequency < 0.0f
+        || highestToneHz >= static_cast<double>(sampleRate) * 0.5) {
+        LOGE("Q65 TX waveform generation failed: reason=nyquist submode=%c trPeriod=%d sampleRate=%d freq=%.1f highestTone=%.1f",
+             'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, highestToneHz);
+        return nullptr;
+    }
+
+    jfloatArray result = env->NewFloatArray(capacity);
+    if (result == nullptr) {
+        LOGE("Q65 TX waveform generation failed: reason=new-float-array-null mode=Q65 submode=%c trPeriod=%d sampleRate=%d capacity=%d",
+             'A' + q65Submode, q65TrPeriodSeconds, sampleRate, capacity);
+        return nullptr;
+    }
+    jfloat *signal = env->GetFloatArrayElements(result, nullptr);
+    if (signal == nullptr) {
+        env->DeleteLocalRef(result);
+        return nullptr;
+    }
 
     const int generated = wsjtx3_backend_generate_q65_wave(
             messageText,
@@ -153,10 +153,11 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
             signal,
             capacity
     );
-    if (generated <= 0 || generated > capacity) {
+    if (generated != capacity) {
         LOGE("Q65 TX waveform generation failed: reason=backend-generate-failed mode=Q65 submode=%c trPeriod=%d sampleRate=%d freq=%.1f text=%s generated=%d capacity=%d",
              'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, messageText, generated, capacity);
-        free(signal);
+        env->ReleaseFloatArrayElements(result, signal, JNI_ABORT);
+        env->DeleteLocalRef(result);
         return nullptr;
     }
 
@@ -174,18 +175,9 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
                         ? static_cast<double>(generated) * 1000.0 / static_cast<double>(sampleRate)
                         : 0.0;
 
-    jfloatArray result = env->NewFloatArray(generated);
-    if (result == nullptr) {
-        LOGE("Q65 TX waveform generation failed: reason=new-float-array-null mode=Q65 submode=%c trPeriod=%d sampleRate=%d freq=%.1f text=%s generated=%d",
-             'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, messageText, generated);
-        free(signal);
-        return nullptr;
-    }
-
-    env->SetFloatArrayRegion(result, 0, generated, signal);
+    env->ReleaseFloatArrayElements(result, signal, 0);
     LOGI("Q65 TX waveform generated: submode=%c trPeriod=%ds sampleRate=%d freq=%.1f samples=%d durationMs=%.1f peak=%.6f rms=%.6f text=%s",
          'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, generated, durationMs, peak, rms, messageText);
-    free(signal);
     return result;
 }
 

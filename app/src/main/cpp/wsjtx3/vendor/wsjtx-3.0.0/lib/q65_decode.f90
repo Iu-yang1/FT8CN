@@ -4,6 +4,7 @@ module q65_decode
   integer nsnr0,nfreq0
   real xdt0
   character msg0*37,cq0*3
+  logical :: q65_file_io_enabled = .true.
 
   type :: q65_decoder
      procedure(q65_decode_callback), pointer :: callback
@@ -391,8 +392,9 @@ contains
           if(iand(ndepth,128).ne.0 .and. .not.lagain .and.      &
                int(abs(f0dec-nfqso)).le.ntol ) call q65_clravg    !AutoClrAvg
           call sec0(1,tdecode)
-          open(22,file=trim(data_dir)//'/q65_decodes.txt',status='unknown',  &
-               position='append',iostat=ios)
+          ios=1
+          if(q65_file_io_enabled) open(22,file=trim(data_dir)//'/q65_decodes.txt', &
+               status='unknown',position='append',iostat=ios)
           if(ios.eq.0) then
 ! Save decoding parameters to q65_decoded.dat, for later analysis.
              write(cmode,'(i3)') ntrperiod
@@ -510,8 +512,8 @@ contains
                   int(abs(f0dec-nfqso)).le.ntol ) call q65_clravg    !AutoClrAvg
              call sec0(1,tdecode)
              ios=1
-             open(22,file=trim(data_dir)//'/q65_decodes.txt',status='unknown',&
-                  position='append',iostat=ios)
+             if(q65_file_io_enabled) open(22,file=trim(data_dir)//'/q65_decodes.txt', &
+                  status='unknown',position='append',iostat=ios)
              if(ios.eq.0) then
 ! Save decoding parameters to q65_decoded.dat, for later analysis.
                 write(cmode,'(i3)') ntrperiod

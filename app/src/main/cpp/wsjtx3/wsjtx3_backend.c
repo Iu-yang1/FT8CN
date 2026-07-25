@@ -1,4 +1,5 @@
 #include "wsjtx3_backend.h"
+#include "../common/q65_wave_size.h"
 
 #include "wsjtx3_bridge.h"
 #include "../ft8/constants.h"
@@ -157,20 +158,17 @@ void ft8cn_vendor_phase_trace_sink(int handle,
             sample_count,
             duration_us);
 #else
-    (void) handle;
-    (void) active_context;
-    (void) mode;
-    (void) phase;
-    (void) utc_time;
-    (void) decode_pass_count;
-    (void) multi_decode_round_count;
-    (void) q65_submode;
-    (void) q65_tr_period;
-    (void) sample_count;
-    (void) pass_index;
-    (void) candidate_count;
-    (void) decoded_count;
-    (void) duration_us;
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    fprintf(stderr,
+            "vendorPhase phase=%s mode=%d handle=%d activeContext=%d utc=%lld "
+            "profilePass=%d profileRound=%d pass=%d candidates=%d decoded=%d "
+            "q65Submode=%d q65TrPeriod=%d samples=%d durationUs=%lld\n",
+            trace_phase_label(phase), mode, handle, active_context, utc_time,
+            decode_pass_count, multi_decode_round_count, pass_index,
+            candidate_count, decoded_count, q65_submode, q65_tr_period,
+            sample_count, duration_us);
 #endif
 }
 
@@ -210,25 +208,19 @@ void ft8cn_ft8b_trace_sink(int handle,
             total_us, average_us, max_us, downsample_us, ap_us, ldpc_us, validation_us,
             unpack_us, subtract_us, other_us);
 #else
-    (void) handle;
-    (void) active_context;
-    (void) utc_time;
-    (void) profile_pass_count;
-    (void) profile_round_count;
-    (void) pass_index;
-    (void) candidate_count;
-    (void) success_count;
-    (void) fail_count;
-    (void) new_decode_count;
-    (void) total_us;
-    (void) max_us;
-    (void) downsample_us;
-    (void) ap_us;
-    (void) ldpc_us;
-    (void) validation_us;
-    (void) unpack_us;
-    (void) subtract_us;
-    (void) other_us;
+    const long long average_us = candidate_count > 0 ? total_us / candidate_count : 0;
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    fprintf(stderr,
+            "ft8bTrace handle=%d activeContext=%d utc=%lld profilePass=%d profileRound=%d "
+            "pass=%d candidates=%d success=%d fail=%d newDecodes=%d totalUs=%lld "
+            "avgUs=%lld maxUs=%lld downsampleUs=%lld apUs=%lld ldpcUs=%lld "
+            "validationUs=%lld unpackUs=%lld subtractUs=%lld otherUs=%lld\n",
+            handle, active_context, utc_time, profile_pass_count, profile_round_count,
+            pass_index, candidate_count, success_count, fail_count, new_decode_count,
+            total_us, average_us, max_us, downsample_us, ap_us, ldpc_us,
+            validation_us, unpack_us, subtract_us, other_us);
 #endif
 }
 
@@ -267,24 +259,18 @@ void ft8cn_ldpc_trace_sink(int handle,
             total_us, setup_us, bp_llr_syndrome_us, bp_bit_to_check_us, bp_check_to_var_us,
             osd_us, other_us);
 #else
-    (void) handle;
-    (void) active_context;
-    (void) utc_time;
-    (void) profile_pass_count;
-    (void) profile_round_count;
-    (void) pass_index;
-    (void) call_count;
-    (void) bp_iterations;
-    (void) osd_calls;
-    (void) bp_success_count;
-    (void) osd_success_count;
-    (void) total_us;
-    (void) setup_us;
-    (void) bp_llr_syndrome_us;
-    (void) bp_bit_to_check_us;
-    (void) bp_check_to_var_us;
-    (void) osd_us;
-    (void) other_us;
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    fprintf(stderr,
+            "ldpcTrace handle=%d activeContext=%d utc=%lld profilePass=%d profileRound=%d "
+            "pass=%d calls=%d bpIterations=%d osdCalls=%d bpSuccess=%d osdSuccess=%d "
+            "totalUs=%lld setupUs=%lld bpLlrSyndromeUs=%lld bpBitToCheckUs=%lld "
+            "bpCheckToVarUs=%lld osdUs=%lld otherUs=%lld\n",
+            handle, active_context, utc_time, profile_pass_count, profile_round_count,
+            pass_index, call_count, bp_iterations, osd_calls, bp_success_count,
+            osd_success_count, total_us, setup_us, bp_llr_syndrome_us,
+            bp_bit_to_check_us, bp_check_to_var_us, osd_us, other_us);
 #endif
 }
 
@@ -340,34 +326,25 @@ void ft8cn_osd_trace_sink(int handle,
             matrix_copy_us, gaussian_elim_us, matrix_permute_us, order0_us, order1_search_us,
             higher_order_search_us, second_preprocess_us, validation_us, other_us);
 #else
-    (void) handle;
-    (void) active_context;
-    (void) utc_time;
-    (void) profile_pass_count;
-    (void) profile_round_count;
-    (void) pass_index;
-    (void) call_count;
-    (void) success_count;
-    (void) fail_count;
-    (void) total_us;
-    (void) max_us;
-    (void) success_total_us;
-    (void) success_max_us;
-    (void) fail_total_us;
-    (void) fail_max_us;
-    (void) allocation_init_us;
-    (void) generator_init_us;
-    (void) input_prepare_us;
-    (void) sort_us;
-    (void) matrix_copy_us;
-    (void) gaussian_elim_us;
-    (void) matrix_permute_us;
-    (void) order0_us;
-    (void) order1_search_us;
-    (void) higher_order_search_us;
-    (void) second_preprocess_us;
-    (void) validation_us;
-    (void) other_us;
+    const long long average_us = call_count > 0 ? total_us / call_count : 0;
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    fprintf(stderr,
+            "osdTrace handle=%d activeContext=%d utc=%lld profilePass=%d profileRound=%d "
+            "pass=%d calls=%d success=%d fail=%d totalUs=%lld avgUs=%lld maxUs=%lld "
+            "successTotalUs=%lld successMaxUs=%lld failTotalUs=%lld failMaxUs=%lld "
+            "allocationInitUs=%lld generatorInitUs=%lld inputPrepareUs=%lld sortUs=%lld "
+            "matrixCopyUs=%lld gaussianElimUs=%lld matrixPermuteUs=%lld order0Us=%lld "
+            "order1SearchUs=%lld higherOrderSearchUs=%lld secondPreprocessUs=%lld "
+            "validationUs=%lld otherUs=%lld\n",
+            handle, active_context, utc_time, profile_pass_count, profile_round_count,
+            pass_index, call_count, success_count, fail_count, total_us, average_us,
+            max_us, success_total_us, success_max_us, fail_total_us, fail_max_us,
+            allocation_init_us, generator_init_us, input_prepare_us, sort_us,
+            matrix_copy_us, gaussian_elim_us, matrix_permute_us, order0_us,
+            order1_search_us, higher_order_search_us, second_preprocess_us,
+            validation_us, other_us);
 #endif
 }
 
@@ -380,7 +357,8 @@ int ft8cn_native_phase_trace_enabled(void) {
     cached_enabled = android_log_tag_debug_enabled(WSJTX3_PHASE_LOG_TAG);
     return cached_enabled;
 #else
-    return 0;
+    const char *value = getenv("FT8CN_PHASE_TRACE");
+    return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
 #endif
 }
 
@@ -462,18 +440,15 @@ void ft8cn_native_phase_trace_sink(int handle,
             result_count,
             duration_us);
 #else
-    (void) handle;
-    (void) active_context;
-    (void) mode;
-    (void) phase;
-    (void) utc_time;
-    (void) decode_pass_count;
-    (void) multi_decode_round_count;
-    (void) q65_submode;
-    (void) q65_tr_period;
-    (void) sample_count;
-    (void) result_count;
-    (void) duration_us;
+    if (!ft8cn_native_phase_trace_enabled()) {
+        return;
+    }
+    fprintf(stderr,
+            "nativePhase phase=%s mode=%d handle=%d activeContext=%d utc=%lld pass=%d "
+            "round=%d q65Submode=%d q65TrPeriod=%d samples=%d results=%d durationUs=%lld\n",
+            trace_phase_label(phase), mode, handle, active_context, utc_time,
+            decode_pass_count, multi_decode_round_count, q65_submode, q65_tr_period,
+            sample_count, result_count, duration_us);
 #endif
 }
 
@@ -487,6 +462,7 @@ enum {
     kQ65DefaultQsoFrequencyHz = 2500,
     kQ65DefaultTxFrequencyHz = 2500,
     kFtxPayloadBytes = 10,
+    kFtxDecodeMaxHz = 3000,
     kQ65DecodeMaxHz = 5000,
     kQ65DefaultTrPeriodSeconds = 60,
     kQ65DefaultSubmode = 0,
@@ -503,6 +479,9 @@ typedef struct {
     int ldpc_iterations;
     int qso_frequency_hz;
     int tx_frequency_hz;
+    int input_is_live;
+    int source_sample_rate;
+    int decode_stage;
     int bridge_handle;
     int mode;
     int q65_submode;
@@ -626,6 +605,12 @@ static void bridge_set_qso_frequencies_locked(int handle,
     wsjtx3_bridge_unlock();
 }
 
+static void bridge_set_input_is_live_locked(int handle, int input_is_live) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_set_input_is_live(handle, input_is_live);
+    wsjtx3_bridge_unlock();
+}
+
 static void bridge_set_runtime_dirs_locked(const char *temp_dir, const char *data_dir) {
     wsjtx3_bridge_lock();
     wsjtx3_bridge_set_runtime_dirs(temp_dir, data_dir);
@@ -705,6 +690,17 @@ static int default_qso_frequency_for_mode(int mode) {
 
 static int default_tx_frequency_for_mode(int mode) {
     return is_q65_mode(mode) ? kQ65DefaultTxFrequencyHz : kWsjtDefaultTxFrequencyHz;
+}
+
+static int clamp_frequency_for_mode(int mode, int frequency_hz) {
+    const int max_frequency_hz = is_q65_mode(mode) ? kQ65DecodeMaxHz : kFtxDecodeMaxHz;
+    if (frequency_hz < 0) {
+        return 0;
+    }
+    if (frequency_hz > max_frequency_hz) {
+        return max_frequency_hz;
+    }
+    return frequency_hz;
 }
 
 static int sanitize_q65_submode(int q65_submode) {
@@ -1267,6 +1263,7 @@ static void sync_bridge_options(wsjtx3_backend_state_t *state) {
     bridge_set_qso_frequencies_locked(state->bridge_handle,
                                       state->qso_frequency_hz,
                                       state->tx_frequency_hz);
+    bridge_set_input_is_live_locked(state->bridge_handle, state->input_is_live);
 #else
     (void) state;
 #endif
@@ -1307,6 +1304,7 @@ static void push_bridge_options(const wsjtx3_backend_state_t *state,
     bridge_set_qso_frequencies_locked(state->bridge_handle,
                                       state->qso_frequency_hz,
                                       state->tx_frequency_hz);
+    bridge_set_input_is_live_locked(state->bridge_handle, state->input_is_live);
     if (trace_enabled) {
         backend_trace(state,
                       "backend.configure",
@@ -1641,6 +1639,9 @@ bool wsjtx3_backend_init_decoder(decoder_t *decoder,
     state->ldpc_iterations = fast_kLDPC_iterations;
     state->qso_frequency_hz = default_qso_frequency_for_mode(mode);
     state->tx_frequency_hz = default_tx_frequency_for_mode(mode);
+    state->input_is_live = 0;
+    state->source_sample_rate = sample_rate;
+    state->decode_stage = 0;
     state->mode = mode;
     state->q65_submode = kQ65DefaultSubmode;
     state->q65_tr_period_seconds = kQ65DefaultTrPeriodSeconds;
@@ -1891,8 +1892,33 @@ void wsjtx3_backend_set_q65_config(decoder_t *decoder, int q65_submode, int q65_
     callback_slot_lifecycle_trace(state, "configure-q65", state->last_merged_count);
 }
 
+void wsjtx3_backend_set_input_context(decoder_t *decoder,
+                                      bool input_is_live,
+                                      int qso_frequency_hz,
+                                      int tx_frequency_hz,
+                                      int source_sample_rate,
+                                      int decode_stage) {
+    wsjtx3_backend_state_t *state = get_state(decoder);
+    if (state == NULL || source_sample_rate <= 0) {
+        return;
+    }
+    state->input_is_live = input_is_live ? 1 : 0;
+    state->qso_frequency_hz = clamp_frequency_for_mode(state->mode, qso_frequency_hz);
+    state->tx_frequency_hz = clamp_frequency_for_mode(state->mode, tx_frequency_hz);
+    state->source_sample_rate = source_sample_rate;
+    state->decode_stage = decode_stage;
+    sync_bridge_options(state);
+    callback_slot_lifecycle_trace(state, "configure-input", state->last_merged_count);
+}
+
 void wsjtx3_backend_configure_runtime_dirs(const char *temp_dir, const char *data_dir) {
     bridge_set_runtime_dirs_locked(temp_dir, data_dir);
+}
+
+int wsjtx3_backend_q65_required_samples(int q65_tr_period,
+                                        int sample_rate,
+                                        size_t *required_samples) {
+    return ftx_q65_required_samples(q65_tr_period, sample_rate, required_samples);
 }
 
 int wsjtx3_backend_generate_q65_wave(const char *message,

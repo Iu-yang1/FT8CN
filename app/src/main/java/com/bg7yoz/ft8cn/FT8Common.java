@@ -4,7 +4,9 @@ package com.bg7yoz.ft8cn;
  * FTx 共用常量与模式辅助方法。
  */
 public final class FT8Common {
-    public static final String[] Q65_SUBMODE_LABELS = {"A", "B", "C", "D", "E", "F"};
+    /** 正式 UI 仅开放 WSJT-X 定义的 Q65A-E。 */
+    public static final String[] Q65_SUBMODE_LABELS = {"A", "B", "C", "D", "E"};
+    private static final String[] Q65_DIAGNOSTIC_SUBMODE_LABELS = {"A", "B", "C", "D", "E", "F"};
     public static final int[] Q65_SUPPORTED_TR_PERIODS = {15, 30, 60, 120, 300};
 
     private FT8Common() {
@@ -58,7 +60,7 @@ public final class FT8Common {
     public static final float Q65_SYMBOL_BT = 0.0f;
 
     public static int normalizeQ65Submode(int submode) {
-        if (submode < Q65_SUBMODE_A || submode > Q65_SUBMODE_F) {
+        if (submode < Q65_SUBMODE_A || submode > Q65_SUBMODE_E) {
             return Q65_SUBMODE_A;
         }
         return submode;
@@ -75,6 +77,16 @@ public final class FT8Common {
 
     public static String getQ65SubmodeLabel(int submode) {
         return Q65_SUBMODE_LABELS[normalizeQ65Submode(submode)];
+    }
+
+    public static int normalizeQ65DiagnosticSubmode(int submode) {
+        return submode >= Q65_SUBMODE_A && submode <= Q65_SUBMODE_F
+                ? submode
+                : Q65_SUBMODE_A;
+    }
+
+    public static String getQ65DiagnosticSubmodeLabel(int submode) {
+        return Q65_DIAGNOSTIC_SUBMODE_LABELS[normalizeQ65DiagnosticSubmode(submode)];
     }
 
     public static String getQ65ModeLabel(int submode, int trPeriodSeconds) {

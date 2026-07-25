@@ -80,6 +80,12 @@ void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations);
 void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
 void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
 void decoder_set_q65_config(decoder_t *decoder, int q65_submode, int q65_tr_period_seconds);
+void decoder_set_input_context(decoder_t *decoder,
+                               bool input_is_live,
+                               int qso_frequency_hz,
+                               int tx_frequency_hz,
+                               int source_sample_rate,
+                               int decode_stage);
 void decoder_configure_runtime_dirs(const char *temp_dir, const char *data_dir);
 bool decoder_owns_session_flow(decoder_t *decoder);
 void decoder_subtract_signal(decoder_t *decoder,

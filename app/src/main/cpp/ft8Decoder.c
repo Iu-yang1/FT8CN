@@ -207,6 +207,23 @@ void decoder_set_q65_config(decoder_t *decoder, int q65_submode, int q65_tr_peri
     wsjtx3_backend_set_q65_config(decoder, q65_submode, q65_tr_period_seconds);
 }
 
+void decoder_set_input_context(decoder_t *decoder,
+                               bool input_is_live,
+                               int qso_frequency_hz,
+                               int tx_frequency_hz,
+                               int source_sample_rate,
+                               int decode_stage) {
+    if (decoder == NULL) {
+        return;
+    }
+    wsjtx3_backend_set_input_context(decoder,
+                                     input_is_live,
+                                     qso_frequency_hz,
+                                     tx_frequency_hz,
+                                     source_sample_rate,
+                                     decode_stage);
+}
+
 void decoder_configure_runtime_dirs(const char *temp_dir, const char *data_dir) {
     wsjtx3_backend_configure_runtime_dirs(temp_dir, data_dir);
 }

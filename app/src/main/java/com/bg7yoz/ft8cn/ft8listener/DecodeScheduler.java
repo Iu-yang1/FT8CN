@@ -91,6 +91,9 @@ final class DecodeScheduler {
                 @Override
                 public void run() {
                     activePriorities.decrementAndGet(job.priority.ordinal());
+                    if (job.afterSchedulerRelease != null) {
+                        job.afterSchedulerRelease.run();
+                    }
                 }
             });
             executor.execute(job);
@@ -184,7 +187,10 @@ final class DecodeScheduler {
             if (queueSize > workerConfig.lowPriorityBacklogLimit) {
                 return "deep-backlog";
             }
-            if (activeCount >= workerConfig.workerCount) {
+            // ThreadPoolExecutor 在任务 run() 返回前仍把当前 worker 计为 active。
+            // 父 LIVE_FULL 已释放 priority 后排入的同 trigger deep follow-up 可以等待
+            // 当前 worker 返回；其他活跃任务仍会阻止 deep 插队。
+            if (activeCount >= workerConfig.workerCount && hasAnyActivePriority()) {
                 return "deep-workers-busy";
             }
             if (hasPendingPriorityAtLeast(executor, DecodePriority.EARLY)) {
@@ -204,6 +210,15 @@ final class DecodeScheduler {
         for (DecodePriority candidate : DecodePriority.values()) {
             if (candidate.sortOrder >= priority.sortOrder
                     && activePriorities.get(candidate.ordinal()) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasAnyActivePriority() {
+        for (DecodePriority priority : DecodePriority.values()) {
+            if (activePriorities.get(priority.ordinal()) > 0) {
                 return true;
             }
         }

@@ -37,6 +37,11 @@ void wsjtx3_bridge_set_ap_hints(int handle,
                                 const char *his_call,
                                 const char *his_grid);
 void wsjtx3_bridge_set_qso_frequencies(int handle, int qso_frequency_hz, int tx_frequency_hz);
+void wsjtx3_bridge_set_input_is_live(int handle, int input_is_live);
+void wsjtx3_bridge_reset_q65_averaging(int handle);
+int wsjtx3_bridge_get_q65_averaging_state(int handle,
+                                          int *navg0,
+                                          int *clear_pending);
 void wsjtx3_bridge_set_runtime_dirs(const char *temp_dir, const char *data_dir);
 int wsjtx3_bridge_generate_q65_wave(const char *message,
                                     int q65_submode,

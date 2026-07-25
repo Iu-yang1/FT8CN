@@ -60,7 +60,7 @@ public final class FtxSampleDecodeBenchmarkMatrix {
                         benchmarkCase == null ? "null" : benchmarkCase.name,
                         benchmarkCase == null ? "-" : benchmarkCase.wavPath,
                         benchmarkCase == null ? "unknown" : FT8Common.modeToString(benchmarkCase.mode),
-                        benchmarkCase == null ? "-" : FT8Common.getQ65SubmodeLabel(benchmarkCase.q65Submode),
+                        benchmarkCase == null ? "-" : FT8Common.getQ65DiagnosticSubmodeLabel(benchmarkCase.q65Submode),
                         benchmarkCase == null ? 0 : benchmarkCase.q65TrPeriodSeconds));
                 continue;
             }
@@ -83,7 +83,7 @@ public final class FtxSampleDecodeBenchmarkMatrix {
                     benchmarkCase.name,
                     benchmarkCase.wavPath,
                     FT8Common.modeToString(benchmarkCase.mode),
-                    FT8Common.getQ65SubmodeLabel(benchmarkCase.q65Submode),
+                    FT8Common.getQ65DiagnosticSubmodeLabel(benchmarkCase.q65Submode),
                     benchmarkCase.q65TrPeriodSeconds,
                     nativeReport == null ? "failureReason=native-null-report" : nativeReport));
         }

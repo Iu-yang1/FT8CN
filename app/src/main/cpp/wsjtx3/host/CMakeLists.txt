@@ -142,6 +142,7 @@ target_link_libraries(ft8cn_wsjtx3_bridge_smoke PRIVATE
 )
 
 set(FTX_CODEC_SOURCES
+        "${WSJTX3_CPP_ROOT}/common/resampler.c"
         "${WSJTX3_CPP_ROOT}/ftx_core/ftx_encoder_api.c"
         "${WSJTX3_CPP_ROOT}/ftx_core/ftx_selftest.c"
         "${WSJTX3_CPP_ROOT}/ft8/crc.c"
@@ -166,7 +167,11 @@ target_compile_options(ftx_codec_selftest_support PRIVATE
 
 add_executable(ftx_selftest
         "${WSJTX3_CPP_ROOT}/tests/ftx_core_selftest_main.c"
+        "${WSJTX3_CPP_ROOT}/tests/ftx_resampler_test.c"
         "${WSJTX3_CPP_ROOT}/tests/ftx_synthetic_decode_test.c"
+        "${WSJTX3_CPP_ROOT}/tests/q65_capacity_test.c"
+        "${WSJTX3_CPP_ROOT}/tests/q65_averaging_test.c"
+        "${WSJTX3_CPP_ROOT}/tests/q65_tx_rx_test.c"
         "${WSJTX3_CPP_ROOT}/ft8Encoder.c"
 )
 target_compile_options(ftx_selftest PRIVATE

@@ -36,6 +36,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -189,6 +190,9 @@ public class FT8SignalListener {
         final int sourceSampleRate;
         final int decodeMode;
         final int decodeStage;
+        final boolean inputIsLive;
+        final int qsoFrequencyHz;
+        final int txFrequencyHz;
         final int expectedSamples;
         final int q65Submode;
         final int q65TrPeriodSeconds;
@@ -208,6 +212,9 @@ public class FT8SignalListener {
                       int sourceSampleRate,
                       int decodeMode,
                       int decodeStage,
+                      boolean inputIsLive,
+                      int qsoFrequencyHz,
+                      int txFrequencyHz,
                       int expectedSamples,
                       int q65Submode,
                       int q65TrPeriodSeconds,
@@ -225,6 +232,9 @@ public class FT8SignalListener {
             this.sourceSampleRate = sourceSampleRate;
             this.decodeMode = decodeMode;
             this.decodeStage = decodeStage;
+            this.inputIsLive = inputIsLive;
+            this.qsoFrequencyHz = qsoFrequencyHz;
+            this.txFrequencyHz = txFrequencyHz;
             this.expectedSamples = expectedSamples;
             this.q65Submode = q65Submode;
             this.q65TrPeriodSeconds = q65TrPeriodSeconds;
@@ -363,6 +373,7 @@ public class FT8SignalListener {
                                         sourceSampleRate,
                                         recordMode,
                                         DECODE_STAGE_EARLY,
+                                        true,
                                         expectedSamples,
                                         false,
                                         false,
@@ -389,6 +400,7 @@ public class FT8SignalListener {
                                     sourceSampleRate,
                                     recordMode,
                                     DECODE_STAGE_FULL,
+                                    true,
                                     expectedSamples,
                                     false,
                                     true,
@@ -419,6 +431,7 @@ public class FT8SignalListener {
                 sourceSampleRate,
                 decodeMode,
                 DECODE_STAGE_FULL,
+                false,
                 modeSpec.samplesPerSlot(),
                 true,
                 true,
@@ -443,6 +456,17 @@ public class FT8SignalListener {
             return null;
         }
 
+        if (sourceSampleRate != 12000
+                && sourceSampleRate != 24000
+                && sourceSampleRate != 48000) {
+            Log.w(TAG, String.format(Locale.US,
+                    "decode resample rejected unsupported source rate: src=%d mode=%s stage=%d",
+                    sourceSampleRate,
+                    FT8Common.modeToString(decodeMode),
+                    decodeStage));
+            return null;
+        }
+
         final int normalizedSourceRate = normalizeInputSampleRate(sourceSampleRate);
         if (normalizedSourceRate == FT8Common.SAMPLE_RATE) {
             return voiceData;
@@ -456,14 +480,14 @@ public class FT8SignalListener {
         );
         if (resampled == null || resampled.length == 0) {
             Log.w(TAG, String.format(
-                    "decode resample failed, fallback raw input: src=%d,target=%d,mode=%s,stage=%d,len=%d",
+                    "decode resample failed; skip decode: src=%d,target=%d,mode=%s,stage=%d,len=%d",
                     normalizedSourceRate,
                     FT8Common.SAMPLE_RATE,
                     FT8Common.modeToString(decodeMode),
                     decodeStage,
                     voiceData.length
             ));
-            return voiceData;
+            return null;
         }
 
         Log.d(TAG, String.format(
@@ -972,6 +996,9 @@ public class FT8SignalListener {
                 request.sourceSampleRate,
                 request.decodeMode,
                 DECODE_STAGE_FULL,
+                request.inputIsLive,
+                request.qsoFrequencyHz,
+                request.txFrequencyHz,
                 request.expectedSamples,
                 request.q65Submode,
                 request.q65TrPeriodSeconds,
@@ -1102,6 +1129,11 @@ public class FT8SignalListener {
                     request.profile.useDeepSession,
                     request.q65Submode,
                     request.q65TrPeriodSeconds,
+                    request.inputIsLive,
+                    request.sourceSampleRate,
+                    request.decodeStage,
+                    request.qsoFrequencyHz,
+                    request.txFrequencyHz,
                     GeneralVariables.getShortCallsign(GeneralVariables.myCallsign).toUpperCase().trim(),
                     apHints[0],
                     apHints[1]
@@ -1165,6 +1197,7 @@ public class FT8SignalListener {
     private DecodeJob buildDecodeJob(DecodeRequest request) {
         DecodeStage stage = resolveDecodeStage(request);
         DecodePriority priority = resolveDecodePriority(request, stage);
+        AtomicBoolean decodeCompleted = new AtomicBoolean(false);
         return new DecodeJob(
                 request.requestSequence,
                 request.triggerSequence,
@@ -1202,11 +1235,20 @@ public class FT8SignalListener {
                                 return;
                             }
 
-                            executeDecodeRequest(request);
+                            decodeCompleted.set(executeDecodeRequest(request));
                         } finally {
-                            if (request.liveFullSessionRequest) {
-                                finishLiveFullDecode(request.decodeMode, request.utc);
-                            }
+                            // live marker 和 follow-up 必须等 scheduler 释放 active priority。
+                        }
+                    }
+                },
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        if (request.liveFullSessionRequest) {
+                            finishLiveFullDecode(request.decodeMode, request.utc);
+                        }
+                        if (decodeCompleted.get()) {
+                            maybeScheduleDeepSupplement(request);
                         }
                     }
                 }
@@ -1408,7 +1450,7 @@ public class FT8SignalListener {
         Log.i(TAG, "update decode concurrency policy: " + concurrencyPolicy);
     }
 
-    private void executeDecodeRequest(DecodeRequest request) {
+    private boolean executeDecodeRequest(DecodeRequest request) {
         long time = System.currentTimeMillis();
         final int slotTimeM = FT8Common.getSlotTimeM(request.decodeMode);
 
@@ -1431,7 +1473,7 @@ public class FT8SignalListener {
                     request.profile.stageName,
                     request.sourceSampleRate
             ));
-            return;
+            return false;
         }
 
         final long decoderInputDurationMs = Math.round(
@@ -1562,7 +1604,7 @@ public class FT8SignalListener {
                 request.sourceTag,
                 request.enqueueReason));
 
-        maybeScheduleDeepSupplement(request);
+        return true;
     }
 
     private void decodeFt8(long utc,
@@ -1570,6 +1612,7 @@ public class FT8SignalListener {
                            int sourceSampleRate,
                            int decodeMode,
                            int decodeStage,
+                           boolean inputIsLive,
                            int expectedSamples,
                            boolean notifyBefore,
                            boolean notifyFinished,
@@ -1606,6 +1649,12 @@ public class FT8SignalListener {
             ));
             return;
         }
+        final int qsoFrequencyHz = clampDecoderFrequencyHz(
+                decodeMode,
+                Math.round(GeneralVariables.getQsoFrequency()));
+        final int txFrequencyHz = clampDecoderFrequencyHz(
+                decodeMode,
+                Math.round(GeneralVariables.getTransmitFrequency()));
         enqueueDecodeRequest(new DecodeRequest(
                 decodeRequestSequence.getAndIncrement(),
                 utc,
@@ -1613,6 +1662,9 @@ public class FT8SignalListener {
                 sourceSampleRate,
                 decodeMode,
                 decodeStage,
+                inputIsLive,
+                qsoFrequencyHz,
+                txFrequencyHz,
                 expectedSamples,
                 getQ65SubmodeForRequest(decodeMode),
                 getQ65TrPeriodForRequest(decodeMode),
@@ -1627,6 +1679,11 @@ public class FT8SignalListener {
         ));
         return;
 
+    }
+
+    private static int clampDecoderFrequencyHz(int decodeMode, int frequencyHz) {
+        int maxFrequencyHz = decodeMode == FT8Common.Q65_MODE ? 5000 : 3000;
+        return Math.max(0, Math.min(maxFrequencyHz, frequencyHz));
     }
 
     private boolean isLiveFullSessionRequest(int decodeStage, boolean notifyBefore, boolean notifyFinished) {
@@ -2156,6 +2213,11 @@ public class FT8SignalListener {
                                                    boolean deepDecodeEnabled,
                                                    int q65Submode,
                                                    int q65TrPeriodSeconds,
+                                                   boolean inputIsLive,
+                                                   int sourceSampleRate,
+                                                   int decodeStage,
+                                                   int qsoFrequencyHz,
+                                                   int txFrequencyHz,
                                                    String myCall,
                                                    String[] hintCallsigns,
                                                    String[] hintGrids);

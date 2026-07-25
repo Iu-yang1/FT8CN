@@ -67,6 +67,7 @@ function Invoke-DecodeRun([bool]$Warmup) {
     $startInfo.EnvironmentVariables['FT8CN_SMOKE_EARLY'] = if ($EnableEarlyDecode) { '1' } else { '0' }
     $startInfo.EnvironmentVariables['FT8CN_SMOKE_WIDEBAND'] = if ($EnableWidebandDxSearch) { '1' } else { '0' }
     $startInfo.EnvironmentVariables['FT8CN_SMOKE_LDPC'] = [string]$LdpcIterations
+    $startInfo.EnvironmentVariables['FT8CN_SMOKE_PRINT_COUNT'] = '100'
     $startInfo.EnvironmentVariables['FT8CN_PHASE_TRACE'] = '0'
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()

@@ -1,8 +1,9 @@
 module wsjtx3_bridge
   use iso_c_binding
+  use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   use ft8_decode, only: ft8_decoder, ft8_decode_callback
   use ft4_decode, only: ft4_decoder, ft4_decode_callback
-  use q65_decode, only: q65_decoder, q65_decode_callback
+  use q65_decode, only: q65_decoder, q65_decode_callback, q65_file_io_enabled
   use prog_args, only: temp_dir, data_dir
   implicit none
 
@@ -68,8 +69,13 @@ module wsjtx3_bridge
      integer(c_int) :: ldpc_iterations = 20
      integer(c_int) :: qso_frequency_hz = 1000
      integer(c_int) :: tx_frequency_hz = 1000
+     integer(c_int) :: input_is_live = 0
      integer(c_int) :: q65_submode = Q65_DEFAULT_SUBMODE
      integer(c_int) :: q65_tr_period = Q65_DEFAULT_TR_PERIOD
+     integer(c_int) :: q65_navg0 = 0
+     integer(c_int) :: q65_nqf(20) = 0
+     integer(c_int) :: q65_clear_averaging = 1
+     integer(c_long_long) :: q65_last_utc_time = -1
      character(len=12) :: my_call = ''
      character(len=12) :: his_call = ''
      character(len=6) :: his_grid = ''
@@ -97,18 +103,12 @@ module wsjtx3_bridge
        integer, intent(out) :: n3
      end subroutine genq65
 
-     subroutine genwave(itone, nsym, nsps, nwave, fsample, tonespacing, f0, icmplx, cwave, wave)
-       integer, intent(in) :: nsym
-       integer, intent(in) :: nsps
-       integer, intent(in) :: nwave
-       integer, intent(in) :: icmplx
-       integer, intent(in) :: itone(nsym)
-       real, intent(in) :: fsample
-       real(8), intent(in) :: tonespacing
-       real, intent(in) :: f0
-       complex, intent(out) :: cwave(nwave)
-       real, intent(out) :: wave(nwave)
-     end subroutine genwave
+     integer(c_long_long) function ftx_q65_required_samples_c(tr_period_seconds, sample_rate) &
+          bind(C, name="ftx_q65_required_samples_c")
+       import :: c_int, c_long_long
+       integer(c_int), value :: tr_period_seconds
+       integer(c_int), value :: sample_rate
+     end function ftx_q65_required_samples_c
 
      integer(c_int) function wsjtx3_phase_trace_is_enabled() bind(C, name="wsjtx3_phase_trace_is_enabled")
        import :: c_int
@@ -289,11 +289,25 @@ contains
     g_contexts(handle)%tx_frequency_hz = 1000
     g_contexts(handle)%q65_submode = Q65_DEFAULT_SUBMODE
     g_contexts(handle)%q65_tr_period = Q65_DEFAULT_TR_PERIOD
+    g_contexts(handle)%q65_navg0 = 0
+    g_contexts(handle)%q65_nqf = 0
+    g_contexts(handle)%q65_clear_averaging = 1
+    g_contexts(handle)%q65_last_utc_time = -1
     g_contexts(handle)%my_call = ''
     g_contexts(handle)%his_call = ''
     g_contexts(handle)%his_grid = ''
     call reset_context_results(handle)
   end subroutine clear_context
+
+  subroutine clear_q65_averaging_state(handle)
+    integer(c_int), intent(in) :: handle
+    if (.not. context_valid(handle)) then
+       return
+    end if
+    g_contexts(handle)%q65_navg0 = 0
+    g_contexts(handle)%q65_nqf = 0
+    g_contexts(handle)%q65_clear_averaging = 1
+  end subroutine clear_q65_averaging_state
 
   integer(c_int) function clamp_int(value, lower_bound, upper_bound)
     integer(c_int), intent(in) :: value
@@ -827,7 +841,7 @@ contains
     enable_ap = ft8_ap_enabled_from_context(context)
     try_a8 = ft8_try_a8_from_context(context)
     newdat_flag = .true.
-    disk_data_flag = .true.
+    disk_data_flag = context%input_is_live == 0
 
     if (capture_results) then
        g_active_context = handle
@@ -932,6 +946,12 @@ contains
     integer(c_int) :: nqd
     integer(c_int) :: nutc
     integer(c_int) :: nqf(20)
+    integer(c_int) :: followup_navg0
+    integer(c_int) :: followup_nqf(20)
+    integer(c_int) :: followup_budget
+    integer(c_int) :: followup_index
+    integer :: scratch_iostat
+    logical :: clear_averaging
     integer(c_long_long) :: trace_started_at
     integer(c_int) :: result_count_before
     procedure(q65_decode_callback), pointer :: selected_callback
@@ -942,15 +962,19 @@ contains
     end if
 
     trace_started_at = phase_trace_now()
-    open(17, file=trim(temp_dir)//'/red.dat', status='unknown')
-    open(14, file=trim(temp_dir)//'/avemsg.txt', status='unknown')
+    open(17, status='scratch', action='readwrite', iostat=scratch_iostat)
+    if (scratch_iostat /= 0) then
+       return
+    end if
     call emit_phase_trace(handle, context, TRACE_Q65_FILES_OPEN, sample_count, &
          g_contexts(handle)%result_count, phase_trace_elapsed_us(trace_started_at))
 
-    navg0 = 0
+    navg0 = g_contexts(handle)%q65_navg0
     nqd = 1
-    nqf = 0
+    nqf = g_contexts(handle)%q65_nqf
+    clear_averaging = g_contexts(handle)%q65_clear_averaging /= 0
     nutc = utc_millis_to_hhmmss(context%utc_time)
+    q65_file_io_enabled = .false.
     g_active_context = handle
     selected_callback => wsjtx3_q65_callback
     if (wsjtx3_callback_slot_is_enabled() /= 0) then
@@ -972,9 +996,28 @@ contains
          context%q65_tr_period, sample_count)
     call g_q65_decoders(handle)%decode(selected_callback, iwave, nqd, nutc, context%q65_tr_period, &
          context%q65_submode, context%qso_frequency_hz, q65_ntol_from_context(context), &
-         q65_ndepth_from_context(context), FTX_DECODE_MIN_HZ, Q65_DECODE_MAX_HZ, .true., .true., .true., &
+         q65_ndepth_from_context(context), FTX_DECODE_MIN_HZ, Q65_DECODE_MAX_HZ, clear_averaging, &
+         .false., .false., &
          0_c_int, .true., q65_emedelay_from_context(context), context%my_call, context%his_call, &
          context%his_grid, qso_progress_from_context(context), 0_c_int, .false., navg0, nqf)
+    g_contexts(handle)%q65_navg0 = navg0
+    g_contexts(handle)%q65_nqf = nqf
+    g_contexts(handle)%q65_clear_averaging = 0
+
+    followup_budget = min(20_c_int, max(0_c_int, context%decode_pass_count - 1_c_int) + &
+         max(0_c_int, context%multi_decode_round_count - 1_c_int))
+    do followup_index = 1, followup_budget
+       if (nqf(followup_index) == 0) exit
+       if (context%enable_wideband_dx_search == 0 .and. &
+            abs(nqf(followup_index) - context%qso_frequency_hz) > q65_ntol_from_context(context)) cycle
+       followup_navg0 = 0
+       followup_nqf = 0
+       call g_q65_decoders(handle)%decode(selected_callback, iwave, nqd, nutc, context%q65_tr_period, &
+            context%q65_submode, nqf(followup_index), 5_c_int, q65_ndepth_from_context(context), &
+            FTX_DECODE_MIN_HZ, Q65_DECODE_MAX_HZ, .false., .true., .true., 0_c_int, .false., &
+            q65_emedelay_from_context(context), context%my_call, context%his_call, context%his_grid, &
+            qso_progress_from_context(context), 0_c_int, .false., followup_navg0, followup_nqf)
+    end do
     call wsjtx3_vendor_trace_clear_context()
     call emit_phase_trace(handle, context, TRACE_Q65_DECODE, sample_count, &
          g_contexts(handle)%result_count - result_count_before, phase_trace_elapsed_us(trace_started_at))
@@ -984,7 +1027,6 @@ contains
 
     trace_started_at = phase_trace_now()
     close(17)
-    close(14)
     call emit_phase_trace(handle, context, TRACE_Q65_FILES_CLOSE, sample_count, &
          g_contexts(handle)%result_count, phase_trace_elapsed_us(trace_started_at))
   end subroutine run_q65_decode_pipeline
@@ -1000,30 +1042,27 @@ contains
     real(c_float), intent(out) :: out_wave(*)
     integer(c_int), value :: out_capacity
 
-    integer(c_int) :: base_nsps
     integer(c_int) :: scaled_nsps
     integer(c_int) :: nwave
     integer(c_int) :: mode_factor
-    integer :: index
+    integer(c_long_long) :: required_samples
+    integer :: index, symbol_index, sample_index
     integer :: itone(85)
     integer :: i3
     integer :: n3
     character(len=37) :: message_text
     character(len=37) :: msgsent
-    complex, allocatable :: cwave(:)
-    real, allocatable :: wave(:)
-    real :: fsample
-    real(8) :: tonespacing
-    real :: f0
+    real(8) :: tonespacing, f0, phi, dphi, twopi, dt, highest_tone
 
     wsjtx3_bridge_generate_q65_wave = 0_c_int
     if (sample_rate <= 0_c_int .or. out_capacity <= 0_c_int) then
        return
     end if
 
-    base_nsps = q65_base_nsps_for_period_12k(q65_tr_period)
     mode_factor = q65_mode_factor_from_submode(q65_submode)
-    if (base_nsps <= 0_c_int .or. mode_factor <= 0_c_int) then
+    required_samples = ftx_q65_required_samples_c(q65_tr_period, sample_rate)
+    if (required_samples <= 0_c_long_long .or. &
+         required_samples > int(huge(nwave), kind=c_long_long) .or. mode_factor <= 0_c_int) then
         return
     end if
 
@@ -1033,9 +1072,18 @@ contains
        return
     end if
 
-    scaled_nsps = max(1_c_int, nint(real(base_nsps, kind=8) * real(sample_rate, kind=8) / 12000.0_8))
-    nwave = 85_c_int * scaled_nsps
+    nwave = int(required_samples, kind=c_int)
+    scaled_nsps = nwave / 85_c_int
     if (nwave > out_capacity) then
+       return
+    end if
+
+    tonespacing = (real(sample_rate, kind=8) / real(scaled_nsps, kind=8)) * &
+         real(mode_factor, kind=8)
+    f0 = real(base_frequency_hz, kind=8)
+    highest_tone = f0 + 64.0_8 * tonespacing
+    if (.not. ieee_is_finite(f0) .or. f0 < 0.0_8 .or. &
+         highest_tone >= 0.5_8 * real(sample_rate, kind=8)) then
        return
     end if
 
@@ -1044,18 +1092,19 @@ contains
     n3 = -1
     call genq65(message_text, 0, msgsent, itone, i3, n3)
 
-    allocate(cwave(nwave))
-    allocate(wave(nwave))
-    fsample = real(sample_rate)
-    tonespacing = (real(fsample, kind=8) / real(scaled_nsps, kind=8)) * real(mode_factor, kind=8)
-    f0 = real(base_frequency_hz)
-    call genwave(itone, 85, scaled_nsps, nwave, fsample, tonespacing, f0, 0, cwave, wave)
-
-    do index = 1, nwave
-       out_wave(index) = real(wave(index), kind=c_float)
+    twopi = 8.0_8 * atan(1.0_8)
+    dt = 1.0_8 / real(sample_rate, kind=8)
+    phi = 0.0_8
+    index = 0
+    do symbol_index = 1, 85
+       dphi = twopi * (f0 + real(itone(symbol_index), kind=8) * tonespacing) * dt
+       do sample_index = 1, scaled_nsps
+          index = index + 1
+          out_wave(index) = real(sin(phi), kind=c_float)
+          phi = phi + dphi
+          if (phi > twopi) phi = phi - twopi
+       end do
     end do
-    deallocate(cwave)
-    deallocate(wave)
     wsjtx3_bridge_generate_q65_wave = nwave
   end function wsjtx3_bridge_generate_q65_wave
 
@@ -1097,13 +1146,32 @@ contains
     integer(c_int), value :: handle
     integer(c_long_long), value :: utc_time
     integer(c_int), value :: expected_samples
+    integer(c_int) :: previous_period
+    integer(c_int) :: next_period
+    integer(c_long_long) :: utc_gap
     if (.not. context_valid(handle)) then
        return
+    end if
+    previous_period = g_contexts(handle)%q65_tr_period
+    next_period = previous_period
+    if (g_contexts(handle)%mode == WSJTX3_MODE_Q65 .and. expected_samples > 0) then
+       next_period = max(1_c_int, expected_samples / 12000)
+       if (next_period /= previous_period) then
+          call clear_q65_averaging_state(handle)
+       end if
+       if (g_contexts(handle)%q65_last_utc_time >= 0_c_long_long) then
+          utc_gap = utc_time - g_contexts(handle)%q65_last_utc_time
+          if (utc_gap <= 0_c_long_long .or. &
+               utc_gap > 3_c_long_long * int(next_period, c_long_long) * 1000_c_long_long) then
+             call clear_q65_averaging_state(handle)
+          end if
+       end if
+       g_contexts(handle)%q65_last_utc_time = utc_time
     end if
     g_contexts(handle)%utc_time = utc_time
     g_contexts(handle)%expected_samples = expected_samples
     if (g_contexts(handle)%mode == WSJTX3_MODE_Q65 .and. expected_samples > 0) then
-       g_contexts(handle)%q65_tr_period = max(1_c_int, expected_samples / 12000)
+       g_contexts(handle)%q65_tr_period = next_period
     end if
     call reset_context_results(handle)
   end subroutine wsjtx3_bridge_reset
@@ -1136,6 +1204,8 @@ contains
     integer(c_int), value :: handle
     integer(c_int), value :: q65_submode
     integer(c_int), value :: q65_tr_period
+    integer(c_int) :: normalized_submode
+    integer(c_int) :: normalized_period
     if (.not. context_valid(handle)) then
        return
     end if
@@ -1143,17 +1213,23 @@ contains
        return
     end if
     if (q65_submode >= 0_c_int .and. q65_submode <= 5_c_int) then
-       g_contexts(handle)%q65_submode = q65_submode
+       normalized_submode = q65_submode
     else
-       g_contexts(handle)%q65_submode = Q65_DEFAULT_SUBMODE
+       normalized_submode = Q65_DEFAULT_SUBMODE
     end if
 
     select case (q65_tr_period)
     case (15_c_int, 30_c_int, 60_c_int, 120_c_int, 300_c_int)
-       g_contexts(handle)%q65_tr_period = q65_tr_period
+       normalized_period = q65_tr_period
     case default
-       g_contexts(handle)%q65_tr_period = Q65_DEFAULT_TR_PERIOD
+       normalized_period = Q65_DEFAULT_TR_PERIOD
     end select
+    if (normalized_submode /= g_contexts(handle)%q65_submode .or. &
+         normalized_period /= g_contexts(handle)%q65_tr_period) then
+       call clear_q65_averaging_state(handle)
+    end if
+    g_contexts(handle)%q65_submode = normalized_submode
+    g_contexts(handle)%q65_tr_period = normalized_period
   end subroutine wsjtx3_bridge_set_q65_params
 
   subroutine wsjtx3_bridge_set_ap_hints(handle, my_call, his_call, his_grid) &
@@ -1162,12 +1238,24 @@ contains
     character(kind=c_char), dimension(*), intent(in) :: my_call
     character(kind=c_char), dimension(*), intent(in) :: his_call
     character(kind=c_char), dimension(*), intent(in) :: his_grid
+    character(len=12) :: previous_my_call
+    character(len=12) :: previous_his_call
+    character(len=6) :: previous_his_grid
     if (.not. context_valid(handle)) then
        return
     end if
+    previous_my_call = g_contexts(handle)%my_call
+    previous_his_call = g_contexts(handle)%his_call
+    previous_his_grid = g_contexts(handle)%his_grid
     call copy_c_string(my_call, g_contexts(handle)%my_call)
     call copy_c_string(his_call, g_contexts(handle)%his_call)
     call copy_c_string(his_grid, g_contexts(handle)%his_grid)
+    if (context_is_q65(g_contexts(handle)) .and. &
+         (previous_my_call /= g_contexts(handle)%my_call .or. &
+          previous_his_call /= g_contexts(handle)%his_call .or. &
+          previous_his_grid /= g_contexts(handle)%his_grid)) then
+       call clear_q65_averaging_state(handle)
+    end if
   end subroutine wsjtx3_bridge_set_ap_hints
 
   subroutine wsjtx3_bridge_set_qso_frequencies(handle, qso_frequency_hz, tx_frequency_hz) &
@@ -1175,18 +1263,67 @@ contains
     integer(c_int), value :: handle
     integer(c_int), value :: qso_frequency_hz
     integer(c_int), value :: tx_frequency_hz
+    integer(c_int) :: normalized_qso_frequency
+    integer(c_int) :: normalized_tx_frequency
     if (.not. context_valid(handle)) then
        return
     end if
     if (qso_frequency_hz >= FTX_DECODE_MIN_HZ) then
-       g_contexts(handle)%qso_frequency_hz = clamp_int(qso_frequency_hz, FTX_DECODE_MIN_HZ, &
+       normalized_qso_frequency = clamp_int(qso_frequency_hz, FTX_DECODE_MIN_HZ, &
             mode_max_frequency(g_contexts(handle)))
+       if (context_is_q65(g_contexts(handle)) .and. &
+            normalized_qso_frequency /= g_contexts(handle)%qso_frequency_hz) then
+          call clear_q65_averaging_state(handle)
+       end if
+       g_contexts(handle)%qso_frequency_hz = normalized_qso_frequency
     end if
     if (tx_frequency_hz >= FTX_DECODE_MIN_HZ) then
-       g_contexts(handle)%tx_frequency_hz = clamp_int(tx_frequency_hz, FTX_DECODE_MIN_HZ, &
+       normalized_tx_frequency = clamp_int(tx_frequency_hz, FTX_DECODE_MIN_HZ, &
             mode_max_frequency(g_contexts(handle)))
+       g_contexts(handle)%tx_frequency_hz = normalized_tx_frequency
     end if
   end subroutine wsjtx3_bridge_set_qso_frequencies
+
+  subroutine wsjtx3_bridge_set_input_is_live(handle, input_is_live) &
+       bind(C, name="wsjtx3_bridge_set_input_is_live")
+    integer(c_int), value :: handle
+    integer(c_int), value :: input_is_live
+    if (.not. context_valid(handle)) then
+       return
+    end if
+    g_contexts(handle)%input_is_live = merge(1_c_int, 0_c_int, input_is_live /= 0)
+  end subroutine wsjtx3_bridge_set_input_is_live
+
+  subroutine wsjtx3_bridge_reset_q65_averaging(handle) &
+       bind(C, name="wsjtx3_bridge_reset_q65_averaging")
+    integer(c_int), value :: handle
+    if (.not. context_valid(handle)) then
+       return
+    end if
+    if (.not. context_is_q65(g_contexts(handle))) then
+       return
+    end if
+    call clear_q65_averaging_state(handle)
+  end subroutine wsjtx3_bridge_reset_q65_averaging
+
+  integer(c_int) function wsjtx3_bridge_get_q65_averaging_state(handle, navg0, clear_pending) &
+       bind(C, name="wsjtx3_bridge_get_q65_averaging_state")
+    integer(c_int), value :: handle
+    integer(c_int), intent(out) :: navg0
+    integer(c_int), intent(out) :: clear_pending
+    wsjtx3_bridge_get_q65_averaging_state = 0_c_int
+    navg0 = 0_c_int
+    clear_pending = 1_c_int
+    if (.not. context_valid(handle)) then
+       return
+    end if
+    if (.not. context_is_q65(g_contexts(handle))) then
+       return
+    end if
+    navg0 = g_contexts(handle)%q65_navg0
+    clear_pending = g_contexts(handle)%q65_clear_averaging
+    wsjtx3_bridge_get_q65_averaging_state = 1_c_int
+  end function wsjtx3_bridge_get_q65_averaging_state
 
   integer(c_int) function wsjtx3_bridge_process_float(handle, samples, sample_count) &
        bind(C, name="wsjtx3_bridge_process_float")

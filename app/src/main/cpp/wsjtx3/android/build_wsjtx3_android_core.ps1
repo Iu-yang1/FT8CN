@@ -217,7 +217,11 @@ foreach ($source in $cSources) {
     $objects.Add($object)
 }
 
-$archiveResult = Invoke-Ft8cnNativeCapture -Path $llvmAr -Arguments (@('rcs', $coreArchive) + @($objects))
+$candidateArchive = Join-Path $workDir 'libwsjtx3_official_core.candidate.a'
+if (Test-Path -LiteralPath $candidateArchive) {
+    Remove-Item -LiteralPath $candidateArchive -Force
+}
+$archiveResult = Invoke-Ft8cnNativeCapture -Path $llvmAr -Arguments (@('rcs', $candidateArchive) + @($objects))
 if ($archiveResult.ExitCode -ne 0) { throw "Official core archive creation failed:`n$($archiveResult.Output)" }
 
 $probeSource = Join-Path $probeDir 'android_link_probe.c'
@@ -262,12 +266,13 @@ if ($probeCompile.ExitCode -ne 0) { throw "Android link probe compile failed:`n$
 $linkArguments = @(
     '-target', $TargetTriple, '-shared', '-fPIC', '-Wl,-soname,libandroid_wsjtx3_probe.so',
     '-Wl,--no-undefined', '-o', $probeLibrary, $probeObject,
-    '-Wl,--whole-archive', $coreArchive, '-Wl,--no-whole-archive',
+    '-Wl,--whole-archive', $candidateArchive, '-Wl,--no-whole-archive',
     $runtimeArchive, '-lm', '-lc', '-ldl'
 )
 $link = Invoke-Ft8cnNativeCapture -Path $clangxx -Arguments $linkArguments
 if ($link.ExitCode -ne 0) { throw "Official WSJT-X Android core link validation failed:`n$($link.Output)" }
 
+Move-Item -LiteralPath $candidateArchive -Destination $coreArchive -Force
 Set-Content -LiteralPath $fingerprintFile -Value $fingerprint -Encoding ASCII
 Write-Host "Official WSJT-X Android core ready: $coreArchive"
 Write-Host "Official flang runtime ready: $runtimeArchive"

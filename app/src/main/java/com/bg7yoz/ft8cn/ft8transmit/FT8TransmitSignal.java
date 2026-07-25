@@ -661,7 +661,7 @@ public class FT8TransmitSignal {
     }
 
     private void setRuntimeBaseFrequency(float freq) {
-        GeneralVariables.setBaseFrequency(freq);
+        GeneralVariables.setRuntimeTransmitFrequency(freq);
     }
 
     private void resetDxpeditionCountersForNewTarget(AutoSessionType sessionType,

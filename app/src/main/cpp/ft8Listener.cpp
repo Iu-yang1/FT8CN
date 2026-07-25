@@ -599,6 +599,11 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
                                                                         jboolean deepDecodeEnabled,
                                                                         jint q65Submode,
                                                                         jint q65TrPeriodSeconds,
+                                                                        jboolean inputIsLive,
+                                                                        jint sourceSampleRate,
+                                                                        jint decodeStage,
+                                                                        jint qsoFrequencyHz,
+                                                                        jint txFrequencyHz,
                                                                         jstring myCall,
                                                                         jobjectArray hintCallsigns,
                                                                         jobjectArray hintGrids) {
@@ -625,7 +630,19 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
     options.ldpc_iterations = deepDecodeEnabled ? deep_kLDPC_iterations : fast_kLDPC_iterations;
     options.q65_submode = q65Submode;
     options.q65_tr_period_seconds = q65TrPeriodSeconds;
-    ftx_decoder_set_options(decoder, &options);
+    if (ftx_decoder_set_options(decoder, &options) != 0) {
+        return nullptr;
+    }
+
+    ftx_decoder_input_context_t inputContext{};
+    inputContext.input_is_live = inputIsLive ? 1 : 0;
+    inputContext.qso_frequency_hz = qsoFrequencyHz;
+    inputContext.tx_frequency_hz = txFrequencyHz;
+    inputContext.source_sample_rate = sourceSampleRate;
+    inputContext.decode_stage = decodeStage;
+    if (ftx_decoder_set_input_context(decoder, &inputContext) != 0) {
+        return nullptr;
+    }
 
     char myCallBuffer[FTX_AP_CALLSIGN_MAX] = {};
     copyJStringToBuffer(env, myCall, myCallBuffer, sizeof(myCallBuffer));
@@ -688,14 +705,17 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
 
     if (resultCount < 0) {
         FTX_JNI_BENCHMARK_LOG(
-                "decode-jni-benchmark mode=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=0 totalMs=%lld resultCount=%d",
-                decodeMode, sampleCount, setup_ms, input_ms, core_ms, elapsed_ms(total_started_at), resultCount);
+                "decode-jni-benchmark mode=%d stage=%d live=%d sourceRate=%d qsoHz=%d txHz=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=0 totalMs=%lld resultCount=%d",
+                decodeMode, decodeStage, inputIsLive ? 1 : 0, sourceSampleRate, qsoFrequencyHz,
+                txFrequencyHz, sampleCount, setup_ms, input_ms, core_ms,
+                elapsed_ms(total_started_at), resultCount);
         return nullptr;
     }
     if (resultCount == 0) {
         FTX_JNI_BENCHMARK_LOG(
-                "decode-jni-benchmark mode=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=0 totalMs=%lld resultCount=0",
-                decodeMode, sampleCount, setup_ms, input_ms, core_ms, elapsed_ms(total_started_at));
+                "decode-jni-benchmark mode=%d stage=%d live=%d sourceRate=%d qsoHz=%d txHz=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=0 totalMs=%lld resultCount=0",
+                decodeMode, decodeStage, inputIsLive ? 1 : 0, sourceSampleRate, qsoFrequencyHz,
+                txFrequencyHz, sampleCount, setup_ms, input_ms, core_ms, elapsed_ms(total_started_at));
         return env->NewObjectArray(0, g_ft8_message_jni_cache.messageClass, nullptr);
     }
 
@@ -727,8 +747,13 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
 
     const long long result_object_ms = elapsed_ms(result_object_started_at);
     FTX_JNI_BENCHMARK_LOG(
-            "decode-jni-benchmark mode=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=%lld totalMs=%lld resultCount=%d",
+            "decode-jni-benchmark mode=%d stage=%d live=%d sourceRate=%d qsoHz=%d txHz=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=%lld totalMs=%lld resultCount=%d",
             decodeMode,
+            decodeStage,
+            inputIsLive ? 1 : 0,
+            sourceSampleRate,
+            qsoFrequencyHz,
+            txFrequencyHz,
             sampleCount,
             setup_ms,
             input_ms,

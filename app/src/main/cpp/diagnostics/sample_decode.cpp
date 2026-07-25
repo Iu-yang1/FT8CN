@@ -318,6 +318,12 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_decodeWavFile(JNIEnv *env,
     decoder_set_wsjtx_options(decoder, &options);
     decoder_set_q65_config(decoder, (int) q65Submode, (int) q65TrPeriodSeconds);
     decoder_set_ldpc_iterations(decoder, deepDecodeEnabled == JNI_TRUE);
+    decoder_set_input_context(decoder,
+                              false,
+                              1000,
+                              1000,
+                              sample_rate,
+                              2);
 
     ap_hints_t hints{};
     bool use_hints = false;

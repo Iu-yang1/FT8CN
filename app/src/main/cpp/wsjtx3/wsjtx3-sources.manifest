@@ -78,6 +78,7 @@ vendor-fortran|wsjtx3/vendor/wsjtx-3.0.0/lib/qra/q65/q65_loops.f90
 vendor-fortran|wsjtx3/vendor/wsjtx-3.0.0/lib/qra/q65/q65_set_list.f90
 vendor-fortran|wsjtx3/vendor/wsjtx-3.0.0/lib/qra/q65/q65_set_list2.f90
 bridge-fortran|wsjtx3/host/wsjtx3_bridge.f90
+bridge-c|common/q65_wave_size.c
 bridge-c|wsjtx3/host/shmem_stub.c
 bridge-c|wsjtx3/host/wsjtx3_phase_trace.c
 android-c|wsjtx3/android/fftw3f_kiss_shim.c

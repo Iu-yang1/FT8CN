@@ -22,6 +22,14 @@ typedef struct {
     int q65_tr_period_seconds;
 } ftx_decoder_options_t;
 
+typedef struct {
+    int input_is_live;
+    int qso_frequency_hz;
+    int tx_frequency_hz;
+    int source_sample_rate;
+    int decode_stage;
+} ftx_decoder_input_context_t;
+
 ftx_decoder_t *ftx_decoder_create(
         ftx_mode_t mode,
         int sample_rate,
@@ -34,6 +42,11 @@ void ftx_decoder_destroy(ftx_decoder_t *decoder);
 int ftx_decoder_set_options(
         ftx_decoder_t *decoder,
         const ftx_decoder_options_t *options
+);
+
+int ftx_decoder_set_input_context(
+        ftx_decoder_t *decoder,
+        const ftx_decoder_input_context_t *input_context
 );
 
 int ftx_decoder_set_ap_hints(

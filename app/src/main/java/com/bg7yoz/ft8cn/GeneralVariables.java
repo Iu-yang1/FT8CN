@@ -269,6 +269,8 @@ public class GeneralVariables {
     public static String myCallsign = "";
     public static String toModifier = "";
     private static float baseFrequency = 1000;
+    private static float qsoFrequency = 1000;
+    private static float transmitFrequency = 1000;
 
     public static boolean simpleCallItemMode = false;
 
@@ -365,6 +367,25 @@ public class GeneralVariables {
     public static void setBaseFrequency(float baseFrequency) {
         mutableBaseFrequency.postValue(baseFrequency);
         GeneralVariables.baseFrequency = baseFrequency;
+        GeneralVariables.qsoFrequency = baseFrequency;
+        GeneralVariables.transmitFrequency = baseFrequency;
+    }
+
+    /**
+     * 多槽或 split 发射只改变 TX 声频，QSO 跟踪窗口仍保留在接收目标上。
+     */
+    public static void setRuntimeTransmitFrequency(float transmitFrequency) {
+        mutableBaseFrequency.postValue(transmitFrequency);
+        GeneralVariables.baseFrequency = transmitFrequency;
+        GeneralVariables.transmitFrequency = transmitFrequency;
+    }
+
+    public static float getQsoFrequency() {
+        return qsoFrequency;
+    }
+
+    public static float getTransmitFrequency() {
+        return transmitFrequency;
     }
 
     /**
