@@ -81,6 +81,7 @@ bridge-fortran|wsjtx3/host/wsjtx3_bridge.f90
 bridge-c|common/q65_wave_size.c
 bridge-c|wsjtx3/host/shmem_stub.c
 bridge-c|wsjtx3/host/wsjtx3_phase_trace.c
+bridge-c|wsjtx3/host/wsjtx3_osd_opt.c
 android-c|wsjtx3/android/fftw3f_kiss_shim.c
 android-c|wsjtx3/android/complex_math_shim.c
 android-c|fft/kiss_fft.c

@@ -172,6 +172,7 @@ add_executable(ftx_selftest
         "${WSJTX3_CPP_ROOT}/tests/q65_capacity_test.c"
         "${WSJTX3_CPP_ROOT}/tests/q65_averaging_test.c"
         "${WSJTX3_CPP_ROOT}/tests/q65_tx_rx_test.c"
+        "${WSJTX3_CPP_ROOT}/tests/wsjtx3_osd_opt_test.c"
         "${WSJTX3_CPP_ROOT}/ft8Encoder.c"
 )
 target_compile_options(ftx_selftest PRIVATE

@@ -1,5 +1,7 @@
 #include "../wsjtx3_bridge.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -186,8 +188,12 @@ typedef struct {
 static wsjtx3_osd_trace_accumulator_t g_osd_trace;
 int wsjtx3_phase_trace_is_enabled(void) {
 #if defined(__GNUC__) || defined(__clang__)
-    return ft8cn_native_phase_trace_enabled != 0
-            && ft8cn_native_phase_trace_enabled() != 0;
+    const char *value;
+    if (ft8cn_native_phase_trace_enabled != 0) {
+        return ft8cn_native_phase_trace_enabled() != 0;
+    }
+    value = getenv("FT8CN_PHASE_TRACE");
+    return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
 #else
     return 0;
 #endif
@@ -206,21 +212,30 @@ void wsjtx3_phase_trace_event(int handle,
                               int result_count,
                               long long duration_us) {
 #if defined(__GNUC__) || defined(__clang__)
-    if (ft8cn_native_phase_trace_sink == 0 || !wsjtx3_phase_trace_is_enabled()) {
+    if (!wsjtx3_phase_trace_is_enabled()) {
         return;
     }
-    ft8cn_native_phase_trace_sink(handle,
-                                  active_context,
-                                  mode,
-                                  phase,
-                                  utc_time,
-                                  decode_pass_count,
-                                  multi_decode_round_count,
-                                  q65_submode,
-                                  q65_tr_period,
-                                  sample_count,
-                                  result_count,
-                                  duration_us);
+    if (ft8cn_native_phase_trace_sink != 0) {
+        ft8cn_native_phase_trace_sink(handle,
+                                      active_context,
+                                      mode,
+                                      phase,
+                                      utc_time,
+                                      decode_pass_count,
+                                      multi_decode_round_count,
+                                      q65_submode,
+                                      q65_tr_period,
+                                      sample_count,
+                                      result_count,
+                                      duration_us);
+    } else {
+        fprintf(stderr,
+                "nativePhase phase=%d mode=%d handle=%d activeContext=%d utc=%lld pass=%d "
+                "round=%d q65Submode=%d q65TrPeriod=%d samples=%d results=%d durationUs=%lld\n",
+                phase, mode, handle, active_context, utc_time, decode_pass_count,
+                multi_decode_round_count, q65_submode, q65_tr_period, sample_count,
+                result_count, duration_us);
+    }
 #else
     (void) handle;
     (void) active_context;
@@ -274,24 +289,30 @@ void wsjtx3_vendor_trace_event(int phase,
                                long long duration_us) {
 #if defined(__GNUC__) || defined(__clang__)
     if (!g_vendor_trace_context.active
-            || ft8cn_vendor_phase_trace_sink == 0
             || !wsjtx3_phase_trace_is_enabled()) {
         return;
     }
-    ft8cn_vendor_phase_trace_sink(g_vendor_trace_context.handle,
-                                  g_vendor_trace_context.active_context,
-                                  g_vendor_trace_context.mode,
-                                  phase,
-                                  g_vendor_trace_context.utc_time,
-                                  g_vendor_trace_context.decode_pass_count,
-                                  g_vendor_trace_context.multi_decode_round_count,
-                                  g_vendor_trace_context.q65_submode,
-                                  g_vendor_trace_context.q65_tr_period,
-                                  g_vendor_trace_context.sample_count,
-                                  pass_index,
-                                  candidate_count,
-                                  decoded_count,
-                                  duration_us);
+    if (ft8cn_vendor_phase_trace_sink != 0) {
+        ft8cn_vendor_phase_trace_sink(g_vendor_trace_context.handle,
+                                      g_vendor_trace_context.active_context,
+                                      g_vendor_trace_context.mode,
+                                      phase,
+                                      g_vendor_trace_context.utc_time,
+                                      g_vendor_trace_context.decode_pass_count,
+                                      g_vendor_trace_context.multi_decode_round_count,
+                                      g_vendor_trace_context.q65_submode,
+                                      g_vendor_trace_context.q65_tr_period,
+                                      g_vendor_trace_context.sample_count,
+                                      pass_index,
+                                      candidate_count,
+                                      decoded_count,
+                                      duration_us);
+    } else {
+        fprintf(stderr,
+                "vendorPhase phase=%d mode=%d pass=%d candidates=%d decoded=%d durationUs=%lld\n",
+                phase, g_vendor_trace_context.mode, pass_index, candidate_count,
+                decoded_count, duration_us);
+    }
 #else
     (void) phase;
     (void) pass_index;
@@ -424,9 +445,7 @@ void wsjtx3_ft8b_trace_flush(int new_decode_count) {
 #if defined(__GNUC__) || defined(__clang__)
     long long measured_us;
     long long other_us;
-    if (!g_ft8b_trace.active
-            || ft8cn_ft8b_trace_sink == 0
-            || !wsjtx3_phase_trace_is_enabled()) {
+    if (!g_ft8b_trace.active || !wsjtx3_phase_trace_is_enabled()) {
         g_ft8b_trace.active = 0;
         return;
     }
@@ -439,25 +458,37 @@ void wsjtx3_ft8b_trace_flush(int new_decode_count) {
     other_us = g_ft8b_trace.total_us > measured_us
             ? g_ft8b_trace.total_us - measured_us
             : 0;
-    ft8cn_ft8b_trace_sink(g_vendor_trace_context.handle,
-                          g_vendor_trace_context.active_context,
-                          g_vendor_trace_context.utc_time,
-                          g_vendor_trace_context.decode_pass_count,
-                          g_vendor_trace_context.multi_decode_round_count,
-                          g_ft8b_trace.pass_index,
-                          g_ft8b_trace.candidate_count,
-                          g_ft8b_trace.success_count,
-                          g_ft8b_trace.call_count - g_ft8b_trace.success_count,
-                          new_decode_count,
-                          g_ft8b_trace.total_us,
-                          g_ft8b_trace.max_us,
-                          g_ft8b_trace.downsample_us,
-                          g_ft8b_trace.ap_us,
-                          g_ft8b_trace.ldpc_us,
-                          g_ft8b_trace.validation_us,
-                          g_ft8b_trace.unpack_us,
-                          g_ft8b_trace.subtract_us,
-                          other_us);
+    if (ft8cn_ft8b_trace_sink != 0) {
+        ft8cn_ft8b_trace_sink(g_vendor_trace_context.handle,
+                              g_vendor_trace_context.active_context,
+                              g_vendor_trace_context.utc_time,
+                              g_vendor_trace_context.decode_pass_count,
+                              g_vendor_trace_context.multi_decode_round_count,
+                              g_ft8b_trace.pass_index,
+                              g_ft8b_trace.candidate_count,
+                              g_ft8b_trace.success_count,
+                              g_ft8b_trace.call_count - g_ft8b_trace.success_count,
+                              new_decode_count,
+                              g_ft8b_trace.total_us,
+                              g_ft8b_trace.max_us,
+                              g_ft8b_trace.downsample_us,
+                              g_ft8b_trace.ap_us,
+                              g_ft8b_trace.ldpc_us,
+                              g_ft8b_trace.validation_us,
+                              g_ft8b_trace.unpack_us,
+                              g_ft8b_trace.subtract_us,
+                              other_us);
+    } else {
+        fprintf(stderr,
+                "ft8bTrace pass=%d candidates=%d calls=%d success=%d newDecodes=%d totalUs=%lld "
+                "maxUs=%lld downsampleUs=%lld apUs=%lld ldpcUs=%lld validationUs=%lld "
+                "unpackUs=%lld subtractUs=%lld otherUs=%lld\n",
+                g_ft8b_trace.pass_index, g_ft8b_trace.candidate_count,
+                g_ft8b_trace.call_count, g_ft8b_trace.success_count, new_decode_count,
+                g_ft8b_trace.total_us, g_ft8b_trace.max_us, g_ft8b_trace.downsample_us,
+                g_ft8b_trace.ap_us, g_ft8b_trace.ldpc_us, g_ft8b_trace.validation_us,
+                g_ft8b_trace.unpack_us, g_ft8b_trace.subtract_us, other_us);
+    }
     if (ft8cn_ldpc_trace_sink != 0 && g_ldpc_trace.call_count > 0) {
         measured_us = g_ldpc_trace.setup_us
                 + g_ldpc_trace.bp_llr_syndrome_us
@@ -483,8 +514,27 @@ void wsjtx3_ft8b_trace_flush(int new_decode_count) {
                               g_ldpc_trace.bp_llr_syndrome_us,
                               g_ldpc_trace.bp_bit_to_check_us,
                               g_ldpc_trace.bp_check_to_var_us,
-                              g_ldpc_trace.osd_us,
-                              other_us);
+                               g_ldpc_trace.osd_us,
+                               other_us);
+    } else if (g_ldpc_trace.call_count > 0) {
+        measured_us = g_ldpc_trace.setup_us
+                + g_ldpc_trace.bp_llr_syndrome_us
+                + g_ldpc_trace.bp_bit_to_check_us
+                + g_ldpc_trace.bp_check_to_var_us
+                + g_ldpc_trace.osd_us;
+        other_us = g_ldpc_trace.total_us > measured_us
+                ? g_ldpc_trace.total_us - measured_us
+                : 0;
+        fprintf(stderr,
+                "ldpcTrace pass=%d calls=%d bpIterations=%d osdCalls=%d bpSuccess=%d "
+                "osdSuccess=%d totalUs=%lld setupUs=%lld syndromeUs=%lld bitToCheckUs=%lld "
+                "checkToVarUs=%lld osdUs=%lld otherUs=%lld\n",
+                g_ft8b_trace.pass_index, g_ldpc_trace.call_count,
+                g_ldpc_trace.bp_iterations, g_ldpc_trace.osd_calls,
+                g_ldpc_trace.bp_success_count, g_ldpc_trace.osd_success_count,
+                g_ldpc_trace.total_us, g_ldpc_trace.setup_us,
+                g_ldpc_trace.bp_llr_syndrome_us, g_ldpc_trace.bp_bit_to_check_us,
+                g_ldpc_trace.bp_check_to_var_us, g_ldpc_trace.osd_us, other_us);
     }
     if (ft8cn_osd_trace_sink != 0 && g_osd_trace.call_count > 0) {
         measured_us = g_osd_trace.allocation_init_us
@@ -530,6 +580,34 @@ void wsjtx3_ft8b_trace_flush(int new_decode_count) {
                              g_osd_trace.second_preprocess_us,
                              g_osd_trace.validation_us,
                              other_us);
+    } else if (g_osd_trace.call_count > 0) {
+        measured_us = g_osd_trace.allocation_init_us
+                + g_osd_trace.generator_init_us
+                + g_osd_trace.input_prepare_us
+                + g_osd_trace.sort_us
+                + g_osd_trace.matrix_copy_us
+                + g_osd_trace.gaussian_elim_us
+                + g_osd_trace.matrix_permute_us
+                + g_osd_trace.order0_us
+                + g_osd_trace.order1_search_us
+                + g_osd_trace.higher_order_search_us
+                + g_osd_trace.second_preprocess_us
+                + g_osd_trace.validation_us;
+        other_us = g_osd_trace.total_us > measured_us
+                ? g_osd_trace.total_us - measured_us
+                : 0;
+        fprintf(stderr,
+                "osdTrace pass=%d calls=%d success=%d totalUs=%lld maxUs=%lld allocationUs=%lld "
+                "generatorUs=%lld inputUs=%lld sortUs=%lld matrixCopyUs=%lld gaussianUs=%lld "
+                "permuteUs=%lld order0Us=%lld order1Us=%lld higherOrderUs=%lld secondPreUs=%lld "
+                "validationUs=%lld otherUs=%lld\n",
+                g_ft8b_trace.pass_index, g_osd_trace.call_count, g_osd_trace.success_count,
+                g_osd_trace.total_us, g_osd_trace.max_us, g_osd_trace.allocation_init_us,
+                g_osd_trace.generator_init_us, g_osd_trace.input_prepare_us, g_osd_trace.sort_us,
+                g_osd_trace.matrix_copy_us, g_osd_trace.gaussian_elim_us,
+                g_osd_trace.matrix_permute_us, g_osd_trace.order0_us,
+                g_osd_trace.order1_search_us, g_osd_trace.higher_order_search_us,
+                g_osd_trace.second_preprocess_us, g_osd_trace.validation_us, other_us);
     }
 #else
     (void) new_decode_count;
