@@ -7,7 +7,8 @@ param(
     [string]$CMakePath = '',
     [string]$NinjaPath = '',
     [string]$MsysRoot = '',
-    [string]$FftwRoot = ''
+    [string]$FftwRoot = '',
+    [switch]$EnableSanitizers
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,10 +38,12 @@ foreach ($required in @($CMakePath, $NinjaPath, (Join-Path $FftwRoot 'include\ff
 $oldPath = $env:PATH
 try {
     $env:PATH = "$ucrtBin;$msysBin;$oldPath"
+    $sanitizers = if ($EnableSanitizers) { 'ON' } else { 'OFF' }
     & $CMakePath -S $scriptDir -B $BuildDir -G Ninja `
         "-DCMAKE_MAKE_PROGRAM=$NinjaPath" `
         "-DCMAKE_BUILD_TYPE=$BuildType" `
         "-DFT8CN_RELEASE_OPT_LEVEL=$Optimization" `
+        "-DFT8CN_ENABLE_SANITIZERS=$sanitizers" `
         "-DWSJTX3_FFTW_ROOT=$FftwRoot"
     if ($LASTEXITCODE -ne 0) { throw 'Host CMake configure failed.' }
     & $CMakePath --build $BuildDir

@@ -6,7 +6,7 @@
         <receiver
             android:name="com.bg7yoz.ft8cn.diagnostics.SampleDecodeReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="com.bg7yoz.ft8cn.ft4.DEBUG_DECODE_SAMPLE" />
                 <action android:name="com.bg7yoz.ft8cn.action.DEBUG_SAMPLE_DECODE" />
@@ -16,6 +16,6 @@
         <service
             android:name="com.bg7yoz.ft8cn.diagnostics.SampleDecodeForegroundService"
             android:enabled="true"
-            android:exported="true" />
+            android:exported="false" />
     </application>
 </manifest>

@@ -42,7 +42,16 @@ $LlvmSourceRoot = Find-Ft8cnDirectory -ExplicitPath $LlvmSourceRoot -CandidateRo
     -RelativePatterns @('src\llvm-project-*.src', 'llvm-project-*.src') -RequiredChild 'runtimes\CMakeLists.txt'
 
 if (-not $OutputDir) { $OutputDir = Join-Path $scriptDir 'out\arm64-v8a' }
-if (-not $BuildDir) { $BuildDir = Join-Path $OutputDir 'flang_rt_build' }
+if (-not $BuildDir) {
+    # flang-rt encodes absolute source paths into object directories. Keep the
+    # default workspace short so Gradle's deep .cxx path cannot exceed MAX_PATH.
+    $workspaceBase = if ($env:FT8CN_FLANG_RT_WORKSPACE) {
+        $env:FT8CN_FLANG_RT_WORKSPACE
+    } else {
+        Join-Path ([System.IO.Path]::GetTempPath()) 'f8frt'
+    }
+    $BuildDir = $workspaceBase
+}
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 $BuildDir = [System.IO.Path]::GetFullPath($BuildDir)
 $patchFile = Join-Path $scriptDir 'patches\flang-rt-android-time.patch'

@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 3.20)
 
 project(ft8cn_wsjtx3_host_probe LANGUAGES C CXX Fortran)
 
+option(FT8CN_ENABLE_SANITIZERS "Enable ASan/UBSan for host C/C++ code" OFF)
+if (FT8CN_ENABLE_SANITIZERS AND NOT MSVC)
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libasan.a
+            OUTPUT_VARIABLE FT8CN_ASAN_LIBRARY OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libubsan.a
+            OUTPUT_VARIABLE FT8CN_UBSAN_LIBRARY OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if (NOT IS_ABSOLUTE "${FT8CN_ASAN_LIBRARY}" OR NOT EXISTS "${FT8CN_ASAN_LIBRARY}"
+            OR NOT IS_ABSOLUTE "${FT8CN_UBSAN_LIBRARY}" OR NOT EXISTS "${FT8CN_UBSAN_LIBRARY}")
+        message(FATAL_ERROR
+                "FT8CN_ENABLE_SANITIZERS requires installed libasan and libubsan runtimes")
+    endif ()
+endif ()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -122,6 +135,10 @@ target_compile_options(ft8cn_wsjtx3_host_core PRIVATE
         $<$<CONFIG:Profile>:-DNDEBUG>
         $<$<COMPILE_LANGUAGE:Fortran>:${FT8CN_FORTRAN_RUNTIME_CHECKS}>
 )
+if (FT8CN_ENABLE_SANITIZERS AND NOT MSVC)
+    target_compile_options(ft8cn_wsjtx3_host_core PRIVATE
+            $<$<COMPILE_LANGUAGE:C,CXX>:-fsanitize=address,undefined;-fno-omit-frame-pointer>)
+endif ()
 
 add_executable(ft8cn_wsjtx3_bridge_smoke
         "${CMAKE_CURRENT_LIST_DIR}/wsjtx3_bridge_smoke.c"
@@ -169,6 +186,8 @@ add_executable(ftx_selftest
         "${WSJTX3_CPP_ROOT}/tests/ftx_core_selftest_main.c"
         "${WSJTX3_CPP_ROOT}/tests/ftx_resampler_test.c"
         "${WSJTX3_CPP_ROOT}/tests/ftx_synthetic_decode_test.c"
+        "${WSJTX3_CPP_ROOT}/tests/ftx_channel_regression_test.c"
+        "${WSJTX3_CPP_ROOT}/tests/ftx_request_context_test.c"
         "${WSJTX3_CPP_ROOT}/tests/q65_capacity_test.c"
         "${WSJTX3_CPP_ROOT}/tests/q65_averaging_test.c"
         "${WSJTX3_CPP_ROOT}/tests/q65_tx_rx_test.c"
@@ -185,6 +204,15 @@ target_link_libraries(ftx_selftest PRIVATE
         ft8cn_wsjtx3_host_core
         "${WSJTX3_FFTW3F_LIBRARY}"
 )
+
+if (FT8CN_ENABLE_SANITIZERS AND NOT MSVC)
+    foreach (sanitized_target IN ITEMS ft8cn_wsjtx3_bridge_smoke ftx_codec_selftest_support ftx_selftest)
+        target_compile_options(${sanitized_target} PRIVATE
+                $<$<COMPILE_LANGUAGE:C,CXX>:-fsanitize=address,undefined;-fno-omit-frame-pointer>)
+    endforeach ()
+    target_link_options(ft8cn_wsjtx3_bridge_smoke PRIVATE -fsanitize=address,undefined)
+    target_link_options(ftx_selftest PRIVATE -fsanitize=address,undefined)
+endif ()
 
 enable_testing()
 add_test(NAME ftx_codec_selftest COMMAND ftx_selftest)

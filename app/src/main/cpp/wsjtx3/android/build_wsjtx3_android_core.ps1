@@ -127,8 +127,7 @@ $coreArchive = Join-Path $OutputDir 'libwsjtx3_official_core.a'
 $runtimeArchive = Join-Path $OutputDir 'libflang_rt.runtime.a'
 $fingerprintFile = Join-Path $OutputDir 'wsjtx3-core.fingerprint'
 
-$runtimeBuildDir = Join-Path $OutputDir 'flang_rt_build'
-& $runtimeScript -OutputDir $OutputDir -BuildDir $runtimeBuildDir -CMakePath $CMakePath `
+& $runtimeScript -OutputDir $OutputDir -CMakePath $CMakePath `
     -NinjaPath $NinjaPath -NdkRoot $NdkRoot -FlangPath $FlangPath -LlvmSourceRoot $LlvmSourceRoot `
     -BuildProfile $BuildProfile -Optimization $Optimization -TargetTriple $TargetTriple
 if (-not $?) { throw 'flang-rt build script failed' }

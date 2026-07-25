@@ -1,6 +1,5 @@
 module wsjtx3_bridge
   use iso_c_binding
-  use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   use ft8_decode, only: ft8_decoder, ft8_decode_callback
   use ft4_decode, only: ft4_decoder, ft4_decode_callback
   use q65_decode, only: q65_decoder, q65_decode_callback, q65_file_io_enabled
@@ -109,6 +108,11 @@ module wsjtx3_bridge
        integer(c_int), value :: tr_period_seconds
        integer(c_int), value :: sample_rate
      end function ftx_q65_required_samples_c
+
+     integer(c_int) function ftx_is_finite_double_c(value) bind(C, name="ftx_is_finite_double_c")
+       import :: c_double, c_int
+       real(c_double), value :: value
+     end function ftx_is_finite_double_c
 
      integer(c_int) function wsjtx3_phase_trace_is_enabled() bind(C, name="wsjtx3_phase_trace_is_enabled")
        import :: c_int
@@ -287,6 +291,7 @@ contains
     g_contexts(handle)%ldpc_iterations = 20
     g_contexts(handle)%qso_frequency_hz = 1000
     g_contexts(handle)%tx_frequency_hz = 1000
+    g_contexts(handle)%input_is_live = 0
     g_contexts(handle)%q65_submode = Q65_DEFAULT_SUBMODE
     g_contexts(handle)%q65_tr_period = Q65_DEFAULT_TR_PERIOD
     g_contexts(handle)%q65_navg0 = 0
@@ -409,10 +414,9 @@ contains
        return
     end if
 
-    ! FT4 鐨勫畼鏂?ndepth 瑕佸敖閲忓拰鍓嶇 pass / round 璇箟瑙ｅ:
-    ! 1. decode_pass_count 涓昏鍐冲畾鍗曟 official decode 鐨勬繁搴︽。浣?
-    ! 2. multi_decode_round_count 鐢卞灞?C session 鎺у埗 AP / follow-up 杞锛?
-    !    閬垮厤 FT4 鍙堝洖鍒?round count 澶ч儴鍒嗗彧鏄槧灏?ndepth 鐨勬棫鐘舵€併€?
+    ! FT4 官方 ndepth 主要对应单次 decode 的搜索深度。
+    ! decode_pass_count 选择该深度；multi_decode_round_count 由外层 C session
+    ! 调度 AP/follow-up，避免把 round count 再次重复映射成 ndepth。
     depth = 1_c_int
 
     if (context%decode_pass_count >= 2_c_int) then
@@ -1082,7 +1086,7 @@ contains
          real(mode_factor, kind=8)
     f0 = real(base_frequency_hz, kind=8)
     highest_tone = f0 + 64.0_8 * tonespacing
-    if (.not. ieee_is_finite(f0) .or. f0 < 0.0_8 .or. &
+    if (ftx_is_finite_double_c(f0) == 0_c_int .or. f0 < 0.0_8 .or. &
          highest_tone >= 0.5_8 * real(sample_rate, kind=8)) then
        return
     end if
@@ -1293,6 +1297,52 @@ contains
     end if
     g_contexts(handle)%input_is_live = merge(1_c_int, 0_c_int, input_is_live /= 0)
   end subroutine wsjtx3_bridge_set_input_is_live
+
+  integer(c_int) function wsjtx3_bridge_get_context_state(handle, mode, input_is_live, &
+       qso_frequency_hz, tx_frequency_hz, decode_pass_count, multi_decode_round_count) &
+       bind(C, name="wsjtx3_bridge_get_context_state")
+    integer(c_int), value :: handle
+    integer(c_int), intent(out) :: mode
+    integer(c_int), intent(out) :: input_is_live
+    integer(c_int), intent(out) :: qso_frequency_hz
+    integer(c_int), intent(out) :: tx_frequency_hz
+    integer(c_int), intent(out) :: decode_pass_count
+    integer(c_int), intent(out) :: multi_decode_round_count
+
+    wsjtx3_bridge_get_context_state = 0_c_int
+    mode = -1_c_int
+    input_is_live = 0_c_int
+    qso_frequency_hz = 0_c_int
+    tx_frequency_hz = 0_c_int
+    decode_pass_count = 0_c_int
+    multi_decode_round_count = 0_c_int
+    if (.not. context_valid(handle)) then
+       return
+    end if
+
+    mode = g_contexts(handle)%mode
+    input_is_live = g_contexts(handle)%input_is_live
+    qso_frequency_hz = g_contexts(handle)%qso_frequency_hz
+    tx_frequency_hz = g_contexts(handle)%tx_frequency_hz
+    decode_pass_count = g_contexts(handle)%decode_pass_count
+    multi_decode_round_count = g_contexts(handle)%multi_decode_round_count
+    wsjtx3_bridge_get_context_state = 1_c_int
+  end function wsjtx3_bridge_get_context_state
+
+  integer(c_int) function wsjtx3_bridge_get_ft8_phase(handle, sample_count) &
+       bind(C, name="wsjtx3_bridge_get_ft8_phase")
+    integer(c_int), value :: handle
+    integer(c_int), value :: sample_count
+
+    wsjtx3_bridge_get_ft8_phase = 0_c_int
+    if (.not. context_valid(handle)) then
+       return
+    end if
+    if (.not. context_is_ft8(g_contexts(handle))) then
+       return
+    end if
+    wsjtx3_bridge_get_ft8_phase = ft8_phase_from_context(g_contexts(handle), sample_count)
+  end function wsjtx3_bridge_get_ft8_phase
 
   subroutine wsjtx3_bridge_reset_q65_averaging(handle) &
        bind(C, name="wsjtx3_bridge_reset_q65_averaging")

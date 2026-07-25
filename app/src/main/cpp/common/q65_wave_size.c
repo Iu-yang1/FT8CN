@@ -1,5 +1,6 @@
 #include "q65_wave_size.h"
 
+#include <math.h>
 #include <stdint.h>
 
 enum {
@@ -48,4 +49,8 @@ int64_t ftx_q65_required_samples_c(int tr_period_seconds, int sample_rate) {
         return -1;
     }
     return (int64_t) required_samples;
+}
+
+int ftx_is_finite_double_c(double value) {
+    return isfinite(value) ? 1 : 0;
 }

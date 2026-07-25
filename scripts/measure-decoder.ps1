@@ -145,7 +145,11 @@ $result = [pscustomobject]@{
 }
 $json = $result | ConvertTo-Json -Depth 6
 if ($OutputJson) {
-    $outputPath = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputJson))
+    $outputPath = if ([System.IO.Path]::IsPathRooted($OutputJson)) {
+        [System.IO.Path]::GetFullPath($OutputJson)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputJson))
+    }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $outputPath) | Out-Null
     Set-Content -LiteralPath $outputPath -Value $json -Encoding UTF8
 }

@@ -14,6 +14,7 @@ int ftx_q65_required_samples(int tr_period_seconds,
 
 /* Fortran bridge 使用固定宽度返回值，失败时返回 -1。 */
 int64_t ftx_q65_required_samples_c(int tr_period_seconds, int sample_rate);
+int ftx_is_finite_double_c(double value);
 
 #ifdef __cplusplus
 }

@@ -21,15 +21,29 @@ if ([string]::IsNullOrWhiteSpace($AndroidSdkRoot) -and $properties.ContainsKey('
     $AndroidSdkRoot = $properties['sdk.dir']
 }
 
-$explicitJava = ''
+$explicitJavac = ''
 if ($JavaHome) {
-    $explicitJava = Join-Path $JavaHome 'bin\java.exe'
+    $explicitJavac = Join-Path $JavaHome 'bin\javac.exe'
 }
-$java = Find-Ft8cnExecutable -ExplicitPath $explicitJava `
-    -CommandNames @('java.exe', 'java') -CandidateRoots $roots -RelativePatterns @(
-    'jdks\jdk-17*\bin\java.exe', 'jdk*17*\bin\java.exe', 'bin\java.exe')
-if ($java) {
-    $JavaHome = Split-Path -Parent (Split-Path -Parent $java)
+$javacCandidates = New-Object System.Collections.Generic.List[string]
+if ($explicitJavac -and (Test-Path $explicitJavac)) { $javacCandidates.Add($explicitJavac) }
+foreach ($root in $roots) {
+    foreach ($pattern in @('jdks\jdk-17*\bin\javac.exe', 'jdk*17*\bin\javac.exe',
+            'jdk17\bin\javac.exe', 'bin\javac.exe')) {
+        foreach ($candidate in @(Get-ChildItem (Join-Path $root $pattern) -File -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending)) {
+            $javacCandidates.Add($candidate.FullName)
+        }
+    }
+}
+$commandJavac = Get-Command javac.exe, javac -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($commandJavac -and (Test-Path $commandJavac.Source)) { $javacCandidates.Add($commandJavac.Source) }
+foreach ($candidate in $javacCandidates) {
+    $version = Get-Ft8cnCommandVersion $candidate @('-version')
+    if ($version -match '^javac\s+17(\.|$)') {
+        $JavaHome = Split-Path -Parent (Split-Path -Parent $candidate)
+        break
+    }
 }
 
 $AndroidSdkRoot = Find-Ft8cnDirectory -ExplicitPath $AndroidSdkRoot -CandidateRoots $roots `

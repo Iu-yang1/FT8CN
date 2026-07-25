@@ -1,7 +1,9 @@
 param(
-    [string] $FlangPath = 'H:\tools\msys64\ucrt64\bin\flang-new.exe',
-    [string] $ReadObjPath = 'H:\iu_yang1\AndroidSDKLIB\ndk\23.1.7779620\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readobj.exe',
-    [string] $LlcPath = 'H:\tools\msys64\ucrt64\bin\llc.exe',
+    [string] $FlangPath = '',
+    [string] $ReadObjPath = '',
+    [string] $LlcPath = '',
+    [string] $NdkRoot = '',
+    [string] $MsysRoot = '',
     [string] $Target = 'aarch64-linux-android21',
     [switch] $EnableLlvmFallback
 )
@@ -12,7 +14,30 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = Resolve-Path (Join-Path $scriptDir '..\..\..\..\..\..')
+$repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..\..\..\..')).ProviderPath
+. (Join-Path $repoRoot 'scripts\toolchain-common.ps1')
+$roots = @(Get-Ft8cnCandidateRoots -RepoRoot $repoRoot)
+
+$FlangPath = Find-Ft8cnExecutable -ExplicitPath $FlangPath `
+    -CommandNames @('flang.exe', 'flang-new.exe', 'flang-new', 'flang') `
+    -CandidateRoots $roots -RelativePatterns @(
+    'build\llvm-flang-*\bin\flang.exe', 'llvm*\bin\flang*.exe',
+    'msys64\ucrt64\bin\flang-new.exe')
+$NdkRoot = Find-Ft8cnDirectory -ExplicitPath $NdkRoot -CandidateRoots $roots `
+    -RelativePatterns @('ndk\*', 'AndroidSDKLIB\ndk\*') `
+    -RequiredChild 'toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readobj.exe'
+if (-not $ReadObjPath -and $NdkRoot) {
+    $ReadObjPath = Join-Path $NdkRoot `
+        'toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readobj.exe'
+}
+$ReadObjPath = Find-Ft8cnExecutable -ExplicitPath $ReadObjPath `
+    -CommandNames @('llvm-readobj.exe', 'llvm-readobj') -CandidateRoots $roots `
+    -RelativePatterns @('ndk\*\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readobj.exe')
+$LlcPath = Find-Ft8cnExecutable -ExplicitPath $LlcPath `
+    -CommandNames @('llc.exe', 'llc') -CandidateRoots $roots `
+    -RelativePatterns @('msys64\ucrt64\bin\llc.exe', 'llvm*\bin\llc.exe')
+$MsysRoot = Find-Ft8cnDirectory -ExplicitPath $MsysRoot -CandidateRoots $roots `
+    -RelativePatterns @('msys64') -RequiredChild 'ucrt64\bin'
 $probeRoot = Join-Path $repoRoot '.tmp_flang_android_probe'
 $modDir = Join-Path $probeRoot 'mod'
 $objDir = Join-Path $probeRoot 'obj'
@@ -37,7 +62,10 @@ if ($EnableLlvmFallback -and -not (Test-Path $llc)) {
 
 New-Item -ItemType Directory -Force -Path $probeRoot, $modDir, $objDir, $logDir | Out-Null
 
-$env:PATH = 'H:\tools\msys64\ucrt64\bin;H:\tools\msys64\usr\bin;' + $env:PATH
+if ($MsysRoot) {
+    $env:PATH = (Join-Path $MsysRoot 'ucrt64\bin') + ';' +
+        (Join-Path $MsysRoot 'usr\bin') + ';' + $env:PATH
+}
 
 $commonArgs = @(
     "--target=$target",

@@ -25,11 +25,6 @@
 *.profraw
 *.profdata
 
-# Keep the three vendored FT2 archives visible until repository hygiene removes them.
-!app/src/main/cpp/wsjtx3/vendor/wsjtx-3.0.0/lib/ft2/libportaudio.a
-!app/src/main/cpp/wsjtx3/vendor/wsjtx-3.0.0/lib/ft2/libwsjt_cxx.a
-!app/src/main/cpp/wsjtx3/vendor/wsjtx-3.0.0/lib/ft2/libwsjt_fort.a
-
 # Logs, probes and local diagnostics
 *.log
 *.tmp

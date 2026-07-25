@@ -38,6 +38,14 @@ void wsjtx3_bridge_set_ap_hints(int handle,
                                 const char *his_grid);
 void wsjtx3_bridge_set_qso_frequencies(int handle, int qso_frequency_hz, int tx_frequency_hz);
 void wsjtx3_bridge_set_input_is_live(int handle, int input_is_live);
+int wsjtx3_bridge_get_context_state(int handle,
+                                    int *mode,
+                                    int *input_is_live,
+                                    int *qso_frequency_hz,
+                                    int *tx_frequency_hz,
+                                    int *decode_pass_count,
+                                    int *multi_decode_round_count);
+int wsjtx3_bridge_get_ft8_phase(int handle, int sample_count);
 void wsjtx3_bridge_reset_q65_averaging(int handle);
 int wsjtx3_bridge_get_q65_averaging_state(int handle,
                                           int *navg0,
