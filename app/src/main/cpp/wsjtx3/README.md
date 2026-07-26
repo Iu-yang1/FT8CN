@@ -13,7 +13,11 @@
 
 ## 并发
 
-当前 bridge callback 通过全局活动 context 回传，Q65 上游仍包含 Fortran unit 状态。即使诊断 callback slot 可用，也不能宣称 native 并行安全。Android 必须保留 Java native lock、C mutex 和 Q65 独立串行 lane。
+当前 bridge callback 通过全局活动 context 回传，Q65 上游仍包含 Fortran unit 状态。即使诊断 callback slot 可用，也不能宣称多个 native decode 请求可并行。Android 必须保留 Java native lock、C mutex 和 Q65 独立串行 lane，`PARALLEL_NATIVE` 继续禁用。
+
+FT8 仅在单个官方 decode 请求内部并行 `sync8` 的独立频率行。运行时根据 Android CPU capacity/max-frequency 识别性能簇，保留至少一个在线核心给录音和 UI，并将同步搜索限制为最多两个线程。候选归并、排序、`ft8b`、LDPC/OSD、subtract 和 callback 均保持确定性的串行顺序。该内部 OpenMP 区域不放宽上述请求级锁，也不用于 FT4/Q65。
+
+FT4 的同类频率行 OpenMP 实验在真机上慢 21%-29%，因此没有保留；当前只复用与 `idf` 对应的 Costas 模板。Q65 继续使用独立串行 lane。
 
 ## Q65
 
