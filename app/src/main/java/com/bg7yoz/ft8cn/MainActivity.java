@@ -46,6 +46,7 @@ import androidx.navigation.ui.NavigationUI;
 import com.bg7yoz.ft8cn.bluetooth.BluetoothStateBroadcastReceive;
 import com.bg7yoz.ft8cn.callsign.CallsignDatabase;
 import com.bg7yoz.ft8cn.connector.CableSerialPort;
+import com.bg7yoz.ft8cn.core.time.AndroidGnssTimeDiscipline;
 import com.bg7yoz.ft8cn.database.OnAfterQueryConfig;
 import com.bg7yoz.ft8cn.database.OperationBand;
 import com.bg7yoz.ft8cn.databinding.MainActivityBinding;
@@ -75,6 +76,7 @@ public class MainActivity extends AppCompatActivity {
 
     private MainActivityBinding binding;
     private FloatView floatView;
+    private AndroidGnssTimeDiscipline gnssTimeDiscipline;
 
     private ShareLogsProgressDialog dialog = null;//生成共享log的对话框
 
@@ -129,6 +131,7 @@ public class MainActivity extends AppCompatActivity {
 
         super.onCreate(savedInstanceState);
         GeneralVariables.getInstance().setMainContext(getApplicationContext());
+        gnssTimeDiscipline = new AndroidGnssTimeDiscipline(getApplicationContext());
 
         //判断是不是简体中文
         GeneralVariables.isTraditionalChinese =
@@ -588,7 +591,27 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         if (requestCode != PERMISSION_REQUEST) {
             super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+            return;
         }
+        if (gnssTimeDiscipline != null) {
+            gnssTimeDiscipline.start();
+        }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        if (gnssTimeDiscipline != null) {
+            gnssTimeDiscipline.start();
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        if (gnssTimeDiscipline != null) {
+            gnssTimeDiscipline.stop();
+        }
+        super.onStop();
     }
 
     /**

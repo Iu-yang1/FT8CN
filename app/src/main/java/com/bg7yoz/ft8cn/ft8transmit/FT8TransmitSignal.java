@@ -18,6 +18,7 @@ import com.bg7yoz.ft8cn.auto.AutoSessionState;
 import com.bg7yoz.ft8cn.auto.AutoSessionType;
 import com.bg7yoz.ft8cn.auto.AutoSessionUiPolicy;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
+import com.bg7yoz.ft8cn.core.time.DisciplinedClockRegistry;
 import com.bg7yoz.ft8cn.cq.CallQueueManager;
 import com.bg7yoz.ft8cn.cq.CqCallEntry;
 import com.bg7yoz.ft8cn.database.ControlMode;
@@ -66,6 +67,7 @@ public class FT8TransmitSignal {
     // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
     // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
     private long lastManualTransmitRequestMs = 0L;
+    private long lastClockBlockedNoticeMs = 0L;
     private volatile long lastDecodeMessageUpdateMs = 0L;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
     public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();
@@ -518,7 +520,7 @@ public class FT8TransmitSignal {
                 return;
             }
             lastManualTransmitRequestMs = now;
-            doTransmit();
+            doTransmit(true);
             return;
         }
 
@@ -537,13 +539,17 @@ public class FT8TransmitSignal {
                     < FT8Common.getImmediateTxWindowMs(GeneralVariables.getSignalMode())) {
                 lastTransmitAttemptSequence = currentFullSeq;
                 setTransmitting(false);
-                doTransmit();
+                doTransmit(true);
             }
         }
     }
 
 
     public void doTransmit() {
+        doTransmit(false);
+    }
+
+    private void doTransmit(boolean manualRequest) {
         if (!activated && !isExperimentalManualTxMode()) {
             return;
         }
@@ -557,6 +563,9 @@ public class FT8TransmitSignal {
             ToastMessage.show(String.format(GeneralVariables.getStringFromResource(R.string.use_wspr2_error)
                     , BaseRigOperation.getFrequencyAllInfo(GeneralVariables.band)));
             setActivated(false);
+            return;
+        }
+        if (!checkClockForTransmit(manualRequest, true)) {
             return;
         }
         boolean reserveBeforeQueue = isExperimentalManualTxMode();
@@ -575,7 +584,7 @@ public class FT8TransmitSignal {
         }
         Log.d(TAG, "doTransmit: start transmit");
         try {
-            doTransmitThreadPool.execute(new DoTransmitRunnable(this));
+            doTransmitThreadPool.execute(new DoTransmitRunnable(this, manualRequest));
         } catch (RejectedExecutionException e) {
             Log.e(TAG, "doTransmit rejected: " + e.getMessage());
             if (reserveBeforeQueue) {
@@ -584,6 +593,28 @@ public class FT8TransmitSignal {
             return;
         }
         mutableFunctions.postValue(functionList);
+    }
+
+    private boolean checkClockForTransmit(boolean manualRequest, boolean notifyUser) {
+        if (DisciplinedClockRegistry.isAutomaticTransmitAllowed()) {
+            return true;
+        }
+        String reason = DisciplinedClockRegistry.automaticTransmitBlockReason();
+        if (manualRequest) {
+            if (notifyUser) {
+                ToastMessage.show("时间状态不健康，手动发射仍继续：" + reason);
+            }
+            return true;
+        }
+
+        updateLastTransmitStatus("自动发射已阻止：" + reason);
+        long nowMs = System.currentTimeMillis();
+        if (notifyUser && nowMs - lastClockBlockedNoticeMs >= 30_000L) {
+            lastClockBlockedNoticeMs = nowMs;
+            ToastMessage.show("自动发射已阻止：" + reason);
+        }
+        Log.w(TAG, "automatic transmit blocked: " + reason);
+        return false;
     }
 
     @SuppressLint("DefaultLocale")
@@ -2585,15 +2616,20 @@ public class FT8TransmitSignal {
     }
 
     private static class DoTransmitRunnable implements Runnable {
-        FT8TransmitSignal transmitSignal;
+        private final FT8TransmitSignal transmitSignal;
+        private final boolean manualRequest;
 
-        public DoTransmitRunnable(FT8TransmitSignal transmitSignal) {
+        public DoTransmitRunnable(FT8TransmitSignal transmitSignal, boolean manualRequest) {
             this.transmitSignal = transmitSignal;
+            this.manualRequest = manualRequest;
         }
 
         @SuppressLint("DefaultLocale")
         @Override
         public void run() {
+            if (!transmitSignal.checkClockForTransmit(manualRequest, false)) {
+                return;
+            }
             if (transmitSignal.onDoTransmitted != null) {
                 transmitSignal.onDoTransmitted.onPrepareTransmit();
             }
@@ -2608,6 +2644,12 @@ public class FT8TransmitSignal {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
+            }
+
+            // 等待 late-decode 窗口期间时间源可能失效，真正生成/播放前再做一次自动门禁。
+            if (!transmitSignal.checkClockForTransmit(manualRequest, true)) {
+                transmitSignal.afterPlayAudio();
+                return;
             }
 
             int transmitOrder = transmitSignal.functionOrder;

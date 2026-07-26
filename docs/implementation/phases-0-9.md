@@ -10,8 +10,8 @@
 | 阶段 | 状态 | 主要门禁 | 提交 SHA |
 |---|---|---|---|
 | 0 仓库、基线、联合审查、工具链和合规 | 完成 | Host/oracle/Gradle PASS；`BLOCKED_DEVICE`、`BLOCKED_SANITIZER`、`BLOCKED_Q65_STREAMING` | `a4aa090a` |
-| 1 Kotlin 功能架构和数据基础 | 完成 | JVM/迁移/导航、Debug/Release、DSP 回归 PASS；`BLOCKED_DEVICE_LEAK` | 本阶段提交 |
-| 2 NTP/GNSS 时间纪律和 slot 调度 | 待开始 | fake clock、NTP、GNSS、slot、性能 | 待提交 |
+| 1 Kotlin 功能架构和数据基础 | 完成 | JVM/迁移/导航、Debug/Release、DSP 回归 PASS；`BLOCKED_DEVICE_LEAK` | `888738a6` |
+| 2 NTP/GNSS 时间纪律和 slot 调度 | 完成 | fake clock、本地 NTP mock、GNSS 转换、slot、DSP/oracle PASS；`BLOCKED_DEVICE` | 本阶段提交 |
 | 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 待开始 | Android ABI、fake rig/rigctld、PTT 安全 | 待提交 |
 | 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 待开始 | oracle、状态机、纯噪声、性能 | 待提交 |
 | 5 Q65-EME 页面和生产流式内存 | 待开始 | 300 秒 RX/TX、averaging、内存、回归 | 待提交 |
@@ -37,3 +37,11 @@
 - 阶段门禁：28 项 Debug JVM 测试和 Release JVM 测试通过；Debug/Release/androidTest APK 构建通过；Compose 外壳 `exported=false`，旧 `MainActivity` 仍为 launcher。
 - O2 固定语料：FT8 20 条、`de6b3e97...70cc3`、513.474/516.580 → 512.641/518.284 ms；FT4 16 条、`877dd38b...d1d14`、258.967/266.237 → 258.788/260.523 ms；Q65 4 条、`76d34ece...b9de`、212.572/222.730 → 224.072/227.042 ms。FT8/FT4 均在 3% 门槛内，且本阶段未改 native。
 - 官方 `jt9` 仍为 FT8 20/20、FT4 16/16 严格匹配。当前无 ADB 设备，页面反复进入/退出的真机 LeakCanary 门禁记为 `BLOCKED_DEVICE_LEAK`，不冒充 PASS。
+
+## 阶段 2 记录
+
+- 应用 UTC 已改为单调时钟锚定；NTP/GNSS 样本携带 uncertainty、age、source 和 drift，系统 wall clock 跳变不再直接改变正在运行的 slot。
+- NTP 完成四时间戳、响应身份、KoD/stratum/leap/root dispersion 校验，多服务器稳健融合及指数退避；GNSS 只接受非 mock fix、完整 bias/leap 的 measurement，且不记录坐标。
+- FT8/FT4/Q65 统一 slot 边界算法。自动 TX 在不健康时间下阻止，手动 TX 明确警告后仍可继续；RX 不受影响。
+- Debug/Release JVM、APK 和 lintVital PASS；O2 固定语料与官方 `jt9` 哈希/结果完全不变。FT8/FT4/Q65 p50/p95 为 514.634/526.629、261.300/265.155、216.610/226.977 ms。
+- 无授权 ADB 与 sanitizer runtime，分别保留 `BLOCKED_DEVICE`、`BLOCKED_SANITIZER`；详见 `docs/verification/time-discipline-2026-07-26.md`。

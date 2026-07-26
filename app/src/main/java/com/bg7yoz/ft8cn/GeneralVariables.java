@@ -174,7 +174,7 @@ public class GeneralVariables {
      * 最近一次同步结果
      */
     public static int lastNtpOffset = 0;          // 真实 offset(ms)
-    public static int lastNtpAlignedOffset = 0;   // 内部对齐后 offset(ms)
+    public static int lastNtpAlignedOffset = 0;   // 兼容旧配置；新时间纪律校准后固定为 0
     public static long lastNtpDelay = -1;         // round-trip delay(ms)
     public static long lastNtpSyncTime = 0;       // 本地同步完成时间戳
 

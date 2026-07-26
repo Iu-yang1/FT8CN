@@ -5,11 +5,8 @@ package com.bg7yoz.ft8cn.timer;
  * FT8 = 150（15秒）
  * FT4 = 75（7.5秒）
  *
- * 已增强：
- * 1. 支持指定 NTP 服务器同步
- * 2. 保留真实偏移 realDelay
- * 3. 内部使用对齐后的 delay 参与时隙计算
- * 4. 返回 NTP offset / round-trip delay / server / syncTime
+ * 时间由单调时钟锚定；NTP/GNSS 校准不会在 slot 中途跟随系统 wall clock 跳变。
+ * 旧 delay 字段仅作为用户手动微调兼容层。
  *
  * @author BG7YOZ
  * @date 2022.5.7
@@ -17,11 +14,11 @@ package com.bg7yoz.ft8cn.timer;
 
 import android.annotation.SuppressLint;
 
-import org.apache.commons.net.ntp.NTPUDPClient;
-import org.apache.commons.net.ntp.TimeInfo;
+import com.bg7yoz.ft8cn.core.time.DisciplinedClockRegistry;
+import com.bg7yoz.ft8cn.core.time.MultiSourceNtpDiscipline;
+import com.bg7yoz.ft8cn.core.time.NtpMeasurement;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.TimeZone;
@@ -45,8 +42,7 @@ public class UtcTimer {
     private long utc;
 
     /**
-     * 参与系统时间计算的“对齐后偏移”，单位毫秒
-     * getSystemTime() = System.currentTimeMillis() + delay
+     * 用户手动微调，单位毫秒。NTP/GNSS 校准由 DisciplinedClock 单独维护，避免重复叠加。
      */
     public static volatile int delay = 0;
 
@@ -169,7 +165,7 @@ public class UtcTimer {
         this.doOnce = doOnce;
         this.onUtcTimer = onUtcTimer;
 
-        // 10ms轮询，用于精确检测0.1秒周期边界
+        // 10ms 轮询仅检测边界；UTC 本身来自单调时钟锚点，不受 wall clock 跳变影响。
         secTimer.schedule(secTask(), 0, 10);
         // 1秒心跳
         heartBeatTimer.schedule(heartBeatTask(), 0, 1000);
@@ -197,9 +193,6 @@ public class UtcTimer {
                     }
                     utc = getSystemTime();
                     long currentSlotIndex = getSlotIndex(utc);
-
-                    // 转换为0.1秒单位的时间轴
-                    long tick100ms = (utc - time_sec) / 100L;
 
                     if (running && currentSlotIndex > lastTriggeredSlotIndex) {
                         lastTriggeredSlotIndex = currentSlotIndex;
@@ -348,24 +341,7 @@ public class UtcTimer {
     }
 
     public static long getSystemTime() {
-        return delay + System.currentTimeMillis();
-    }
-
-    /**
-     * 对齐到FT8 15秒周期窗口，保证FT4也能跟随
-     * 输出范围约为[-7500, +7500]
-     */
-    private static int alignDelayToFt8Slot(long rawOffsetMs) {
-        long slot = com.bg7yoz.ft8cn.FT8Common.FT8_SLOT_TIME_MILLISECOND;
-        long half = slot / 2L;
-        long mod = rawOffsetMs % slot;
-
-        if (mod > half) {
-            mod -= slot;
-        } else if (mod < -half) {
-            mod += slot;
-        }
-        return (int) mod;
+        return delay + DisciplinedClockRegistry.nowMillis();
     }
 
     /**
@@ -421,54 +397,56 @@ public class UtcTimer {
                         ? "pool.ntp.org"
                         : server.trim();
 
-                try {
-                    NtpSyncResult bestResult = queryNtpServer(targetServer);
+                IOException lastFailure = null;
+                for (int attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        NtpSyncResult bestResult = queryNtpServers(targetServer);
 
-                    realDelay = bestResult.realOffsetMs;
-                    delay = bestResult.alignedOffsetMs;
-                    lastNtpRoundTripDelay = bestResult.roundTripDelayMs;
-                    lastSyncTime = bestResult.syncTimeMs;
-                    lastSyncServer = targetServer;
+                        realDelay = bestResult.realOffsetMs;
+                        // 校准已进入单调时钟锚点，旧 delay 只保留给用户手动微调。
+                        delay = 0;
+                        lastNtpRoundTripDelay = bestResult.roundTripDelayMs;
+                        lastSyncTime = bestResult.syncTimeMs;
+                        lastSyncServer = bestResult.server;
 
-                    if (afterSyncTimeDetail != null) {
-                        afterSyncTimeDetail.doAfterSyncTimer(bestResult);
+                        if (afterSyncTimeDetail != null) {
+                            afterSyncTimeDetail.doAfterSyncTimer(bestResult);
+                        }
+                        return;
+                    } catch (IOException e) {
+                        lastFailure = e;
+                        if (attempt < 2) {
+                            try {
+                                Thread.sleep(500L << attempt);
+                            } catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                                lastFailure = new IOException("NTP synchronization interrupted", interrupted);
+                                break;
+                            }
+                        }
                     }
-                } catch (IOException e) {
-                    if (afterSyncTimeDetail != null) {
-                        afterSyncTimeDetail.syncFailed(e);
-                    }
+                }
+                if (afterSyncTimeDetail != null) {
+                    afterSyncTimeDetail.syncFailed(lastFailure == null
+                            ? new IOException("NTP synchronization failed")
+                            : lastFailure);
                 }
             }
         }).start();
     }
 
-    private static NtpSyncResult queryNtpServer(String targetServer) throws IOException {
-        NTPUDPClient timeClient = new NTPUDPClient();
-        timeClient.setDefaultTimeout(3000);
-
-        try {
-            InetAddress inetAddress = InetAddress.getByName(targetServer);
-            TimeInfo timeInfo = timeClient.getTime(inetAddress);
-            timeInfo.computeDetails();
-
-            Long offset = timeInfo.getOffset();
-            Long roundTrip = timeInfo.getDelay();
-
-            long localNow = System.currentTimeMillis();
-            long serverTime = timeInfo.getMessage().getTransmitTimeStamp().getTime();
-
-            long trueOffset = (offset != null) ? offset : (serverTime - localNow);
-
-            return new NtpSyncResult(
-                    targetServer,
-                    (int) trueOffset,
-                    alignDelayToFt8Slot(trueOffset),
-                    roundTrip == null ? -1 : roundTrip,
-                    System.currentTimeMillis()
-            );
-        } finally {
-            timeClient.close();
+    private static NtpSyncResult queryNtpServers(String targetServer) throws IOException {
+        NtpMeasurement measurement = new MultiSourceNtpDiscipline().synchronize(targetServer);
+        if (!DisciplinedClockRegistry.submitSample(measurement.getSample())) {
+            throw new IOException("NTP sample rejected by disciplined clock");
         }
+        return new NtpSyncResult(
+                measurement.getServer(),
+                (int) Math.round(measurement.getOffsetMillis()),
+                0,
+                Math.round(measurement.getRoundTripDelayMillis()),
+                DisciplinedClockRegistry.nowMillis()
+        );
     }
 
     public interface AfterSyncTime {
