@@ -29,3 +29,7 @@ powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 本项目用于业余无线电研究和学习。使用者应遵守所在地无线电管理法规，并自行承担设备连接、发射频率、功率和自动操作所产生的责任。
 
 感谢 K9AN、G4WJS、K1JT 及 WSJT-X 贡献者对 FT4、FT8、Q65 协议和实现的工作，也感谢 FT8CN 历史贡献者、测试者和翻译者。
+
+## 许可证与第三方源码
+
+FT8CN 自有源码继续采用顶层 `LICENSE` 所示 MIT 许可证。Android 组合产物同时静态包含 GPL-3.0-or-later 的 WSJT-X core，因此发行 APK 时必须满足 GPL 的完整对应源码、许可证和修改说明义务，不能把整个 APK 描述为“仅 MIT”。其他 MIT/BSD/Apache/LGPL 候选与未打包参考项目的边界见 `docs/third-party/license-matrix.md`，机器可读清单见 `docs/third-party/sbom.cdx.json`。
