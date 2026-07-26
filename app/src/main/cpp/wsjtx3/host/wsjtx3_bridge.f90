@@ -966,7 +966,9 @@ contains
     end if
 
     trace_started_at = phase_trace_now()
-    open(17, status='scratch', action='readwrite', iostat=scratch_iostat)
+    ! Android 的默认工作目录不可写，Q65 的红色同步曲线临时文件必须落在应用私有目录。
+    open(17, file=trim(temp_dir)//'/q65-red.dat', status='replace', &
+         action='readwrite', iostat=scratch_iostat)
     if (scratch_iostat /= 0) then
        return
     end if
@@ -1030,7 +1032,7 @@ contains
     g_active_context = 0
 
     trace_started_at = phase_trace_now()
-    close(17)
+    close(17, status='delete')
     call emit_phase_trace(handle, context, TRACE_Q65_FILES_CLOSE, sample_count, &
          g_contexts(handle)%result_count, phase_trace_elapsed_us(trace_started_at))
   end subroutine run_q65_decode_pipeline
