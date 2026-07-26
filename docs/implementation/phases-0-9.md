@@ -11,8 +11,8 @@
 |---|---|---|---|
 | 0 仓库、基线、联合审查、工具链和合规 | 完成 | Host/oracle/Gradle PASS；`BLOCKED_DEVICE`、`BLOCKED_SANITIZER`、`BLOCKED_Q65_STREAMING` | `a4aa090a` |
 | 1 Kotlin 功能架构和数据基础 | 完成 | JVM/迁移/导航、Debug/Release、DSP 回归 PASS；`BLOCKED_DEVICE_LEAK` | `888738a6` |
-| 2 NTP/GNSS 时间纪律和 slot 调度 | 完成 | fake clock、本地 NTP mock、GNSS 转换、slot、DSP/oracle PASS；`BLOCKED_DEVICE` | 本阶段提交 |
-| 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 待开始 | Android ABI、fake rig/rigctld、PTT 安全 | 待提交 |
+| 2 NTP/GNSS 时间纪律和 slot 调度 | 完成 | fake clock、本地 NTP mock、GNSS 转换、slot、DSP/oracle PASS；`BLOCKED_DEVICE` | `fac3c4c0` |
+| 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 完成 | API 28 AArch64 ELF、fake rig/rigctld、PTT 安全、device FT8 PASS；`BLOCKED_HARDWARE_RIG` | 本阶段提交 |
 | 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 待开始 | oracle、状态机、纯噪声、性能 | 待提交 |
 | 5 Q65-EME 页面和生产流式内存 | 待开始 | 300 秒 RX/TX、averaging、内存、回归 | 待提交 |
 | 6 卫星页面、轨道预测和双向 Doppler | 待开始 | SGP4 golden、pass、fake rig、离线缓存 | 待提交 |
@@ -45,3 +45,12 @@
 - FT8/FT4/Q65 统一 slot 边界算法。自动 TX 在不健康时间下阻止，手动 TX 明确警告后仍可继续；RX 不受影响。
 - Debug/Release JVM、APK 和 lintVital PASS；O2 固定语料与官方 `jt9` 哈希/结果完全不变。FT8/FT4/Q65 p50/p95 为 514.634/526.629、261.300/265.155、216.610/226.977 ms。
 - 无授权 ADB 与 sanitizer runtime，分别保留 `BLOCKED_DEVICE`、`BLOCKED_SANITIZER`；详见 `docs/verification/time-discipline-2026-07-26.md`。
+
+## 阶段 3 记录
+
+- 建立统一 `RadioController`、rigctld 和既有 USB/Bluetooth/network adapter，加入频率、模式、VFO、split、PTT、功率读回与错误状态。
+- `RadioTransactionCoordinator` 实现 NONE/RIG_SPLIT/FAKE_IT、armed、全局 stop、PTT watchdog 和失败恢复；Doppler 目标具有 age、最小间隔和步长限制。
+- Hamlib 固定在 `c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e`，arm64 API 28 O2 构建和 ELF 依赖检查通过；应用最低版本按用户决定统一到 API 28。
+- 8 项 radio JVM 测试、Debug/Release、第三方清单、host O2 与官方 jt9 通过；FT8/FT4/Q65 哈希不变，p95 均在阶段门槛内。
+- 真机 Debug FT8 在 12/24/48 kHz 均稳定得到 20 条且哈希一致。实体电台低功率/PTT 与 Android USB fd 机型矩阵记为 `BLOCKED_HARDWARE_RIG`，不伪报硬件 PASS。
+- 详见 `docs/verification/radio-control-2026-07-26.md`。

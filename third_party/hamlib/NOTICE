@@ -1,0 +1,7 @@
+Hamlib - Ham Radio Control Libraries
+
+Pinned source: Hamlib/Hamlib commit c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e.
+The Hamlib frontend/backend library files are LGPL-2.1-or-later.
+Hamlib command-line tools and examples may be GPL-2.0-or-later and are not packaged in FT8CN.
+
+See LICENSE, COPYING.LIB, COPYING, UPSTREAM.md and MODIFICATIONS.md in this directory.

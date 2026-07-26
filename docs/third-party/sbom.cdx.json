@@ -51,6 +51,16 @@
     },
     {
       "type": "library",
+      "scope": "excluded",
+      "bom-ref": "pkg:github/Hamlib/Hamlib@c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e",
+      "name": "Hamlib Android library candidate",
+      "version": "5.0.0-git-c7fb0fa",
+      "hashes": [{"alg": "SHA-256", "content": "5441e4ded7f2485b066eff2748e1709dc848cc4b28e4611ec223a51b668e29ee"}],
+      "licenses": [{"expression": "LGPL-2.1-or-later"}],
+      "externalReferences": [{"type": "vcs", "url": "https://github.com/Hamlib/Hamlib/tree/c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e"}]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:maven/com.github.PhilJay/MPAndroidChart@v3.1.0",
       "name": "MPAndroidChart",
       "version": "3.1.0",

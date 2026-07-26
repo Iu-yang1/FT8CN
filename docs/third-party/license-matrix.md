@@ -1,35 +1,33 @@
 # FT8CN 第三方许可证矩阵
 
-更新时间：2026-07-26。该矩阵区分“当前进入 APK”和“仅设计参考/后续候选”。顶层 MIT 只描述 FT8CN 自有代码；由于当前 APK 静态包含 GPL-3.0-or-later 的 WSJT-X core，组合发行必须满足 GPL 对完整对应源码、许可证和修改说明的要求，不能宣称整个 APK 仅 MIT。
+更新时间：2026-07-26。顶层 MIT 只覆盖 FT8CN 自有代码。APK 静态包含 GPL-3.0-or-later 的 WSJT-X core，因此组合分发不能宣称为“仅 MIT”，必须同步提供完整对应源码、许可证和修改说明。
 
-| 组件 | 用途与固定版本 | 来源 / 固定 SHA | 许可证 | 链接/修改 | APK 包含 | 义务与证据 |
-|---|---|---|---|---|---:|---|
-| WSJT-X core | FT8/FT4/Q65 RX，v3.0.0 | `WSJTX/wsjtx@ab976b1b4b72a96aaa3259591f68ad772af7d7f9` | GPL-3.0-or-later | 静态；有 Android/性能修改 | 是 | 提供完整对应源码、GPL、修改说明；`third_party/wsjtx` 与唯一 source manifest |
-| kgoba ft8_lib | FT8/FT4 codec/TX，`6f528128` | `kgoba/ft8_lib@6f528128ee3ebf4d08ba2313f6c5d3913eda5608` | MIT | 源码编译；长期修改 | 是 | 保留版权/许可；`third_party/kgoba-ft8` |
-| KISS FFT | FFT backend | `mborgerding/kissfft`，经上项 pin | BSD-3-Clause | 源码编译；Android 日志/shim 适配 | 是 | 保留版权、条件和免责声明；`third_party/kissfft` |
-| LLVM flang-rt/libomp | Fortran/OpenMP runtime，22.1.5 / NDK 17.0.2 | `llvm/llvm-project` | Apache-2.0 WITH LLVM-exception | 静态；隔离 patch | 是 | 许可证、NOTICE、patch；`third_party/llvm-runtime` |
-| Boost headers | official core 构建头文件，1.91.0 | `boostorg/boost@1a80576d` | BSL-1.0 | header-only | 是（可能展开） | 随包保留许可证；`third_party/boost` |
-| MPAndroidChart | 图表，v3.1.0 | `PhilJay/MPAndroidChart@0c2ac2d9` | Apache-2.0 | 未修改 JAR | 是 | LICENSE/NOTICE；artifact SHA 见 UPSTREAM |
-| Apache Commons Net | 旧 NTP 网络支持，3.6 | `apache/commons-net@163fe46c` | Apache-2.0 | 未修改 JAR | 是 | LICENSE/NOTICE；artifact SHA 见 UPSTREAM |
-| NanoHTTPD | 本地 HTTP，2.2.0 | `NanoHttpd/nanohttpd@a90fe203` | BSD-3-Clause | 未修改 JAR | 是 | 二进制发行保留条款；`third_party/nanohttpd` |
-| osmdroid | 地图显示，6.1.14 | `osmdroid/osmdroid@5c3809d2` | Apache-2.0 | 未修改 AAR | 是 | LICENSE；OpenStreetMap/瓦片来源另做归属 |
-| AndroidX / Material | Android UI/架构，Gradle 锁定版本 | Google Maven | Apache-2.0 | 动态 Gradle 依赖 | 是 | Gradle dependency report 与 Android notices |
-| Guava | 集合/工具，31.1-jre | Maven `com.google.guava` | Apache-2.0 | Gradle 依赖 | 是 | LICENSE/NOTICE |
-| Google Play services Maps | Google 地图，18.1.0 | Google Maven | Google APIs Terms | Gradle 依赖 | 是 | 遵守服务条款、API key/隐私要求；不表述为开源组件 |
-| Kotlin / Coroutines | Kotlin 1.8.10；Coroutines 1.6.4 | JetBrains Maven/Gradle Plugin Portal | Apache-2.0 | Gradle 依赖 | 是 | 保留许可证和 NOTICE；版本与 AGP 7.4.1/Compose compiler 1.4.3 锁定 |
-| Jetpack Compose / Material 3 | Compose 1.4.0；Material3 1.0.1 | Google Maven | Apache-2.0 | Gradle 依赖 | 是 | 保留许可证；阶段 1 仅提供非导出的渐进外壳，旧 UI 仍为默认入口 |
-| AndroidX Room / DataStore / WorkManager | Room 2.5.2；DataStore 1.0.0；WorkManager 2.8.1 | Google Maven | Apache-2.0 | Gradle 依赖 | 是 | 跟踪 Room schema；普通 DataStore 不保存密码或私钥 |
-| LeakCanary | 2.12 | Maven Central `com.squareup.leakcanary` | Apache-2.0 | 仅 Debug Gradle 依赖 | 仅 Debug | 禁止进入 Release；用于阶段 1/8 生命周期门禁 |
-| Robolectric | 4.10.3 | Maven Central `org.robolectric` | MIT | 仅 JVM 测试依赖 | 否 | 不进入 APK，仅验证 Room/DataStore/Android 边界 |
-| FT8AF | 内存/生命周期 clean-room 参考 | `patrickrb/FT8AF@c2f63e8b` | 顶层 MIT；依赖另计 | 不链接、不复制应用源码 | 否 | 边界见 `third_party/ft8af-reference` 和联合审查 |
-| Look4Sat | 卫星功能 clean-room 参考 | `rt-bishop/Look4Sat@b17ea2d9` | GPL-3.0 | 当前仅参考 | 否 | 若直接复制必须按 GPL 处理组合发行；阶段 6 前更新 |
-| Hamlib | 阶段 3 电台控制候选 | `Hamlib/Hamlib@c7fb0fa1` | library 多为 LGPL-2.1-or-later；工具多为 GPL-2.0-or-later | 当前不链接 | 否 | 只选逐文件确认的 LGPL library；提供修改源码与可替换/重链接方案 |
-| TQSL/tqsllib | LoTW 签名候选 | 尚未固定 | 待阶段 7 法律/构建复核 | 当前不链接 | 否 | 未完成前只允许外部 `.tq8` 工作流，禁止未签名 ADIF 直传 |
+| 组件 | 固定版本/来源 | 许可证 | 链接或用途 | APK 包含 | 义务与证据 |
+|---|---|---|---|---:|---|
+| WSJT-X core | `WSJTX/wsjtx@ab976b1b4b72a96aaa3259591f68ad772af7d7f9` | GPL-3.0-or-later | FT8/FT4/Q65 RX，静态链接 | 是 | `third_party/wsjtx` 保存完整对应源码、manifest、许可证和修改说明 |
+| kgoba ft8_lib | `kgoba/ft8_lib@6f528128ee3ebf4d08ba2313f6c5d3913eda5608` | MIT | FT8/FT4 codec 与 TX | 是 | 保留版权和许可证，见 `third_party/kgoba-ft8` |
+| KISS FFT | `mborgerding/kissfft`，版本见上游登记 | BSD-3-Clause | FFT backend | 是 | 保留版权、条件和免责声明，见 `third_party/kissfft` |
+| LLVM flang-rt/libomp | LLVM 22.1.5 / NDK 17.0.2 | Apache-2.0 WITH LLVM-exception | Fortran/OpenMP runtime | 是 | 许可证、NOTICE 和隔离 patch，见 `third_party/llvm-runtime` |
+| Boost headers | 1.91.0，`boostorg/boost@1a80576d` | BSL-1.0 | WSJT-X 构建头文件 | 可能展开 | 随包保留许可证，见 `third_party/boost` |
+| Hamlib | `Hamlib/Hamlib@c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e` | 库 LGPL-2.1-or-later；工具 GPL-2.0-or-later | rigctld 协议；Android native 构建门禁 | 否 | APK 不含 GPL CLI 或 native 库；来源、构建和替换边界见 `third_party/hamlib` |
+| MPAndroidChart | 3.1.0 | Apache-2.0 | 图表 JAR | 是 | 保留 LICENSE/NOTICE 和 artifact SHA |
+| Apache Commons Net | 3.6 | Apache-2.0 | 旧 NTP 支持 | 是 | 保留 LICENSE/NOTICE；新 disciplined clock 不依赖其不安全行为 |
+| NanoHTTPD | 2.2.0 | BSD-3-Clause | 本地 HTTP | 是 | 二进制分发保留条款 |
+| osmdroid | 6.1.14 | Apache-2.0 | 地图 | 是 | 保留许可证，并单独处理地图数据归属 |
+| AndroidX / Material / Compose | Gradle 锁定版本 | Apache-2.0 | Android UI 和架构 | 是 | 依赖报告和 Android notices |
+| Kotlin / Coroutines | Kotlin 1.8.10、Coroutines 1.6.4 | Apache-2.0 | Kotlin 和异步状态 | 是 | 与 AGP 7.4.1/Compose compiler 1.4.3 锁定 |
+| Room / DataStore / WorkManager | 2.5.2 / 1.0.0 / 2.8.1 | Apache-2.0 | 本地数据、设置、任务 | 是 | 跟踪 schema；普通 DataStore 不保存密码或私钥 |
+| LeakCanary | 2.12 | Apache-2.0 | Debug 泄漏检测 | 仅 Debug | 禁止进入 Release |
+| Robolectric | 4.10.3 | MIT | JVM 测试 | 否 | 仅测试依赖 |
+| Guava | 31.1-jre | Apache-2.0 | 集合工具 | 是 | 保留 LICENSE/NOTICE |
+| Google Play services Maps | 18.1.0 | Google APIs Terms | 地图服务 | 是 | 遵守服务条款、API key 与隐私要求，不表述为开源组件 |
+| FT8AF | `patrickrb/FT8AF@c2f63e8b` | 顶层 MIT；依赖另议 | clean-room 内存/生命周期参考 | 否 | 不复制应用源码，边界见 `third_party/ft8af-reference` |
+| Look4Sat | `rt-bishop/Look4Sat@b17ea2d9` | GPL-3.0 | clean-room 卫星功能参考 | 否 | 阶段 6 只参考功能和公开算法；直接复用前必须切换 GPL 决策 |
+| TQSL/tqsllib | 尚未固定 | 待阶段 7 复核 | LoTW 签名候选 | 否 | 未完成前只允许外部 `.tq8` 工作流，禁止未签名 ADIF 直传 |
 
 ## 分发边界
 
-- `radio_experimental` 是 FT8CN 自有实验模块，与 WSJT-X core 分离，不能混入其协议实现。
-- FT2 未集成；已删除的三个 FT2 预编译归档不在 source manifest、链接 map 或 APK 中。
-- Look4Sat 当前选择 clean-room 路线；若阶段 6 发现直接复用更合适，必须在代码进入前切换许可证决策，而不是事后补声明。
-- Hamlib 的顶层 `LICENSE` 明确区分 LGPL library 与 GPL tools；不能仅凭仓库总许可证选择文件。
-- LoTW 上传对象必须是 TQSL 数字签名的 `.tq8`。tqsllib 未经许可证和 Android 构建复核前不得打包。
+- `radio_experimental` 是 FT8CN 自有实验模块，与 WSJT-X core、Hamlib 和卫星实现严格分离。
+- FT2 未集成；旧 FT2 预编译归档不在 source manifest、链接 map 或 APK 中。
+- Hamlib Android ELF 只保存在本机隔离工具目录作为门禁证据；当前 APK 通过 rigctld 协议和既有 transport 工作。
+- LoTW 上传对象必须是 TQSL 数字签名的 `.tq8`，不能把未签名 ADIF 冒充可上传文件。

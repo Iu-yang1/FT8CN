@@ -20,7 +20,7 @@ android {
 
     defaultConfig {
         applicationId "com.bg7yoz.ft8cn.ft4"
-        minSdk 23
+        minSdk 28
         targetSdk 33
         versionCode 1
         versionName 'ver0.7-WSJT-Lib-b2'

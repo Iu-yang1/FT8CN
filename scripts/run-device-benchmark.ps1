@@ -21,8 +21,19 @@ function Assert-LastExitCode([string]$Action) {
 function Invoke-Adb {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
 
-    $output = @(& $AdbPath @Arguments 2>&1)
-    Assert-LastExitCode ("adb " + ($Arguments -join ' '))
+    # adb writes successful transfer progress to stderr. PowerShell 5.1 turns that
+    # stream into ErrorRecord objects under Stop, so trust the native exit code.
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $AdbPath @Arguments 2>&1 | ForEach-Object { "$_" })
+        $adbExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    if ($adbExitCode -ne 0) {
+        throw "adb $($Arguments -join ' ') failed with exit code $adbExitCode`n$($output -join "`n")"
+    }
     return $output
 }
 
@@ -88,9 +99,10 @@ function Install-Apk([string]$Path, [switch]$AllowDowngrade) {
 }
 
 function Invoke-BenchmarkVariant([string]$Variant) {
-    $component = 'com.bg7yoz.ft8cn.ft4.test/com.bg7yoz.ft8cn.diagnostics.FtxDeviceBenchmarkInstrumentation'
+    $component = 'com.bg7yoz.ft8cn.ft4.test/androidx.test.runner.AndroidJUnitRunner'
     $arguments = @(
         'shell', 'am', 'instrument', '-w', '-r',
+        '-e', 'class', 'com.bg7yoz.ft8cn.diagnostics.FtxDeviceBenchmarkInstrumentation',
         '-e', 'build_variant', $Variant,
         '-e', 'warmups', [string]$WarmupCount,
         '-e', 'iterations', [string]$IterationCount,
@@ -161,11 +173,22 @@ function Invoke-BenchmarkVariant([string]$Variant) {
     $text = $output -join "`n"
     Set-Content -LiteralPath (Join-Path $repoRoot ".tmp_verify_run\instrumentation-$Variant.txt") `
         -Value $text -Encoding UTF8
-    if ($text -match 'FT8CN_DEVICE_BENCHMARK=FAIL' -or $text -match 'INSTRUMENTATION_FAILED') {
+    if ($text -match 'FT8CN_DEVICE_BENCHMARK=FAIL' -or
+            $text -match 'INSTRUMENTATION_FAILED' -or
+            $text -match 'FAILURES!!!') {
         throw "Device benchmark $Variant failed:`n$text"
     }
+    # AndroidJUnitRunner uses INSTRUMENTATION_CODE: -1 for a successful run.
+    # Require both the app gate marker and the JUnit summary instead.
+    if ($text -notmatch 'FT8CN_DEVICE_BENCHMARK=PASS' -or
+            $text -notmatch '(?m)^OK \(1 test\)\s*$') {
+        throw "Device benchmark $Variant did not report a complete success:`n$text"
+    }
 
-    $pathMatch = [regex]::Match($text, '(?m)^INSTRUMENTATION_RESULT: report_path=(.+?)\s*$')
+    $pathMatch = [regex]::Match(
+        $text,
+        '(?m)^INSTRUMENTATION_(?:STATUS|RESULT): report_path=(.+?)\s*$'
+    )
     if ($pathMatch.Success) {
         $remotePath = $pathMatch.Groups[1].Value.Trim()
         $localPath = Join-Path $repoRoot ".tmp_verify_run\device-$Variant.json"

@@ -9,11 +9,16 @@ import android.os.Bundle;
 import android.os.Debug;
 import android.os.SystemClock;
 
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+
 import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.wave.FT8Resample;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -36,37 +41,28 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** 仅由测试 APK 内部调用的 native 解码、CPU 和内存基准入口。 */
-public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
+@RunWith(AndroidJUnit4.class)
+public final class FtxDeviceBenchmarkInstrumentation {
     private static final int TARGET_SAMPLE_RATE = 12000;
     private static final long DECODE_STACK_BYTES = 24L * 1024L * 1024L;
     private static final Pattern RESULT_PATTERN = Pattern.compile(
             "^#\\d+\\s+snr=(-?\\d+)\\s+dt=([-+\\d.]+)\\s+freq=([-+\\d.]+)"
                     + "\\s+score=(-?\\d+)\\s+text=(.*\\S)\\s*$");
-    private Bundle arguments = new Bundle();
+    private Instrumentation instrumentation;
+    private Context targetContext;
+    private Context testContext;
 
-    @Override
-    public void onCreate(Bundle arguments) {
-        this.arguments = arguments == null ? new Bundle() : new Bundle(arguments);
-        super.onCreate(arguments);
-        start();
-    }
-
-    @Override
-    public void onStart() {
-        final Bundle benchmarkArguments = new Bundle(arguments);
-        new Thread(null, () -> runAndFinish(benchmarkArguments), "ft8cn-device-benchmark",
-                DECODE_STACK_BYTES).start();
-    }
-
-    private void runAndFinish(Bundle arguments) {
-        Bundle resultBundle = new Bundle();
-        int resultCode = Activity.RESULT_OK;
-        Context targetContext = getTargetContext();
+    @Test
+    public void runDeviceBenchmark() throws Exception {
+        instrumentation = InstrumentationRegistry.getInstrumentation();
+        targetContext = instrumentation.getTargetContext();
+        testContext = instrumentation.getContext();
+        Bundle arguments = InstrumentationRegistry.getArguments();
         Intent keepAliveIntent = DeviceBenchmarkKeepAliveService.buildStartIntent(targetContext);
         Activity benchmarkActivity = null;
         boolean keepAliveStarted = false;
         try {
-            benchmarkActivity = startActivitySync(
+            benchmarkActivity = instrumentation.startActivitySync(
                     DeviceBenchmarkActivity.buildStartIntent(targetContext));
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 targetContext.startForegroundService(keepAliveIntent);
@@ -76,33 +72,29 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
             keepAliveStarted = true;
             JSONObject report = runBenchmark(arguments);
             byte[] json = report.toString().getBytes(StandardCharsets.UTF_8);
-            File reportDirectory = getContext().getExternalFilesDir(null);
-            if (reportDirectory != null) {
-                requireDirectory(reportDirectory);
-                File reportFile = new File(reportDirectory,
-                        "ft8cn-device-benchmark-" + report.optString("build_variant", "unknown") + ".json");
-                try (FileOutputStream output = new FileOutputStream(reportFile, false)) {
-                    output.write(json);
-                }
-                resultBundle.putString("report_path", reportFile.getAbsolutePath());
+            File reportDirectory = targetContext.getExternalFilesDir(null);
+            if (reportDirectory == null) {
+                throw new IllegalStateException("target external files directory is unavailable");
             }
-            String encoded = android.util.Base64.encodeToString(json, android.util.Base64.NO_WRAP);
-            resultBundle.putString("report_base64", encoded);
-            resultBundle.putString("stream", "FT8CN_DEVICE_BENCHMARK=PASS\n");
-        } catch (Throwable throwable) {
-            resultCode = Activity.RESULT_CANCELED;
-            resultBundle.putString("stream", "FT8CN_DEVICE_BENCHMARK=FAIL " + throwable + "\n");
-            resultBundle.putString("failure", throwable.toString());
+            requireDirectory(reportDirectory);
+            File reportFile = new File(reportDirectory,
+                    "ft8cn-device-benchmark-" + report.optString("build_variant", "unknown") + ".json");
+            try (FileOutputStream output = new FileOutputStream(reportFile, false)) {
+                output.write(json);
+            }
+            Bundle status = new Bundle();
+            status.putString("report_path", reportFile.getAbsolutePath());
+            status.putString("stream", "FT8CN_DEVICE_BENCHMARK=PASS\n");
+            instrumentation.sendStatus(2, status);
         } finally {
             if (keepAliveStarted) {
                 targetContext.stopService(keepAliveIntent);
             }
             if (benchmarkActivity != null) {
                 Activity activityToFinish = benchmarkActivity;
-                runOnMainSync(activityToFinish::finishAndRemoveTask);
+                instrumentation.runOnMainSync(activityToFinish::finishAndRemoveTask);
             }
         }
-        finish(resultCode, resultBundle);
     }
 
     private JSONObject runBenchmark(Bundle arguments) throws Exception {
@@ -112,8 +104,8 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         String caseFilter = valueOrDefault(arguments.getString("case_filter"), "ALL")
                 .toUpperCase(Locale.US);
 
-        File tempDir = new File(getTargetContext().getCacheDir(), "wsjtx3-benchmark");
-        File dataDir = new File(getTargetContext().getFilesDir(), "wsjtx3-benchmark");
+        File tempDir = new File(targetContext.getCacheDir(), "wsjtx3-benchmark");
+        File dataDir = new File(targetContext.getFilesDir(), "wsjtx3-benchmark");
         requireDirectory(tempDir);
         requireDirectory(dataDir);
         NativeSampleDecode.configureRuntimeDirectories(tempDir.getAbsolutePath(), dataDir.getAbsolutePath());
@@ -388,8 +380,8 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
     }
 
     private File copyAssetToCache(String assetPath, String fileName) throws Exception {
-        File destination = new File(getTargetContext().getCacheDir(), fileName);
-        try (InputStream input = new BufferedInputStream(getContext().getAssets().open(assetPath));
+        File destination = new File(targetContext.getCacheDir(), fileName);
+        try (InputStream input = new BufferedInputStream(testContext.getAssets().open(assetPath));
              BufferedOutputStream output = new BufferedOutputStream(new FileOutputStream(destination))) {
             byte[] buffer = new byte[64 * 1024];
             int count;
