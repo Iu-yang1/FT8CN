@@ -9,7 +9,7 @@
 - `host/wsjtx3_bridge.f90` 将 FT8、FT4、Q65 回调映射为稳定的 C ABI。
 - FT8/FT4 搜索范围固定为 0-3000 Hz；Q65 为 0-5000 Hz。
 - `input_is_live` 决定 vendor 的 `ldiskdat`：实时输入为 false，文件诊断为 true。
-- QSO/TX 频率、pass、round、灵敏度、early、wideband 和 LDPC 深度都在请求创建时快照，native 处理中不读取变化中的 UI 全局值。
+- QSO/TX 频率、pass、round、灵敏度、early、wideband 和 LDPC 深度都在请求创建时快照；native 处理中不读取变化中的 UI 全局值。
 
 ## 并发
 
@@ -22,18 +22,18 @@
 - 波形容量只由 TR period 和 sample rate 决定，与 submode 无关。
 - averaging 状态属于持久 session，仅在会话创建、显式 reset、目标/模式变化或采样间断时清除。
 - 移动端关闭上游 Q65 结果文件输出；scratch unit 仅用于满足未使用的接口约束。
-
-已知限制：300 秒、24/48 kHz 的接收仍会先持有完整源采样数组，本地 Q65 播放仍持有完整波形；真正的 12 kHz 流式采集/播放尚未完成设备验证。当前必须保持串行并控制长周期内存压力。
+- `common/resampler` 已提供固定工作区的有状态分块抽取，并通过 12/24/48 kHz 任意 chunk 边界逐 bit 等价测试。
+- 已知限制：300 秒、24/48 kHz 的生产接收仍会先持有完整源采样数组，本地 Q65 播放仍持有完整波形；分块抽取尚未接入采集回调，TX 也尚未切换到 `AudioTrack.MODE_STREAM`。因此 `BLOCKED_Q65_STREAMING` 仍是发布风险。
 
 ## 构建与测试
 
-host：
+Host：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File host/build_host_probe.ps1 -BuildType Release -Optimization O2
 ctest --test-dir host/build-release-o2 --output-on-failure
 ```
 
-Android：`android/build_wsjtx3_android_core.ps1` 从 manifest 生成带完整输入指纹的静态库。对象名含相对路径哈希；源码、编译器版本、target、ABI、flags 或 patch 变化都会触发重建。Flang runtime patch 在隔离 workspace 应用，不修改工具目录中的 LLVM 源码。
+Android：`android/build_wsjtx3_android_core.ps1` 从 manifest 生成带完整输入指纹的静态库。对象名包含相对路径哈希；源码、编译器版本、target、ABI、flags 或 patch 变化都会触发重建。Flang runtime patch 在隔离 workspace 应用，不修改工具目录中的 LLVM 源码。
 
-Release 默认使用 `-O2 -DNDEBUG`。`-O3` 在相同语料上结果一致但 p95 明显更慢，因此未选用。默认禁用 fast-math、CPU 专用指令和 LTO。
+Release 默认使用 `-O2 -DNDEBUG`。`-O3` 在相同语料上结果一致但 p95 更慢，因此未选用。默认禁用 fast-math、CPU 专用指令和 LTO。

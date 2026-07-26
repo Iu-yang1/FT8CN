@@ -20,7 +20,9 @@ powershell -ExecutionPolicy Bypass -File scripts/check-toolchain.ps1
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 ```
 
-`scripts/verify.ps1` 会执行工具链检查、host CTest、样本回归、Java 单测、debug/release 构建，并在连接设备时安装 debug APK。大型 WAV 语料不进入 Git；语料路径和 SHA256 记录在 `docs/verification/test-corpus.json`。
+`scripts/verify.ps1` 会执行工具链检查、Release O2 host CTest、语料结果/哈希回归、官方 `jt9` 逐条 oracle、Java 单测以及 debug/release/internal-test APK 构建。连接授权设备后，它还会运行非导出的 instrumentation harness，对 debug/release 与 12/24/48 kHz 输入执行结果、耗时和内存对照。大型 WAV 语料不进入 Git；语料路径和 SHA256 记录在 `docs/verification/test-corpus.json`。
+
+门禁明确区分 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_ORACLE`、`BLOCKED_DEVICE`、`BLOCKED_SANITIZER` 和 `FAIL`。缺少官方工具或设备不会被写成通过。机器负载明显变化时，可通过 `-PerformanceBaselinePath` 指定同电源状态、同工具链、同语料生成的基线 JSON；3% p95 阈值本身不会被放宽。
 
 ## 使用说明
 
