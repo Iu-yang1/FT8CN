@@ -265,7 +265,7 @@ contains
                   call timer('sync4d  ',0)
                   do idf=idfmin,idfmax,idfstp
                      do istart=ibmin,ibmax,ibstp
-                        call sync4d(cd2,istart,ctwk2(:,idf),1,sync)  !Find sync power
+                        call sync4d(cd2,istart,ctwk2(:,idf),idf,1,sync)  !Find sync power
                         if(sync.gt.smax) then
                            smax=sync
                            ibest=istart

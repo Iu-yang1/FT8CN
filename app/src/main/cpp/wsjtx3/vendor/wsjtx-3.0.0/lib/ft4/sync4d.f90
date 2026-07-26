@@ -1,4 +1,4 @@
-subroutine sync4d(cd0,i0,ctwk,itwk,sync)
+subroutine sync4d(cd0,i0,ctwk,idf,itwk,sync)
 
 ! Compute sync power for a complex, downsampled FT4 signal.
 
@@ -7,16 +7,19 @@ subroutine sync4d(cd0,i0,ctwk,itwk,sync)
   complex cd0(0:NP-1)
   complex csynca(2*NSS),csyncb(2*NSS),csyncc(2*NSS),csyncd(2*NSS)
   complex csync2(2*NSS)
+  complex csync_cache(2*NSS,4,-16:16)
   complex ctwk(2*NSS)
   complex z1,z2,z3,z4
-  logical first
+  logical first,use_cache
+  logical cache_ready(-16:16)
   integer icos4a(0:3),icos4b(0:3),icos4c(0:3),icos4d(0:3)
   data icos4a/0,1,3,2/
   data icos4b/1,0,2,3/
   data icos4c/2,3,1,0/
   data icos4d/3,2,0,1/
   data first/.true./
-  save first,twopi,csynca,csyncb,csyncc,csyncd,fac
+  data cache_ready/33*.false./
+  save first,twopi,csynca,csyncb,csyncc,csyncd,fac,csync_cache,cache_ready
 
   p(z1)=(real(z1*fac)**2 + aimag(z1*fac)**2)**0.5          !Statement function for power
 
@@ -48,6 +51,17 @@ subroutine sync4d(cd0,i0,ctwk,itwk,sync)
     fac=1.0/(2.0*NSS)
   endif
 
+  use_cache=itwk.eq.1 .and. idf.ge.-16 .and. idf.le.16
+  if(use_cache) then
+    if(.not.cache_ready(idf)) then
+      csync_cache(:,1,idf)=ctwk*csynca
+      csync_cache(:,2,idf)=ctwk*csyncb
+      csync_cache(:,3,idf)=ctwk*csyncc
+      csync_cache(:,4,idf)=ctwk*csyncd
+      cache_ready(idf)=.true.
+    endif
+  endif
+
   i1=i0                            !four Costas arrays
   i2=i0+33*NSS
   i3=i0+66*NSS
@@ -58,7 +72,13 @@ subroutine sync4d(cd0,i0,ctwk,itwk,sync)
   z3=0.
   z4=0.
 
-  if(itwk.eq.1) csync2=ctwk*csynca      !Tweak the frequency
+  if(use_cache) then
+    csync2=csync_cache(:,1,idf)
+  elseif(itwk.eq.1) then
+    csync2=ctwk*csynca
+  else
+    csync2=csynca
+  endif
   z1=0.
   if(i1.ge.0 .and. i1+4*NSS-1.le.NP-1) then
     z1=sum(cd0(i1:i1+4*NSS-1:2)*conjg(csync2))
@@ -71,13 +91,31 @@ subroutine sync4d(cd0,i0,ctwk,itwk,sync)
     endif
   endif
 
-  if(itwk.eq.1) csync2=ctwk*csyncb      !Tweak the frequency
+  if(use_cache) then
+    csync2=csync_cache(:,2,idf)
+  elseif(itwk.eq.1) then
+    csync2=ctwk*csyncb
+  else
+    csync2=csyncb
+  endif
   if(i2.ge.0 .and. i2+4*NSS-1.le.NP-1) z2=sum(cd0(i2:i2+4*NSS-1:2)*conjg(csync2))
 
-  if(itwk.eq.1) csync2=ctwk*csyncc      !Tweak the frequency
+  if(use_cache) then
+    csync2=csync_cache(:,3,idf)
+  elseif(itwk.eq.1) then
+    csync2=ctwk*csyncc
+  else
+    csync2=csyncc
+  endif
   if(i3.ge.0 .and. i3+4*NSS-1.le.NP-1) z3=sum(cd0(i3:i3+4*NSS-1:2)*conjg(csync2))
 
-  if(itwk.eq.1) csync2=ctwk*csyncd      !Tweak the frequency
+  if(use_cache) then
+    csync2=csync_cache(:,4,idf)
+  elseif(itwk.eq.1) then
+    csync2=ctwk*csyncd
+  else
+    csync2=csyncd
+  endif
   z4=0.
   if(i4.ge.0 .and. i4+4*NSS-1.le.NP-1) then
     z4=sum(cd0(i4:i4+4*NSS-1:2)*conjg(csync2))

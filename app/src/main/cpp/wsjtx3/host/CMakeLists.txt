@@ -50,6 +50,8 @@ if (NOT WSJTX3_FFTW_INCLUDE_DIR OR NOT WSJTX3_FFTW3F_LIBRARY)
             "FFTW3f headers/library were not found. Set WSJTX3_FFTW_ROOT or CMAKE_PREFIX_PATH.")
 endif ()
 
+find_package(OpenMP REQUIRED COMPONENTS Fortran)
+
 set(WSJTX3_VENDOR_FORTRAN_SOURCES)
 set(WSJTX3_VENDOR_C_SOURCES)
 set(WSJTX3_VENDOR_CXX_SOURCES)
@@ -129,6 +131,10 @@ target_include_directories(ft8cn_wsjtx3_host_core
         "${WSJTX3_FFTW_INCLUDE_DIR}"
 )
 target_compile_definitions(ft8cn_wsjtx3_host_core PRIVATE BIGSYM=1)
+set_source_files_properties(
+        "${WSJTX3_VENDOR_LIB}/ft8/sync8.f90"
+        PROPERTIES COMPILE_OPTIONS -fopenmp
+)
 target_compile_options(ft8cn_wsjtx3_host_core PRIVATE
         ${FT8CN_OPT_FLAG}
         $<$<CONFIG:Release>:-DNDEBUG>
@@ -155,6 +161,7 @@ target_compile_options(ft8cn_wsjtx3_bridge_smoke PRIVATE
 )
 target_link_libraries(ft8cn_wsjtx3_bridge_smoke PRIVATE
         ft8cn_wsjtx3_host_core
+        OpenMP::OpenMP_Fortran
         "${WSJTX3_FFTW3F_LIBRARY}"
 )
 
@@ -192,6 +199,7 @@ add_executable(ftx_selftest
         "${WSJTX3_CPP_ROOT}/tests/q65_averaging_test.c"
         "${WSJTX3_CPP_ROOT}/tests/q65_tx_rx_test.c"
         "${WSJTX3_CPP_ROOT}/tests/wsjtx3_osd_opt_test.c"
+        "${WSJTX3_CPP_ROOT}/tests/wsjtx3_parallel_policy_test.c"
         "${WSJTX3_CPP_ROOT}/ft8Encoder.c"
 )
 target_compile_options(ftx_selftest PRIVATE
@@ -202,6 +210,7 @@ target_compile_options(ftx_selftest PRIVATE
 target_link_libraries(ftx_selftest PRIVATE
         ftx_codec_selftest_support
         ft8cn_wsjtx3_host_core
+        OpenMP::OpenMP_Fortran
         "${WSJTX3_FFTW3F_LIBRARY}"
 )
 
@@ -218,6 +227,7 @@ target_compile_options(ftx_extended_channel_test PRIVATE
 target_link_libraries(ftx_extended_channel_test PRIVATE
         ftx_codec_selftest_support
         ft8cn_wsjtx3_host_core
+        OpenMP::OpenMP_Fortran
         "${WSJTX3_FFTW3F_LIBRARY}"
 )
 

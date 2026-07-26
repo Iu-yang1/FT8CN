@@ -81,6 +81,15 @@ Assert-ExistingPath $manifestPath 'WSJT-X source manifest'
 Assert-ExistingPath $runtimeScript 'flang-rt build script'
 Assert-ExistingPath $runtimePatch 'flang-rt Android patch'
 
+$openmpLookup = Invoke-Ft8cnNativeCapture -Path $clang -Arguments @(
+    '-target', $TargetTriple, '-fopenmp', '--print-file-name=libomp.a'
+)
+if ($openmpLookup.ExitCode -ne 0) {
+    throw "Unable to locate the Android OpenMP runtime:`n$($openmpLookup.Output)"
+}
+$openmpArchive = $openmpLookup.Output.Trim()
+Assert-ExistingPath $openmpArchive 'Android OpenMP runtime'
+
 $fortranSources = New-Object System.Collections.Generic.List[string]
 $cSources = New-Object System.Collections.Generic.List[string]
 $cxxSources = New-Object System.Collections.Generic.List[string]
@@ -111,7 +120,8 @@ $profileFlags = switch ($BuildProfile) {
     'Profile' { @('-O2', '-g', '-DNDEBUG') }
     default { @("-$Optimization", '-DNDEBUG') }
 }
-$fingerprintFiles = @($allSources + @($manifestPath, $runtimeScript, $runtimePatch, $PSCommandPath, $toolchainCommon)) | Sort-Object -Unique
+$fingerprintFiles = @($allSources + @($manifestPath, $runtimeScript, $runtimePatch,
+        $openmpArchive, $PSCommandPath, $toolchainCommon)) | Sort-Object -Unique
 $fingerprintLines = New-Object System.Collections.Generic.List[string]
 $fingerprintLines.Add("profile=$BuildProfile")
 $fingerprintLines.Add("flags=$($profileFlags -join ' ')")
@@ -179,6 +189,9 @@ while ($pending.Count -gt 0) {
             '-fintrinsic-modules-path', $intrinsicModuleDir,
             '-module-dir', $modDir
         )
+        if ($source.EndsWith("\ft8\sync8.f90", [StringComparison]::OrdinalIgnoreCase)) {
+            $arguments += '-fopenmp'
+        }
         foreach ($include in $fortranIncludeDirs) { $arguments += @('-I', $include) }
         $arguments += @('-c', $source, '-o', $object)
         $result = Invoke-Ft8cnNativeCapture -Path $FlangPath -Arguments $arguments
@@ -266,7 +279,7 @@ $linkArguments = @(
     '-target', $TargetTriple, '-shared', '-fPIC', '-Wl,-soname,libandroid_wsjtx3_probe.so',
     '-Wl,--no-undefined', '-o', $probeLibrary, $probeObject,
     '-Wl,--whole-archive', $candidateArchive, '-Wl,--no-whole-archive',
-    $runtimeArchive, '-lm', '-lc', '-ldl'
+    $runtimeArchive, $openmpArchive, '-lm', '-lc', '-ldl'
 )
 $link = Invoke-Ft8cnNativeCapture -Path $clangxx -Arguments $linkArguments
 if ($link.ExitCode -ne 0) { throw "Official WSJT-X Android core link validation failed:`n$($link.Output)" }

@@ -93,6 +93,17 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
     set(WSJTX3_ANDROID_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/wsjtx3_android/${ANDROID_ABI}")
     set(WSJTX3_ANDROID_CORE_LIB "${WSJTX3_ANDROID_OUT_DIR}/libwsjtx3_official_core.a")
     set(WSJTX3_ANDROID_RUNTIME_LIB "${WSJTX3_ANDROID_OUT_DIR}/libflang_rt.runtime.a")
+    execute_process(
+            COMMAND "${CMAKE_C_COMPILER}" -target aarch64-linux-android21
+            -fopenmp --print-file-name=libomp.a
+            OUTPUT_VARIABLE WSJTX3_ANDROID_OPENMP_LIB
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE WSJTX3_OPENMP_LOOKUP_RESULT)
+    if (NOT WSJTX3_OPENMP_LOOKUP_RESULT EQUAL 0
+            OR NOT IS_ABSOLUTE "${WSJTX3_ANDROID_OPENMP_LIB}"
+            OR NOT EXISTS "${WSJTX3_ANDROID_OPENMP_LIB}")
+        message(FATAL_ERROR "Unable to locate the NDK arm64 OpenMP runtime")
+    endif ()
     set(WSJTX3_SOURCE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/wsjtx3-sources.manifest")
     set(WSJTX3_MANIFEST_DEPENDS "${WSJTX3_SOURCE_MANIFEST}")
     file(STRINGS "${WSJTX3_SOURCE_MANIFEST}" WSJTX3_MANIFEST_LINES)
@@ -127,7 +138,7 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
     file(GENERATE OUTPUT "${WSJTX3_TOOL_STAMP}" CONTENT
             "profile=${WSJTX3_EFFECTIVE_BUILD_PROFILE}\noptimization=${FT8CN_WSJTX3_OPTIMIZATION}\nflang=${FT8CN_WSJTX3_FLANG_PATH}\nndk=${FT8CN_WSJTX3_NDK_ROOT}\nboost=${FT8CN_WSJTX3_BOOST_HEADERS}\nllvm=${FT8CN_WSJTX3_LLVM_SOURCE_ROOT}\n")
 
-    set(WSJTX3_TOOL_DEPENDS "${WSJTX3_TOOL_STAMP}")
+    set(WSJTX3_TOOL_DEPENDS "${WSJTX3_TOOL_STAMP}" "${WSJTX3_ANDROID_OPENMP_LIB}")
     foreach (tool_path IN ITEMS "${FT8CN_WSJTX3_FLANG_PATH}"
             "${FT8CN_WSJTX3_NDK_ROOT}/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe")
         if (EXISTS "${tool_path}")
@@ -172,6 +183,7 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
     add_dependencies(wsjtx3_flang_rt wsjtx3_android_core_build)
 
     target_link_libraries(ftx_core PUBLIC wsjtx3_official_core wsjtx3_flang_rt)
+    target_link_libraries(ftx_core PUBLIC "${WSJTX3_ANDROID_OPENMP_LIB}")
     set(FT8CN_WSJTX3_BACKEND_ACTIVE 1)
 endif ()
 
