@@ -205,13 +205,30 @@ target_link_libraries(ftx_selftest PRIVATE
         "${WSJTX3_FFTW3F_LIBRARY}"
 )
 
+add_executable(ftx_extended_channel_test
+        "${WSJTX3_CPP_ROOT}/tests/ftx_extended_channel_main.c"
+        "${WSJTX3_CPP_ROOT}/tests/ftx_channel_regression_test.c"
+        "${WSJTX3_CPP_ROOT}/ft8Encoder.c"
+)
+target_compile_options(ftx_extended_channel_test PRIVATE
+        ${FT8CN_OPT_FLAG} -Wall -Wextra -Werror
+        $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<CONFIG:Profile>:-DNDEBUG>
+)
+target_link_libraries(ftx_extended_channel_test PRIVATE
+        ftx_codec_selftest_support
+        ft8cn_wsjtx3_host_core
+        "${WSJTX3_FFTW3F_LIBRARY}"
+)
+
 if (FT8CN_ENABLE_SANITIZERS AND NOT MSVC)
-    foreach (sanitized_target IN ITEMS ft8cn_wsjtx3_bridge_smoke ftx_codec_selftest_support ftx_selftest)
+    foreach (sanitized_target IN ITEMS ft8cn_wsjtx3_bridge_smoke ftx_codec_selftest_support ftx_selftest ftx_extended_channel_test)
         target_compile_options(${sanitized_target} PRIVATE
                 $<$<COMPILE_LANGUAGE:C,CXX>:-fsanitize=address,undefined;-fno-omit-frame-pointer>)
     endforeach ()
     target_link_options(ft8cn_wsjtx3_bridge_smoke PRIVATE -fsanitize=address,undefined)
     target_link_options(ftx_selftest PRIVATE -fsanitize=address,undefined)
+    target_link_options(ftx_extended_channel_test PRIVATE -fsanitize=address,undefined)
 endif ()
 
 enable_testing()

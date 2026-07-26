@@ -83,12 +83,53 @@ static int test_mode_frequency_limits(void) {
     return ok;
 }
 
+static int test_depth_matrix(void) {
+    int ft8 = wsjtx3_bridge_create(0, 12000, kFt8Samples, 0);
+    int ft4 = wsjtx3_bridge_create(1, 12000, 72576, 0);
+    int q65 = wsjtx3_bridge_create(2, 12000, 720000, 0);
+    int ok = ft8 > 0 && ft4 > 0 && q65 > 0;
+
+    for (int live = 0; ok && live <= 1; ++live) {
+        wsjtx3_bridge_set_input_is_live(ft8, live);
+        wsjtx3_bridge_set_options(ft8, 3, 3, 1, 2, 1, 1, 200);
+        ok = wsjtx3_bridge_get_decode_depth(ft8, kFt8EarlySamples, 0) == 1
+             && wsjtx3_bridge_get_decode_depth(ft8, kFt8Samples, 0) == 2
+             && wsjtx3_bridge_get_decode_depth(ft8, kFt8Samples, 1) == 3;
+        wsjtx3_bridge_set_options(ft8, 1, 1, 1, 1, 0, 1, 20);
+        ok = ok && wsjtx3_bridge_get_decode_depth(ft8, kFt8EarlySamples, 0) == 0
+             && wsjtx3_bridge_get_decode_depth(ft8, kFt8Samples, 0) == 1;
+
+        wsjtx3_bridge_set_input_is_live(ft4, live);
+        wsjtx3_bridge_set_options(ft4, 1, 3, 1, 1, 1, 1, 20);
+        ok = ok && wsjtx3_bridge_get_decode_depth(ft4, 60000, 0) == 1
+             && wsjtx3_bridge_get_decode_depth(ft4, 72576, 0) == 1;
+        wsjtx3_bridge_set_options(ft4, 2, 3, 1, 1, 1, 1, 20);
+        ok = ok && wsjtx3_bridge_get_decode_depth(ft4, 72576, 0) == 2;
+        wsjtx3_bridge_set_options(ft4, 3, 3, 1, 2, 1, 1, 200);
+        ok = ok && wsjtx3_bridge_get_decode_depth(ft4, 72576, 0) == 3;
+
+        wsjtx3_bridge_set_input_is_live(q65, live);
+        wsjtx3_bridge_set_options(q65, 1, 1, 1, 1, 0, 1, 20);
+        ok = ok && wsjtx3_bridge_get_decode_depth(q65, 720000, 0) == 1;
+        wsjtx3_bridge_set_options(q65, 3, 3, 1, 2, 0, 1, 200);
+        ok = ok && wsjtx3_bridge_get_decode_depth(q65, 720000, 0) == 3;
+    }
+
+    if (ft8 > 0) { wsjtx3_bridge_destroy(ft8); }
+    if (ft4 > 0) { wsjtx3_bridge_destroy(ft4); }
+    if (q65 > 0) { wsjtx3_bridge_destroy(q65); }
+    return ok;
+}
+
 int ftx_run_request_context_selftests(void) {
     const int ft8_ok = test_ft8_context_and_phase();
     const int frequency_ok = test_mode_frequency_limits();
+    const int depth_ok = test_depth_matrix();
     printf("[%s] request live/disk snapshot and FT8 phase mapping\n",
            ft8_ok ? "PASS" : "FAIL");
     printf("[%s] FT8/FT4/Q65 frequency clamp propagation\n",
            frequency_ok ? "PASS" : "FAIL");
-    return ft8_ok && frequency_ok ? 0 : -1;
+    printf("[%s] ndepth/early/live-disk option matrix\n",
+           depth_ok ? "PASS" : "FAIL");
+    return ft8_ok && frequency_ok && depth_ok ? 0 : -1;
 }

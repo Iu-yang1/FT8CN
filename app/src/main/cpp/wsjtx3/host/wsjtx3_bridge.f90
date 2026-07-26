@@ -1344,6 +1344,32 @@ contains
     wsjtx3_bridge_get_ft8_phase = ft8_phase_from_context(g_contexts(handle), sample_count)
   end function wsjtx3_bridge_get_ft8_phase
 
+  integer(c_int) function wsjtx3_bridge_get_decode_depth(handle, sample_count, nagain) &
+       bind(C, name="wsjtx3_bridge_get_decode_depth")
+    integer(c_int), value :: handle
+    integer(c_int), value :: sample_count
+    integer(c_int), value :: nagain
+    integer(c_int) :: phase
+
+    wsjtx3_bridge_get_decode_depth = 0_c_int
+    if (.not. context_valid(handle)) then
+       return
+    end if
+    select case (g_contexts(handle)%mode)
+    case (WSJTX3_MODE_FT8)
+       phase = ft8_phase_from_context(g_contexts(handle), sample_count)
+       if (phase > 0_c_int) then
+          wsjtx3_bridge_get_decode_depth = ft8_phase_ndepth_from_context( &
+               g_contexts(handle), phase, nagain /= 0_c_int)
+       end if
+    case (WSJTX3_MODE_FT4)
+       wsjtx3_bridge_get_decode_depth = ft4_ndepth_from_context( &
+            g_contexts(handle), sample_count)
+    case (WSJTX3_MODE_Q65)
+       wsjtx3_bridge_get_decode_depth = q65_ndepth_from_context(g_contexts(handle))
+    end select
+  end function wsjtx3_bridge_get_decode_depth
+
   subroutine wsjtx3_bridge_reset_q65_averaging(handle) &
        bind(C, name="wsjtx3_bridge_reset_q65_averaging")
     integer(c_int), value :: handle

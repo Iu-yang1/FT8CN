@@ -46,6 +46,7 @@ int wsjtx3_bridge_get_context_state(int handle,
                                     int *decode_pass_count,
                                     int *multi_decode_round_count);
 int wsjtx3_bridge_get_ft8_phase(int handle, int sample_count);
+int wsjtx3_bridge_get_decode_depth(int handle, int sample_count, int again);
 void wsjtx3_bridge_reset_q65_averaging(int handle);
 int wsjtx3_bridge_get_q65_averaging_state(int handle,
                                           int *navg0,

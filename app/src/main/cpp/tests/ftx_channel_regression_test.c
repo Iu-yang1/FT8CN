@@ -42,6 +42,18 @@ static void add_awgn(float *samples, int sample_count, float standard_deviation,
     }
 }
 
+static float noise_standard_deviation_for_snr(float signal_amplitude, float snr_db) {
+    const double reference_bandwidth_hz = 2500.0;
+    const double nyquist_bandwidth_hz = (double) kSampleRate / 2.0;
+    const double signal_power = 0.5 * (double) signal_amplitude
+                                * (double) signal_amplitude;
+    const double linear_snr = pow(10.0, (double) snr_db / 10.0);
+    const double noise_variance = signal_power
+                                  / (linear_snr
+                                     * (reference_bandwidth_hz / nyquist_bandwidth_hz));
+    return (float) sqrt(noise_variance);
+}
+
 static int add_signal(ftx_mode_t mode,
                       const char *message,
                       float frequency,
@@ -168,28 +180,49 @@ static int run_offset_cfo_awgn_case(ftx_mode_t mode) {
     return ok;
 }
 
-static int run_awgn_sweep(void) {
-    static const float noise_levels[] = {0.03f, 0.10f, 0.22f};
-    const char *expected[] = {"CQ BG5JSU OL87"};
+static int run_calibrated_awgn_sweep(ftx_mode_t mode, int trials) {
+    static const float snr_points_db[] = {10.0f, 0.0f, -10.0f, -16.0f};
+    const int slot_samples = mode == FTX_MODE_FT4 ? kFt4Samples : kFt8Samples;
+    const char *message = mode == FTX_MODE_FT4
+            ? "JA6RJK BG5JSU RR73"
+            : "CQ BG5JSU OL87";
+    const char *expected[] = {message};
     const float frequency[] = {1000.0f};
-    int all_valid = 1;
+    const float signal_amplitude = 0.35f;
+    int strong_point_valid = 1;
     size_t level;
-    for (level = 0; level < sizeof(noise_levels) / sizeof(noise_levels[0]); ++level) {
-        expected_result_t result[1];
-        float *slot = (float *) calloc(kFt8Samples, sizeof(float));
-        int valid = slot != NULL
-                && add_signal(FTX_MODE_FT8, expected[0], frequency[0], kReferenceOffset,
-                              0.35f, slot, kFt8Samples);
-        if (valid) {
-            add_awgn(slot, kFt8Samples, noise_levels[level],
-                     UINT32_C(0x51000000) + (uint32_t) level);
-            valid = decode_and_validate(FTX_MODE_FT8, slot, kFt8Samples,
-                                        expected, frequency, 1, 1, result);
+    for (level = 0; level < sizeof(snr_points_db) / sizeof(snr_points_db[0]); ++level) {
+        int detected = 0;
+        for (int trial = 0; trial < trials; ++trial) {
+            expected_result_t result[1];
+            float *slot = (float *) calloc((size_t) slot_samples, sizeof(float));
+            int valid = slot != NULL
+                    && add_signal(mode, expected[0], frequency[0], kReferenceOffset,
+                                  signal_amplitude, slot, slot_samples);
+            if (valid) {
+                add_awgn(slot, slot_samples,
+                         noise_standard_deviation_for_snr(
+                                 signal_amplitude, snr_points_db[level]),
+                         UINT32_C(0x51000000)
+                         + (uint32_t) mode * UINT32_C(0x01000000)
+                         + (uint32_t) level * UINT32_C(0x00010000)
+                         + (uint32_t) trial);
+                valid = decode_and_validate(mode, slot, slot_samples,
+                                            expected, frequency, 1, 1, result);
+            }
+            if (valid) {
+                detected++;
+            }
+            free(slot);
         }
-        all_valid = all_valid && valid;
-        free(slot);
+        printf("SNR_SWEEP mode=%s snr_db=%.1f detected=%d trials=%d\n",
+               mode == FTX_MODE_FT4 ? "FT4" : "FT8",
+               snr_points_db[level], detected, trials);
+        if (level == 0 && detected != trials) {
+            strong_point_valid = 0;
+        }
     }
-    return all_valid;
+    return strong_point_valid;
 }
 
 static int run_crowded_case(void) {
@@ -228,14 +261,47 @@ static int run_noise_only_case(ftx_mode_t mode) {
 int ftx_run_channel_regression_selftests(void) {
     const int ft8_offset_ok = run_offset_cfo_awgn_case(FTX_MODE_FT8);
     const int ft4_offset_ok = run_offset_cfo_awgn_case(FTX_MODE_FT4);
-    const int awgn_ok = run_awgn_sweep();
+    const int ft8_awgn_ok = run_calibrated_awgn_sweep(FTX_MODE_FT8, 1);
+    const int ft4_awgn_ok = run_calibrated_awgn_sweep(FTX_MODE_FT4, 1);
     const int crowded_ok = run_crowded_case();
     const int noise_ok = run_noise_only_case(FTX_MODE_FT8)
             && run_noise_only_case(FTX_MODE_FT4);
     printf("[%s] FT8 CFO/DT/AWGN regression\n", ft8_offset_ok ? "PASS" : "FAIL");
     printf("[%s] FT4 CFO/DT/AWGN regression\n", ft4_offset_ok ? "PASS" : "FAIL");
-    printf("[%s] FT8 deterministic AWGN sweep\n", awgn_ok ? "PASS" : "FAIL");
+    printf("[%s] FT8 calibrated 2500 Hz AWGN sweep\n",
+           ft8_awgn_ok ? "PASS" : "FAIL");
+    printf("[%s] FT4 calibrated 2500 Hz AWGN sweep\n",
+           ft4_awgn_ok ? "PASS" : "FAIL");
     printf("[%s] FT8 crowded overlapping-slot decode\n", crowded_ok ? "PASS" : "FAIL");
     printf("[%s] FT8/FT4 pure-noise false-decode guard\n", noise_ok ? "PASS" : "FAIL");
-    return ft8_offset_ok && ft4_offset_ok && awgn_ok && crowded_ok && noise_ok ? 0 : -1;
+    return ft8_offset_ok && ft4_offset_ok && ft8_awgn_ok && ft4_awgn_ok
+           && crowded_ok && noise_ok ? 0 : -1;
+}
+
+int ftx_run_channel_extended_selftests(int noise_slots_per_mode, int snr_trials) {
+    int false_decodes_ft8 = 0;
+    int false_decodes_ft4 = 0;
+    int snr_ok;
+    if (noise_slots_per_mode < 1 || snr_trials < 1) {
+        return -1;
+    }
+    snr_ok = run_calibrated_awgn_sweep(FTX_MODE_FT8, snr_trials)
+             && run_calibrated_awgn_sweep(FTX_MODE_FT4, snr_trials);
+    for (int slot = 0; slot < noise_slots_per_mode; ++slot) {
+        if (!run_noise_only_case(FTX_MODE_FT8)) {
+            false_decodes_ft8++;
+        }
+        if (!run_noise_only_case(FTX_MODE_FT4)) {
+            false_decodes_ft4++;
+        }
+    }
+    printf("NOISE_MONTE_CARLO mode=FT8 slots=%d equivalent_hours=%.6f false_decodes=%d\n",
+           noise_slots_per_mode,
+           (double) noise_slots_per_mode * 15.0 / 3600.0,
+           false_decodes_ft8);
+    printf("NOISE_MONTE_CARLO mode=FT4 slots=%d equivalent_hours=%.6f false_decodes=%d\n",
+           noise_slots_per_mode,
+           (double) noise_slots_per_mode * 7.5 / 3600.0,
+           false_decodes_ft4);
+    return snr_ok && false_decodes_ft8 == 0 && false_decodes_ft4 == 0 ? 0 : -1;
 }
