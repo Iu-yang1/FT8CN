@@ -118,7 +118,7 @@ contains
     integer stageno                       !Added by W3SZ
     integer time
     integer(c_long_long) trace_phase_started
-    logical lclearave,lnewdat0,lapcqonly,unpk77_success
+    logical lclearave,lnewdat0,lapcqonly,unpk77_success,c00_ready
     logical single_decode,lagain
     complex c00(0:3600000)                !Analytic signal, 6000 Sa/s
     type(q3list) callers(MAX_CALLERS)
@@ -140,6 +140,7 @@ contains
     idf=0
     idt=0
     nrc=-2
+    c00_ready=.false.
     mode_q65=2**nsubmode
     npts=ntrperiod*12000
     nfft1=ntrperiod*12000
@@ -267,6 +268,7 @@ contains
     if(jpk0.lt.0) jpk0=0
     trace_phase_started=vendor_trace_now()
     call ana64(iwave,npts,c00)          !Convert to complex c00() at 6000 Sa/s
+    c00_ready=.true.
     call wsjtx3_vendor_trace_event(202_c_int, 0_c_int, ncand, ndecodes, &
          vendor_trace_elapsed_us(trace_phase_started))
     if(lapcqonly) npasses=1
@@ -417,6 +419,15 @@ contains
     navg0=1000*navg(0) + navg(1)
     if(single_decode .or. lagain) go to 900
 
+    ! 同一接收帧的解析信号与候选频率无关，宽带候选共用一次 ana64 结果。
+    if(ncand.gt.0 .and. .not.c00_ready) then
+       trace_phase_started=vendor_trace_now()
+       call ana64(iwave,npts,c00)
+       c00_ready=.true.
+       call wsjtx3_vendor_trace_event(202_c_int, -1_c_int, ncand, ndecodes, &
+            vendor_trace_elapsed_us(trace_phase_started))
+    endif
+
     do icand=1,ncand
 ! Prepare for single-period candidate decodes with iaptype = 0, 1, 2, or 4
        snr1=candidates(icand,1)
@@ -445,10 +456,6 @@ contains
        jpk0=(xdt+1.0)*6000                   !Index of nominal start of signal
        if(ntrperiod.le.30) jpk0=(xdt+0.5)*6000  !For shortest sequences
        if(jpk0.lt.0) jpk0=0
-       trace_phase_started=vendor_trace_now()
-       call ana64(iwave,npts,c00)       !Convert to complex c00() at 6000 Sa/s
-       call wsjtx3_vendor_trace_event(202_c_int, icand, ncand, ndecodes, &
-            vendor_trace_elapsed_us(trace_phase_started))
        call ft8apset(mycall,hiscall,ncontest,apsym0,aph10) ! Generate ap symbols
        where(apsym0.eq.-1) apsym0=0
 

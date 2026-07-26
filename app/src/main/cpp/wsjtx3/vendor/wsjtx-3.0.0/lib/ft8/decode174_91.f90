@@ -15,6 +15,7 @@ subroutine decode174_91(llr,Keff,maxosd,norder,apmask,message91,cw,ntype,nharder
    integer nrw(M),ncw
    integer Nm(7,M)
    integer Mn(3,N)  ! 3 checks per bit
+   integer edge_slot(7,M)
    integer synd(M)
    real tov(3,N)
    real toc(7,M)
@@ -74,6 +75,19 @@ subroutine decode174_91(llr,Keff,maxosd,norder,apmask,message91,cw,ntype,nharder
    toc=0
    tov=0
    tanhtoc=0
+! 每个校验边对应的变量槽在一次解码内保持不变，避免每轮 BP 重复查找。
+   edge_slot=0
+   do j=1,M
+      do i=1,nrw(j)
+         ibj=Nm(i,j)
+         do kk=1,ncw
+            if(Mn(kk,ibj).eq.j) then
+               edge_slot(i,j)=kk
+               exit
+            endif
+         enddo
+      enddo
+   enddo
 ! initialize messages to checks
    do j=1,M
       do i=1,nrw(j)
@@ -153,12 +167,8 @@ subroutine decode174_91(llr,Keff,maxosd,norder,apmask,message91,cw,ntype,nharder
       do j=1,M
          do i=1,nrw(j)
             ibj=Nm(i,j)
-            toc(i,j)=zn(ibj)
-            do kk=1,ncw ! subtract off what the bit had received from the check
-               if( Mn(kk,ibj) .eq. j ) then
-                  toc(i,j)=toc(i,j)-tov(kk,ibj)
-               endif
-            enddo
+            kk=edge_slot(i,j)
+            toc(i,j)=zn(ibj)-tov(kk,ibj)
          enddo
       enddo
       if(trace_enabled.ne.0) trace_bp_bit_to_check_us=trace_bp_bit_to_check_us+ &
@@ -167,13 +177,16 @@ subroutine decode174_91(llr,Keff,maxosd,norder,apmask,message91,cw,ntype,nharder
       if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
 ! send messages from check nodes to variable nodes
       do i=1,M
-         tanhtoc(1:7,i)=tanh(-toc(1:7,i)/2)
+         tanhtoc(1:nrw(i),i)=tanh(-toc(1:nrw(i),i)/2)
       enddo
 
       do j=1,N
          do i=1,ncw
             ichk=Mn(i,j)  ! Mn(:,j) are the checks that include bit j
-            Tmn=product(tanhtoc(1:nrw(ichk),ichk),mask=Nm(1:nrw(ichk),ichk).ne.j)
+            Tmn=1.0
+            do kk=1,nrw(ichk)
+               if(Nm(kk,ichk).ne.j) Tmn=Tmn*tanhtoc(kk,ichk)
+            enddo
             call platanh(-Tmn,y)
 !      y=atanh(-Tmn)
             tov(i,j)=2*y
