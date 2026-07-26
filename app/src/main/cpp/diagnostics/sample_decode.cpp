@@ -15,6 +15,7 @@ extern "C" {
 #include "../ft8Decoder.h"
 #include "../ftx_core/include/ftx_types.h"
 #include "../wsjtx3/wsjtx3_bridge.h"
+#include "../wsjtx3/host/wsjtx3_parallel.h"
 }
 
 namespace {
@@ -135,6 +136,13 @@ Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_configureRuntimeDirectories
     const std::string temp_dir = copy_jstring(env, tempDir);
     const std::string data_dir = copy_jstring(env, dataDir);
     decoder_configure_runtime_dirs(temp_dir.c_str(), data_dir.c_str());
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_bg7yoz_ft8cn_diagnostics_NativeSampleDecode_getFt8SyncThreadCount(JNIEnv *,
+                                                                           jclass) {
+    return (jint) wsjtx3_ft8_sync_thread_count();
 }
 
 extern "C"

@@ -15,6 +15,8 @@ public final class NativeSampleDecode {
     public static native void configureRuntimeDirectories(String tempDir,
                                                           String dataDir);
 
+    public static native int getFt8SyncThreadCount();
+
     public static native String inspectWavFile(String wavPath,
                                                int decodeMode,
                                                long utcTime);

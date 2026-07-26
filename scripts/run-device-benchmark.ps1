@@ -5,7 +5,8 @@ param(
     [string]$OutputJson = '',
     [ValidateRange(1, 5)][int]$WarmupCount = 1,
     [ValidateRange(10, 50)][int]$IterationCount = 10,
-    [ValidateSet('ALL', 'FT8', 'FT4', 'Q65')][string]$CaseFilter = 'ALL'
+    [ValidateSet('ALL', 'FT8', 'FT4', 'Q65')][string]$CaseFilter = 'ALL',
+    [ValidateSet('ALL', 'DEBUG', 'RELEASE')][string]$VariantFilter = 'ALL'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -199,7 +200,10 @@ try {
         $env:PATH = (Join-Path $JavaHome 'bin') + ';' + $oldPath
         Push-Location $repoRoot
         try {
-            & .\gradlew.bat :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest
+            $gradleTasks = @(':app:assembleDebugAndroidTest')
+            if ($VariantFilter -in @('ALL', 'DEBUG')) { $gradleTasks += ':app:assembleDebug' }
+            if ($VariantFilter -in @('ALL', 'RELEASE')) { $gradleTasks += ':app:assembleRelease' }
+            & .\gradlew.bat @gradleTasks
             Assert-LastExitCode 'Android app/test APK build'
         } finally {
             Pop-Location
@@ -212,37 +216,48 @@ try {
     $debugApk = Join-Path $repoRoot 'app\build\outputs\apk\debug\app-debug.apk'
     $releaseApk = Join-Path $repoRoot 'app\build\outputs\apk\release\app-release.apk'
     $testApk = Join-Path $repoRoot 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
-    foreach ($apk in @($debugApk, $releaseApk, $testApk)) {
+    $requiredApks = @($testApk)
+    if ($VariantFilter -in @('ALL', 'DEBUG')) { $requiredApks += $debugApk }
+    if ($VariantFilter -in @('ALL', 'RELEASE')) { $requiredApks += $releaseApk }
+    foreach ($apk in $requiredApks) {
         if (-not (Test-Path -LiteralPath $apk)) { throw "Built APK is missing: $apk" }
     }
 
-    Install-Apk $debugApk
-    Install-Apk $testApk
-    $debugReport = Invoke-BenchmarkVariant 'debug'
-
-    Install-Apk $releaseApk -AllowDowngrade
-    Install-Apk $testApk
-    $releaseReport = Invoke-BenchmarkVariant 'release'
-
-    $debugCases = @{}
-    foreach ($item in $debugReport.cases) { $debugCases["$($item.name)|$($item.source_sample_rate)"] = $item }
-    $mismatches = New-Object System.Collections.ArrayList
-    foreach ($item in $releaseReport.cases) {
-        $key = "$($item.name)|$($item.source_sample_rate)"
-        if (-not $debugCases.ContainsKey($key)) {
-            $null = $mismatches.Add("release-only case: $key")
-            continue
-        }
-        $debugItem = $debugCases[$key]
-        if ([int]$debugItem.result_count -ne [int]$item.result_count) {
-            $null = $mismatches.Add("count mismatch $key")
-        }
-        if ([string]$debugItem.result_sha256 -ne [string]$item.result_sha256) {
-            $null = $mismatches.Add("result SHA256 mismatch $key")
-        }
-        $debugCases.Remove($key)
+    $debugReport = $null
+    $releaseReport = $null
+    if ($VariantFilter -in @('ALL', 'DEBUG')) {
+        Install-Apk $debugApk
+        Install-Apk $testApk
+        $debugReport = Invoke-BenchmarkVariant 'debug'
     }
-    foreach ($key in $debugCases.Keys) { $null = $mismatches.Add("debug-only case: $key") }
+
+    if ($VariantFilter -in @('ALL', 'RELEASE')) {
+        Install-Apk $releaseApk -AllowDowngrade
+        Install-Apk $testApk
+        $releaseReport = Invoke-BenchmarkVariant 'release'
+    }
+
+    $mismatches = New-Object System.Collections.ArrayList
+    if ($null -ne $debugReport -and $null -ne $releaseReport) {
+        $debugCases = @{}
+        foreach ($item in $debugReport.cases) { $debugCases["$($item.name)|$($item.source_sample_rate)"] = $item }
+        foreach ($item in $releaseReport.cases) {
+            $key = "$($item.name)|$($item.source_sample_rate)"
+            if (-not $debugCases.ContainsKey($key)) {
+                $null = $mismatches.Add("release-only case: $key")
+                continue
+            }
+            $debugItem = $debugCases[$key]
+            if ([int]$debugItem.result_count -ne [int]$item.result_count) {
+                $null = $mismatches.Add("count mismatch $key")
+            }
+            if ([string]$debugItem.result_sha256 -ne [string]$item.result_sha256) {
+                $null = $mismatches.Add("result SHA256 mismatch $key")
+            }
+            $debugCases.Remove($key)
+        }
+        foreach ($key in $debugCases.Keys) { $null = $mismatches.Add("debug-only case: $key") }
+    }
     if ($mismatches.Count -gt 0) { throw ($mismatches -join '; ') }
 
     $result = [ordered]@{
@@ -250,6 +265,7 @@ try {
         passed = $true
         generated_at_utc = [DateTime]::UtcNow.ToString('o')
         device_serial = (($devices[0] -split "\s+")[0])
+        variant_filter = $VariantFilter
         debug = $debugReport
         release = $releaseReport
         debug_release_mismatches = @()

@@ -30,11 +30,12 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** 仅由测试 APK 内部调用的 native 解码与内存基准入口。 */
+/** 仅由测试 APK 内部调用的 native 解码、CPU 和内存基准入口。 */
 public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
     private static final int TARGET_SAMPLE_RATE = 12000;
     private static final long DECODE_STACK_BYTES = 24L * 1024L * 1024L;
@@ -171,6 +172,9 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
 
         JSONArray runs = new JSONArray();
         List<Double> elapsedValues = new ArrayList<>();
+        List<Double> processCpuValues = new ArrayList<>();
+        List<Double> decodeCpuValues = new ArrayList<>();
+        List<Double> cpuUtilizationValues = new ArrayList<>();
         String expectedHash = null;
         long peakJavaHeap = 0L;
         long peakNativeHeap = 0L;
@@ -185,6 +189,9 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
                 throw new IllegalStateException(benchmarkCase.name + " unstable result hash");
             }
             elapsedValues.add(measurement.elapsedMs);
+            processCpuValues.add(measurement.processCpuMs);
+            decodeCpuValues.add(measurement.decodeCpuMs);
+            cpuUtilizationValues.add(measurement.cpuUtilizationPercent);
             peakJavaHeap = Math.max(peakJavaHeap, measurement.peakJavaHeapBytes);
             peakNativeHeap = Math.max(peakNativeHeap, measurement.peakNativeHeapBytes);
             peakPss = Math.max(peakPss, measurement.peakPssBytes);
@@ -205,6 +212,12 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         result.put("result_sha256", expectedHash);
         result.put("p50_ms", percentile(elapsedValues, 0.50));
         result.put("p95_ms", percentile(elapsedValues, 0.95));
+        result.put("process_cpu_p50_ms", percentile(processCpuValues, 0.50));
+        result.put("process_cpu_p95_ms", percentile(processCpuValues, 0.95));
+        result.put("decode_cpu_p50_ms", percentile(decodeCpuValues, 0.50));
+        result.put("decode_cpu_p95_ms", percentile(decodeCpuValues, 0.95));
+        result.put("cpu_utilization_p50_percent", percentile(cpuUtilizationValues, 0.50));
+        result.put("cpu_utilization_p95_percent", percentile(cpuUtilizationValues, 0.95));
         result.put("peak_java_heap_bytes", peakJavaHeap);
         result.put("peak_native_heap_bytes", peakNativeHeap);
         result.put("peak_total_pss_bytes", peakPss);
@@ -216,7 +229,9 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
     private DecodeMeasurement decodeOnce(BenchmarkCase benchmarkCase, File wavFile) throws Exception {
         AtomicReference<String> report = new AtomicReference<>();
         AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicLong decodeThreadCpuNanos = new AtomicLong();
         Thread decodeThread = new Thread(null, () -> {
+            long cpuStarted = Debug.threadCpuTimeNanos();
             try {
                 report.set(NativeSampleDecode.decodeWavFile(
                         wavFile.getAbsolutePath(),
@@ -234,6 +249,9 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
                         benchmarkCase.q65PeriodSeconds));
             } catch (Throwable throwable) {
                 failure.set(throwable);
+            } finally {
+                decodeThreadCpuNanos.set(Math.max(0L,
+                        Debug.threadCpuTimeNanos() - cpuStarted));
             }
         }, "ft8cn-native-decode", DECODE_STACK_BYTES);
 
@@ -241,6 +259,8 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         long peakNativeHeap = 0L;
         long peakPss = 0L;
         long peakRss = 0L;
+        long benchmarkCpuStarted = Debug.threadCpuTimeNanos();
+        long processCpuStarted = android.os.Process.getElapsedCpuTime();
         long started = SystemClock.elapsedRealtimeNanos();
         decodeThread.start();
         while (decodeThread.isAlive()) {
@@ -252,9 +272,22 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
             decodeThread.join(10L);
         }
         double elapsedMs = (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000.0;
+        double processCpuMs = Math.max(0L,
+                android.os.Process.getElapsedCpuTime() - processCpuStarted);
+        double benchmarkCpuMs = Math.max(0L,
+                Debug.threadCpuTimeNanos() - benchmarkCpuStarted) / 1_000_000.0;
+        double decodeThreadCpuMs = decodeThreadCpuNanos.get() / 1_000_000.0;
+        // 扣除基准采样线程自身开销后，剩余值覆盖解码线程及其内部 worker。
+        double decodeCpuMs = Math.max(decodeThreadCpuMs, processCpuMs - benchmarkCpuMs);
+        double nativeWorkerCpuMs = Math.max(0.0, decodeCpuMs - decodeThreadCpuMs);
+        double cpuUtilizationPercent = elapsedMs <= 0.0
+                ? 0.0
+                : decodeCpuMs * 100.0 / elapsedMs;
         if (failure.get() != null) { throw new RuntimeException(failure.get()); }
         ParsedReport parsed = parseNativeReport(report.get());
-        return new DecodeMeasurement(elapsedMs, parsed.count, parsed.sha256,
+        return new DecodeMeasurement(elapsedMs, processCpuMs, benchmarkCpuMs,
+                decodeCpuMs, decodeThreadCpuMs, nativeWorkerCpuMs, cpuUtilizationPercent,
+                parsed.count, parsed.sha256,
                 peakJavaHeap, peakNativeHeap, peakPss, peakRss, report.get());
     }
 
@@ -349,6 +382,8 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         result.put("android_release", Build.VERSION.RELEASE);
         result.put("sdk_int", Build.VERSION.SDK_INT);
         result.put("abi", Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]);
+        result.put("available_processors", Runtime.getRuntime().availableProcessors());
+        result.put("ft8_sync_threads", NativeSampleDecode.getFt8SyncThreadCount());
         return result;
     }
 
@@ -575,6 +610,12 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
 
     private static final class DecodeMeasurement {
         final double elapsedMs;
+        final double processCpuMs;
+        final double benchmarkCpuMs;
+        final double decodeCpuMs;
+        final double decodeThreadCpuMs;
+        final double nativeWorkerCpuMs;
+        final double cpuUtilizationPercent;
         final int resultCount;
         final String resultSha256;
         final long peakJavaHeapBytes;
@@ -583,10 +624,19 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         final long peakRssBytes;
         final String nativeReport;
 
-        DecodeMeasurement(double elapsedMs, int resultCount, String resultSha256,
+        DecodeMeasurement(double elapsedMs, double processCpuMs, double benchmarkCpuMs,
+                           double decodeCpuMs, double decodeThreadCpuMs,
+                           double nativeWorkerCpuMs, double cpuUtilizationPercent,
+                           int resultCount, String resultSha256,
                            long peakJavaHeapBytes, long peakNativeHeapBytes,
                            long peakPssBytes, long peakRssBytes, String nativeReport) {
             this.elapsedMs = elapsedMs;
+            this.processCpuMs = processCpuMs;
+            this.benchmarkCpuMs = benchmarkCpuMs;
+            this.decodeCpuMs = decodeCpuMs;
+            this.decodeThreadCpuMs = decodeThreadCpuMs;
+            this.nativeWorkerCpuMs = nativeWorkerCpuMs;
+            this.cpuUtilizationPercent = cpuUtilizationPercent;
             this.resultCount = resultCount;
             this.resultSha256 = resultSha256;
             this.peakJavaHeapBytes = peakJavaHeapBytes;
@@ -600,6 +650,15 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
             JSONObject result = new JSONObject();
             result.put("index", index);
             result.put("elapsed_ms", Math.round(elapsedMs * 1000.0) / 1000.0);
+            result.put("process_cpu_ms", Math.round(processCpuMs * 1000.0) / 1000.0);
+            result.put("benchmark_cpu_ms", Math.round(benchmarkCpuMs * 1000.0) / 1000.0);
+            result.put("decode_cpu_ms", Math.round(decodeCpuMs * 1000.0) / 1000.0);
+            result.put("decode_thread_cpu_ms",
+                    Math.round(decodeThreadCpuMs * 1000.0) / 1000.0);
+            result.put("native_worker_cpu_ms",
+                    Math.round(nativeWorkerCpuMs * 1000.0) / 1000.0);
+            result.put("cpu_utilization_percent",
+                    Math.round(cpuUtilizationPercent * 1000.0) / 1000.0);
             result.put("result_count", resultCount);
             result.put("result_sha256", resultSha256);
             result.put("peak_java_heap_bytes", peakJavaHeapBytes);
