@@ -1,5 +1,13 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "oracle_policy": {
+    "minimum_frequency_hz": 0.0,
+    "maximum_frequency_hz": 3000.0,
+    "require_full_occupied_bandwidth": true,
+    "frequency_tolerance_hz": 3.2,
+    "dt_tolerance_sec": 0.06,
+    "reason": "Official jt9 prints integer Hz and 0.1 s values; 3.2 Hz is one half of an FT8 6.25 Hz bin. Results whose full FT8/FT4 tone span exceeds 3000 Hz are reported separately and excluded on both sides."
+  },
   "decoder_options": {
     "decode_pass_count": 3,
     "multi_decode_round_count": 3,

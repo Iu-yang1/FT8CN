@@ -104,13 +104,32 @@ foreach ($entry in $tools.GetEnumerator()) {
     }
 }
 
+$versions = [ordered]@{}
+$sha256 = [ordered]@{}
 if ($missing.Count -eq 0) {
-    Write-Host ('[VERSION] Java: ' + (Get-Ft8cnCommandVersion (Join-Path $JavaHome 'bin\java.exe') @('-version')).Split("`n")[0])
-    Write-Host ('[VERSION] CMake: ' + (Get-Ft8cnCommandVersion $CMakePath @('--version')).Split("`n")[0])
-    Write-Host ('[VERSION] Ninja: ' + (Get-Ft8cnCommandVersion $NinjaPath @('--version')).Split("`n")[0])
-    Write-Host ('[VERSION] Clang: ' + (Get-Ft8cnCommandVersion $ClangPath @('--version')).Split("`n")[0])
-    Write-Host ('[VERSION] Flang: ' + (Get-Ft8cnCommandVersion $FlangPath @('--version')).Split("`n")[0])
-    Write-Host ('[VERSION] ADB: ' + (Get-Ft8cnCommandVersion $AdbPath @('version')).Split("`n")[0])
+    $executables = [ordered]@{
+        Java = Join-Path $JavaHome 'bin\java.exe'
+        GradleWrapper = Join-Path $repoRoot 'gradlew.bat'
+        CMake = $CMakePath
+        Ninja = $NinjaPath
+        Clang = $ClangPath
+        Flang = $FlangPath
+        Adb = $AdbPath
+    }
+    $versions.Java = (Get-Ft8cnCommandVersion $executables.Java @('-version')).Split("`n")[0]
+    $versions.CMake = (Get-Ft8cnCommandVersion $executables.CMake @('--version')).Split("`n")[0]
+    $versions.Ninja = (Get-Ft8cnCommandVersion $executables.Ninja @('--version')).Split("`n")[0]
+    $versions.Clang = (Get-Ft8cnCommandVersion $executables.Clang @('--version')).Split("`n")[0]
+    $versions.Flang = (Get-Ft8cnCommandVersion $executables.Flang @('--version')).Split("`n")[0]
+    $versions.Adb = (Get-Ft8cnCommandVersion $executables.Adb @('version')).Split("`n")[0]
+    foreach ($entry in $executables.GetEnumerator()) {
+        $sha256[$entry.Key] = (Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    foreach ($entry in $versions.GetEnumerator()) {
+        Write-Host ("[VERSION] {0}: {1}" -f $entry.Key, $entry.Value)
+    }
+    $tools['Versions'] = [pscustomobject]$versions
+    $tools['Sha256'] = [pscustomobject]$sha256
 }
 
 if ($PassThru) {

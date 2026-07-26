@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-07-26T02:34:00Z",
+  "baseline_commit": "20a8472fd018ec22db8e5c30a8bd7341f9417586",
+  "build": {
+    "type": "Release",
+    "optimization": "O2",
+    "ndebug": true,
+    "compiler": "GNU 16.1.0",
+    "power_scheme": "PowerX v3"
+  },
+  "method": {
+    "warmup_count": 3,
+    "iteration_count": 25,
+    "decode_pass_count": 3,
+    "multi_decode_round_count": 3,
+    "decode_sensitivity": 2,
+    "qso_sensitivity": 2,
+    "ldpc_iterations": 200
+  },
+  "samples": {
+    "FT4": {
+      "id": "wsjtx-ft4-000000-000002",
+      "result_count": 16,
+      "result_sha256": "877dd38b0d05c754d31c7dd3b0610e61489f86d1cb316123012b9b8c148d1d14",
+      "p50_ms": 296.826,
+      "p95_ms": 304.065,
+      "peak_working_set_bytes": 16433152,
+      "private_memory_bytes": 68919296,
+      "elapsed_ms": [
+        296.826,
+        295.551,
+        295.965,
+        295.686,
+        295.950,
+        296.008,
+        295.891,
+        297.117,
+        298.307,
+        297.129,
+        297.452,
+        297.876,
+        294.898,
+        304.065,
+        296.801,
+        299.024,
+        296.128,
+        296.618,
+        299.348,
+        294.902,
+        297.168,
+        315.686,
+        296.843,
+        296.337,
+        296.975
+      ]
+    }
+  }
+}

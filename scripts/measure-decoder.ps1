@@ -31,6 +31,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath
 . (Join-Path $PSScriptRoot 'toolchain-common.ps1')
+. (Join-Path $PSScriptRoot 'verification-common.ps1')
 $Executable = (Resolve-Path $Executable).ProviderPath
 $SamplePath = (Resolve-Path $SamplePath).ProviderPath
 
@@ -100,11 +101,16 @@ function Invoke-DecodeRun([bool]$Warmup) {
     if (-not $summaryMatch.Success) { throw "Missing $Mode result summary:`n$stdout" }
     $resultLines = @($stdout -split "`r?`n" | Where-Object { $_ -match '^\s+#\d+\s' })
     $normalized = ($resultLines -join "`n")
+    $resultRecords = @(ConvertFrom-Ft8cnBridgeOutput $stdout)
+    if ($resultRecords.Count -ne [int]$summaryMatch.Groups[1].Value) {
+        throw "Parsed $($resultRecords.Count) $Mode records, but bridge reported $($summaryMatch.Groups[1].Value)."
+    }
     [pscustomobject]@{
         warmup = $Warmup
         elapsed_ms = [Math]::Round($stopwatch.Elapsed.TotalMilliseconds, 3)
         results = [int]$summaryMatch.Groups[1].Value
         result_sha256 = Get-Ft8cnStringSha256 $normalized
+        result_records = $resultRecords
         peak_working_set_bytes = $peakWorkingSet
         peak_paged_memory_bytes = $peakPagedMemory
         private_memory_bytes = $peakPrivateMemory
@@ -136,6 +142,7 @@ $result = [pscustomobject]@{
     }
     result_counts = @($runs | ForEach-Object { $_.results })
     result_sha256 = @($runs | ForEach-Object { $_.result_sha256 } | Select-Object -Unique)
+    normalized_results = @($runs[0].result_records)
     p50_ms = [Math]::Round((Get-Percentile $elapsed 0.50), 3)
     p95_ms = [Math]::Round((Get-Percentile $elapsed 0.95), 3)
     peak_working_set_bytes = [long](($runs | Measure-Object peak_working_set_bytes -Maximum).Maximum)
@@ -143,7 +150,7 @@ $result = [pscustomobject]@{
     private_memory_bytes = [long](($runs | Measure-Object private_memory_bytes -Maximum).Maximum)
     runs = $runs
 }
-$json = $result | ConvertTo-Json -Depth 6
+$json = $result | ConvertTo-Json -Depth 8
 if ($OutputJson) {
     $outputPath = if ([System.IO.Path]::IsPathRooted($OutputJson)) {
         [System.IO.Path]::GetFullPath($OutputJson)
