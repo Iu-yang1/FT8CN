@@ -16,6 +16,11 @@
 | AndroidX / Material | Android UI/架构，Gradle 锁定版本 | Google Maven | Apache-2.0 | 动态 Gradle 依赖 | 是 | Gradle dependency report 与 Android notices |
 | Guava | 集合/工具，31.1-jre | Maven `com.google.guava` | Apache-2.0 | Gradle 依赖 | 是 | LICENSE/NOTICE |
 | Google Play services Maps | Google 地图，18.1.0 | Google Maven | Google APIs Terms | Gradle 依赖 | 是 | 遵守服务条款、API key/隐私要求；不表述为开源组件 |
+| Kotlin / Coroutines | Kotlin 1.8.10；Coroutines 1.6.4 | JetBrains Maven/Gradle Plugin Portal | Apache-2.0 | Gradle 依赖 | 是 | 保留许可证和 NOTICE；版本与 AGP 7.4.1/Compose compiler 1.4.3 锁定 |
+| Jetpack Compose / Material 3 | Compose 1.4.0；Material3 1.0.1 | Google Maven | Apache-2.0 | Gradle 依赖 | 是 | 保留许可证；阶段 1 仅提供非导出的渐进外壳，旧 UI 仍为默认入口 |
+| AndroidX Room / DataStore / WorkManager | Room 2.5.2；DataStore 1.0.0；WorkManager 2.8.1 | Google Maven | Apache-2.0 | Gradle 依赖 | 是 | 跟踪 Room schema；普通 DataStore 不保存密码或私钥 |
+| LeakCanary | 2.12 | Maven Central `com.squareup.leakcanary` | Apache-2.0 | 仅 Debug Gradle 依赖 | 仅 Debug | 禁止进入 Release；用于阶段 1/8 生命周期门禁 |
+| Robolectric | 4.10.3 | Maven Central `org.robolectric` | MIT | 仅 JVM 测试依赖 | 否 | 不进入 APK，仅验证 Room/DataStore/Android 边界 |
 | FT8AF | 内存/生命周期 clean-room 参考 | `patrickrb/FT8AF@c2f63e8b` | 顶层 MIT；依赖另计 | 不链接、不复制应用源码 | 否 | 边界见 `third_party/ft8af-reference` 和联合审查 |
 | Look4Sat | 卫星功能 clean-room 参考 | `rt-bishop/Look4Sat@b17ea2d9` | GPL-3.0 | 当前仅参考 | 否 | 若直接复制必须按 GPL 处理组合发行；阶段 6 前更新 |
 | Hamlib | 阶段 3 电台控制候选 | `Hamlib/Hamlib@c7fb0fa1` | library 多为 LGPL-2.1-or-later；工具多为 GPL-2.0-or-later | 当前不链接 | 否 | 只选逐文件确认的 LGPL library；提供修改源码与可替换/重链接方案 |

@@ -40,6 +40,9 @@
             android:name=".FAQActivity"
             android:exported="false" />
         <activity
+            android:name=".feature.shell.ModernShellActivity"
+            android:exported="false" />
+        <activity
             android:name=".diagnostics.DeviceBenchmarkActivity"
             android:excludeFromRecents="true"
             android:exported="false"
