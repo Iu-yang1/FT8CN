@@ -4,7 +4,8 @@ param(
     [string]$CorpusManifest = '',
     [string]$OutputJson = '',
     [ValidateRange(1, 5)][int]$WarmupCount = 1,
-    [ValidateRange(10, 50)][int]$IterationCount = 10
+    [ValidateRange(10, 50)][int]$IterationCount = 10,
+    [ValidateSet('ALL', 'FT8', 'FT4', 'Q65')][string]$CaseFilter = 'ALL'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,11 +42,16 @@ if (-not $AdbPath) {
 }
 if (-not $AdbPath -or -not (Test-Path -LiteralPath $AdbPath)) { throw 'ADB was not found.' }
 if (-not $JavaHome) {
-    $JavaExecutable = Find-Ft8cnExecutable -ExplicitPath '' -CandidateRoots $roots `
-        -CommandNames @('java.exe', 'java') -RelativePatterns @('jdk*\bin\java.exe', 'bin\java.exe')
-    if ($JavaExecutable) { $JavaHome = Split-Path -Parent (Split-Path -Parent $JavaExecutable) }
+    if ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\javac.exe'))) {
+        $JavaHome = $env:JAVA_HOME
+    } else {
+        $JavaCompiler = Find-Ft8cnExecutable -ExplicitPath '' -CandidateRoots $roots `
+            -CommandNames @('javac.exe', 'javac') `
+            -RelativePatterns @('jdks\jdk*\bin\javac.exe', 'jdk*\bin\javac.exe', 'bin\javac.exe')
+        if ($JavaCompiler) { $JavaHome = Split-Path -Parent (Split-Path -Parent $JavaCompiler) }
+    }
 }
-if (-not $JavaHome -or -not (Test-Path (Join-Path $JavaHome 'bin\java.exe'))) {
+if (-not $JavaHome -or -not (Test-Path (Join-Path $JavaHome 'bin\javac.exe'))) {
     throw 'JDK was not found.'
 }
 
@@ -87,12 +93,70 @@ function Invoke-BenchmarkVariant([string]$Variant) {
         '-e', 'build_variant', $Variant,
         '-e', 'warmups', [string]$WarmupCount,
         '-e', 'iterations', [string]$IterationCount,
+        '-e', 'case_filter', $CaseFilter,
         '-e', 'ft8_expected', [string]$modeSamples.FT8.expected_result_count,
         '-e', 'ft4_expected', [string]$modeSamples.FT4.expected_result_count,
         '-e', 'q65_expected', [string]$modeSamples.Q65.expected_result_count,
         $component
     )
-    $output = Invoke-Adb @arguments
+    $stdoutPath = Join-Path $repoRoot ".tmp_verify_run\instrumentation-$Variant.stdout.txt"
+    $stderrPath = Join-Path $repoRoot ".tmp_verify_run\instrumentation-$Variant.stderr.txt"
+    Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    $process = $null
+    $taskLocked = $false
+    try {
+        $process = Start-Process -FilePath $AdbPath -ArgumentList $arguments `
+            -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath `
+            -WindowStyle Hidden -PassThru
+
+        $activityDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not $process.HasExited -and [DateTime]::UtcNow -lt $activityDeadline) {
+            $activityDump = (Invoke-Adb shell dumpsys activity activities) -join "`n"
+            $taskMatch = [regex]::Match(
+                $activityDump,
+                'com\.bg7yoz\.ft8cn\.ft4/com\.bg7yoz\.ft8cn\.diagnostics\.DeviceBenchmarkActivity t(\d+)'
+            )
+            if ($taskMatch.Success) {
+                $taskId = $taskMatch.Groups[1].Value
+                $lockOutput = (Invoke-Adb shell am task lock $taskId) -join "`n"
+                if ($lockOutput -notmatch 'lockTaskMode') {
+                    throw "Unable to lock benchmark task $taskId`: $lockOutput"
+                }
+                $taskLocked = $true
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $taskLocked) {
+            throw "Device benchmark $Variant did not expose its internal foreground activity."
+        }
+        if (-not $process.WaitForExit(60 * 60 * 1000)) {
+            throw "Device benchmark $Variant exceeded the 60 minute device timeout."
+        }
+    } finally {
+        if ($taskLocked) {
+            $null = Invoke-Adb shell am task lock stop
+        }
+        if ($process -and -not $process.HasExited) {
+            $null = Invoke-Adb shell am force-stop com.bg7yoz.ft8cn.ft4
+            if (-not $process.WaitForExit(10000)) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    $output = @()
+    if (Test-Path -LiteralPath $stdoutPath) { $output += Get-Content -LiteralPath $stdoutPath }
+    if (Test-Path -LiteralPath $stderrPath) { $output += Get-Content -LiteralPath $stderrPath }
+    $processExitCode = $null
+    try {
+        $process.Refresh()
+        $processExitCode = $process.ExitCode
+    } catch { }
+    if ($null -ne $processExitCode -and $processExitCode -ne 0) {
+        throw "adb instrumentation for $Variant failed with exit code ${processExitCode}:`n$($output -join "`n")"
+    }
     $text = $output -join "`n"
     Set-Content -LiteralPath (Join-Path $repoRoot ".tmp_verify_run\instrumentation-$Variant.txt") `
         -Value $text -Encoding UTF8

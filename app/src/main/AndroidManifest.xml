@@ -18,6 +18,7 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:allowBackup="true"
@@ -38,6 +39,11 @@
         <activity
             android:name=".FAQActivity"
             android:exported="false" />
+        <activity
+            android:name=".diagnostics.DeviceBenchmarkActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -78,6 +84,11 @@
         </activity>
 
         <service android:name=".bluetooth.BluetoothSerialService" />
+
+        <service
+            android:name=".diagnostics.DeviceBenchmarkKeepAliveService"
+            android:enabled="true"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

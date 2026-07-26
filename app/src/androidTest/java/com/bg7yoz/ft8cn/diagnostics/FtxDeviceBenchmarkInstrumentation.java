@@ -2,6 +2,8 @@ package com.bg7yoz.ft8cn.diagnostics;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Debug;
@@ -58,7 +60,19 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
     private void runAndFinish(Bundle arguments) {
         Bundle resultBundle = new Bundle();
         int resultCode = Activity.RESULT_OK;
+        Context targetContext = getTargetContext();
+        Intent keepAliveIntent = DeviceBenchmarkKeepAliveService.buildStartIntent(targetContext);
+        Activity benchmarkActivity = null;
+        boolean keepAliveStarted = false;
         try {
+            benchmarkActivity = startActivitySync(
+                    DeviceBenchmarkActivity.buildStartIntent(targetContext));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                targetContext.startForegroundService(keepAliveIntent);
+            } else {
+                targetContext.startService(keepAliveIntent);
+            }
+            keepAliveStarted = true;
             JSONObject report = runBenchmark(arguments);
             byte[] json = report.toString().getBytes(StandardCharsets.UTF_8);
             File reportDirectory = getContext().getExternalFilesDir(null);
@@ -78,6 +92,14 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
             resultCode = Activity.RESULT_CANCELED;
             resultBundle.putString("stream", "FT8CN_DEVICE_BENCHMARK=FAIL " + throwable + "\n");
             resultBundle.putString("failure", throwable.toString());
+        } finally {
+            if (keepAliveStarted) {
+                targetContext.stopService(keepAliveIntent);
+            }
+            if (benchmarkActivity != null) {
+                Activity activityToFinish = benchmarkActivity;
+                runOnMainSync(activityToFinish::finishAndRemoveTask);
+            }
         }
         finish(resultCode, resultBundle);
     }
@@ -86,6 +108,8 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         int warmups = Math.max(1, parseInt(arguments.getString("warmups"), 1));
         int iterations = Math.max(10, parseInt(arguments.getString("iterations"), 10));
         String buildVariant = valueOrDefault(arguments.getString("build_variant"), "unknown");
+        String caseFilter = valueOrDefault(arguments.getString("case_filter"), "ALL")
+                .toUpperCase(Locale.US);
 
         File tempDir = new File(getTargetContext().getCacheDir(), "wsjtx3-benchmark");
         File dataDir = new File(getTargetContext().getFilesDir(), "wsjtx3-benchmark");
@@ -109,12 +133,17 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         report.put("schema_version", 1);
         report.put("passed", true);
         report.put("build_variant", buildVariant);
+        report.put("case_filter", caseFilter);
         report.put("warmup_count", warmups);
         report.put("iteration_count", iterations);
         report.put("device", deviceInfo());
 
         JSONArray caseReports = new JSONArray();
         for (BenchmarkCase benchmarkCase : cases) {
+            if (!"ALL".equals(caseFilter)
+                    && !benchmarkCase.name.toUpperCase(Locale.US).startsWith(caseFilter)) {
+                continue;
+            }
             File assetFile = copyAssetToCache(benchmarkCase.assetPath, benchmarkCase.name + "-source.wav");
             PcmWave source = readPcm16Mono(assetFile);
             if (source.sampleRate != TARGET_SAMPLE_RATE) {
@@ -226,14 +255,15 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         if (failure.get() != null) { throw new RuntimeException(failure.get()); }
         ParsedReport parsed = parseNativeReport(report.get());
         return new DecodeMeasurement(elapsedMs, parsed.count, parsed.sha256,
-                peakJavaHeap, peakNativeHeap, peakPss, peakRss);
+                peakJavaHeap, peakNativeHeap, peakPss, peakRss, report.get());
     }
 
     private static void assertDecode(BenchmarkCase benchmarkCase, DecodeMeasurement measurement) {
         if (measurement.resultCount != benchmarkCase.expectedCount) {
             throw new IllegalStateException(String.format(Locale.US,
-                    "%s count mismatch: expected=%d actual=%d",
-                    benchmarkCase.name, benchmarkCase.expectedCount, measurement.resultCount));
+                    "%s count mismatch: expected=%d actual=%d%n%s",
+                    benchmarkCase.name, benchmarkCase.expectedCount, measurement.resultCount,
+                    measurement.nativeReport));
         }
         if (measurement.resultSha256 == null || measurement.resultSha256.isEmpty()) {
             throw new IllegalStateException(benchmarkCase.name + " empty result hash");
@@ -551,10 +581,11 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
         final long peakNativeHeapBytes;
         final long peakPssBytes;
         final long peakRssBytes;
+        final String nativeReport;
 
         DecodeMeasurement(double elapsedMs, int resultCount, String resultSha256,
-                          long peakJavaHeapBytes, long peakNativeHeapBytes,
-                          long peakPssBytes, long peakRssBytes) {
+                           long peakJavaHeapBytes, long peakNativeHeapBytes,
+                           long peakPssBytes, long peakRssBytes, String nativeReport) {
             this.elapsedMs = elapsedMs;
             this.resultCount = resultCount;
             this.resultSha256 = resultSha256;
@@ -562,6 +593,7 @@ public final class FtxDeviceBenchmarkInstrumentation extends Instrumentation {
             this.peakNativeHeapBytes = peakNativeHeapBytes;
             this.peakPssBytes = peakPssBytes;
             this.peakRssBytes = peakRssBytes;
+            this.nativeReport = nativeReport;
         }
 
         JSONObject toJson(int index) throws Exception {
