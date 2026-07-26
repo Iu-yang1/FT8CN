@@ -1,5 +1,7 @@
 subroutine ft8_downsample(dd,newdat,f0,c1)
 
+  use iso_c_binding, only: c_float, c_float_complex, c_loc, c_f_pointer
+
 ! Downconvert to complex data sampled at 200 Hz ==> 32 samples/symbol
 
   parameter (NMAX=15*12000,NSPS=1920)
@@ -7,13 +9,16 @@ subroutine ft8_downsample(dd,newdat,f0,c1)
   
   logical newdat,first
   complex c1(0:NFFT2-1)
-  complex cx(0:NFFT1/2)
-  real dd(NMAX),x(NFFT1+2),taper(0:100)
+  complex shifted(0:NFFT2-1)
+  complex(c_float_complex), pointer, save :: cx(:)
+  real dd(NMAX),taper(0:100)
+  real(c_float), target, save :: x(NFFT1+2)
   data first/.true./
-  save x,cx,first,taper
-  equivalence (x,cx)
+  save first,taper
 
   if(first) then
+! 以标准 C 指针关联表达实数原位 FFT 工作区，避免 EQUIVALENCE 在 Flang -O2 下被错误优化。
+     call c_f_pointer(c_loc(x(1)),cx,(/NFFT1/2+1/))
      pi=4.0*atan(1.0)
      do i=0,100
        taper(i)=0.5*(1.0+cos(i*pi/100))
@@ -37,12 +42,17 @@ subroutine ft8_downsample(dd,newdat,f0,c1)
   k=0
   c1=0.
   do i=ib,it
-   c1(k)=cx(i)
+   c1(k)=cx(i+1)
    k=k+1
   enddo
   c1(0:100)=c1(0:100)*taper(100:0:-1)
   c1(k-1-100:k-1)=c1(k-1-100:k-1)*taper
-  c1=cshift(c1,i0-ib)
+! 显式循环规避 Flang -O2 对零下标复数数组 CSHIFT 的错误 lowering。
+  ishift=modulo(i0-ib,NFFT2)
+  do i=0,NFFT2-1
+     shifted(i)=c1(modulo(i+ishift,NFFT2))
+  enddo
+  c1=shifted
   call four2a(c1,NFFT2,1,1,1)            !c2c FFT back to time domain
   fac=1.0/sqrt(float(NFFT1)*NFFT2)
   c1=fac*c1

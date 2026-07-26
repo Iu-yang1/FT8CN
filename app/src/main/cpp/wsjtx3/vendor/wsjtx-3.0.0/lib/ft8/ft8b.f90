@@ -33,6 +33,7 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
   integer graymap(0:7)
   integer iloc(1)
   complex cd0(0:3199)
+  complex cd_shifted(0:NP2-1)
   complex ctwk(32)
   complex csymb(32)
   complex cs(0:7,NN)
@@ -168,7 +169,10 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
   enddo
   a=0.0
   a(1)=-delfbest
-  call twkfreq1(cd0,NP2,fs2,a,cd0)
+! Fortran 不允许不同 dummy argument 通过同一实际数组发生读写别名；
+! 独立输出缓冲区可避免 Flang -O2 重排循环后破坏候选的局部同步数据。
+  call twkfreq1(cd0,NP2,fs2,a,cd_shifted)
+  cd0(0:NP2-1)=cd_shifted
   f1=f1+delfbest                           !Improved estimate of DF
 
   call timer('ft8_down',0)
