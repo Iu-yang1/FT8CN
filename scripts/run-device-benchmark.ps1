@@ -208,11 +208,15 @@ try {
     New-Item -ItemType Directory -Force -Path $assetDirectory | Out-Null
     foreach ($mode in @('FT8', 'FT4', 'Q65')) {
         $destination = $assetMap[$mode]
+        $source = Join-Path $repoRoot ([string]$modeSamples[$mode].local_path)
         if (Test-Path -LiteralPath $destination) {
-            throw "Refusing to overwrite pre-existing Android test asset: $destination"
+            if ((Get-Ft8cnFileSha256 $destination) -ne (Get-Ft8cnFileSha256 $source)) {
+                throw "Refusing to overwrite a different Android test asset: $destination"
+            }
+            Write-Host "Reusing verified Android test asset: $destination"
+            continue
         }
-        Copy-Item -LiteralPath (Join-Path $repoRoot ([string]$modeSamples[$mode].local_path)) `
-            -Destination $destination
+        Copy-Item -LiteralPath $source -Destination $destination
         $createdAssets.Add($destination)
     }
 

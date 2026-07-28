@@ -160,11 +160,11 @@ public class MyCallingFragment extends Fragment {
         if (binding == null) {
             return;
         }
-        boolean q65Active = GeneralVariables.getSignalMode() == FT8Common.Q65_MODE;
         binding.rbQ65.setText("Q65");
-        binding.q65ConfigButton.setVisibility(q65Active ? View.VISIBLE : View.GONE);
-        binding.q65ConfigButton.setEnabled(q65Active);
-        binding.q65ConfigButton.setAlpha(q65Active ? 1.0f : 0.45f);
+        // Q65 在阶段 5 迁移到独立 EME 页面，Call 页面只呈现 FT8/FT4。
+        binding.rbQ65.setVisibility(View.GONE);
+        binding.q65ConfigButton.setVisibility(View.GONE);
+        binding.q65ConfigButton.setEnabled(false);
         binding.q65ConfigButton.setText(getQ65ConfigLabel());
     }
 
@@ -172,6 +172,7 @@ public class MyCallingFragment extends Fragment {
         if (binding == null) {
             return;
         }
+        binding.emeAssistButton.setVisibility(View.GONE);
         EmeTrackingResult result = mainViewModel == null || mainViewModel.emeAssistController == null
                 ? null
                 : mainViewModel.emeAssistController.getTrackingResult();
@@ -1220,10 +1221,14 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * Switch FT8 / FT4 / Q65 signal mode.
+     * 在 Call 页面原子切换 FT8 / FT4 模式。
      */
     @SuppressLint("NotifyDataSetChanged")
     private void switchSignalMode(int mode) {
+        if (mode != FT8Common.FT8_MODE && mode != FT8Common.FT4_MODE) {
+            Log.w(TAG, "Call page rejected non-FT8/FT4 mode: " + mode);
+            mode = FT8Common.FT8_MODE;
+        }
         if (GeneralVariables.getSignalMode() == mode) {
             updateSignalModeUI();
             return;
@@ -1239,9 +1244,6 @@ public class MyCallingFragment extends Fragment {
     private int getSignalModeButtonId(int mode) {
         if (mode == FT8Common.FT4_MODE) {
             return R.id.rbFt4;
-        }
-        if (mode == FT8Common.Q65_MODE) {
-            return R.id.rbQ65;
         }
         return R.id.rbFt8;
     }
@@ -1265,6 +1267,17 @@ public class MyCallingFragment extends Fragment {
         updateQ65ConfigUi();
         updateEmeAssistButtonUi();
 
+        Long currentUtc = mainViewModel == null ? null : mainViewModel.timerSec.getValue();
+        if (currentUtc != null) {
+            binding.timerTextView.setText("[" + getCurrentModeLabel() + "] "
+                    + UtcTimer.getTimeStr(currentUtc));
+        }
+
+        Integer currentSequential = mainViewModel == null || mainViewModel.ft8TransmitSignal == null
+                ? null
+                : mainViewModel.ft8TransmitSignal.mutableSequential.getValue();
+        updateTransmitSequentialLabel(currentSequential);
+
         // Refresh the base-frequency label for the active mode.
         binding.baseFrequencyTextView.setText(String.format(
                 "[%s] " + GeneralVariables.getStringFromResource(R.string.sound_frequency_is),
@@ -1287,12 +1300,38 @@ public class MyCallingFragment extends Fragment {
         }
     }
 
+    /**
+     * 发射序号和模式来自两个独立状态源，模式切换时也必须主动刷新，避免显示旧模式。
+     */
+    @SuppressLint("DefaultLocale")
+    private void updateTransmitSequentialLabel(Integer sequential) {
+        if (binding == null || sequential == null) {
+            return;
+        }
+        if (isExperimentalManualTxMode()) {
+            binding.transmittingSequentialTextView.setText(
+                    "[" + getCurrentModeLabel() + "] MANUAL");
+            return;
+        }
+        binding.transmittingSequentialTextView.setText(
+                String.format("[%s] " + GeneralVariables.getStringFromResource(R.string.transmission_sequence),
+                        getCurrentModeLabel(),
+                        sequential));
+    }
+
     @SuppressLint("NotifyDataSetChanged")
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
         mainViewModel = MainViewModel.getInstance(this);
         binding = FragmentMyCallingBinding.inflate(inflater, container, false);
+
+        // Q65 使用独立 EME 工作台；进入 Call 时不沿用上一页的 Q65 时序。
+        if (GeneralVariables.getSignalMode() != FT8Common.FT8_MODE
+                && GeneralVariables.getSignalMode() != FT8Common.FT4_MODE) {
+            GeneralVariables.setSignalMode(FT8Common.FT8_MODE);
+            restartForModeRuntimeChange();
+        }
 
         // Show the spectrum panel in landscape mode.
         if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -1331,8 +1370,6 @@ public class MyCallingFragment extends Fragment {
             int mode;
             if (checkedId == R.id.rbFt4) {
                 mode = FT8Common.FT4_MODE;
-            } else if (checkedId == R.id.rbQ65) {
-                mode = FT8Common.Q65_MODE;
             } else {
                 mode = FT8Common.FT8_MODE;
             }
@@ -1568,18 +1605,9 @@ public class MyCallingFragment extends Fragment {
 
         // Observe transmit-sequence changes.
         mainViewModel.ft8TransmitSignal.mutableSequential.observe(getViewLifecycleOwner(), new Observer<Integer>() {
-            @SuppressLint("DefaultLocale")
             @Override
             public void onChanged(Integer integer) {
-                if (isExperimentalManualTxMode()) {
-                    binding.transmittingSequentialTextView.setText(
-                            "[" + getCurrentModeLabel() + "] MANUAL");
-                    return;
-                }
-                binding.transmittingSequentialTextView.setText(
-                        String.format("[%s] " + GeneralVariables.getStringFromResource(R.string.transmission_sequence),
-                                getCurrentModeLabel(),
-                                integer));
+                updateTransmitSequentialLabel(integer);
             }
         });
 

@@ -12,8 +12,8 @@
 | 0 仓库、基线、联合审查、工具链和合规 | 完成 | Host/oracle/Gradle PASS；`BLOCKED_DEVICE`、`BLOCKED_SANITIZER`、`BLOCKED_Q65_STREAMING` | `a4aa090a` |
 | 1 Kotlin 功能架构和数据基础 | 完成 | JVM/迁移/导航、Debug/Release、DSP 回归 PASS；`BLOCKED_DEVICE_LEAK` | `888738a6` |
 | 2 NTP/GNSS 时间纪律和 slot 调度 | 完成 | fake clock、本地 NTP mock、GNSS 转换、slot、DSP/oracle PASS；`BLOCKED_DEVICE` | `fac3c4c0` |
-| 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 完成 | API 28 AArch64 ELF、fake rig/rigctld、PTT 安全、device FT8 PASS；`BLOCKED_HARDWARE_RIG` | 本阶段提交 |
-| 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 待开始 | oracle、状态机、纯噪声、性能 | 待提交 |
+| 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 完成 | API 28 AArch64 ELF、fake rig/rigctld、PTT 安全、device FT8 PASS；`BLOCKED_HARDWARE_RIG` | `dab521a4` |
+| 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 完成 | oracle、状态机、纯噪声、Debug/Release 真机矩阵 PASS；`BLOCKED_HARDWARE_TX` | 本阶段提交 |
 | 5 Q65-EME 页面和生产流式内存 | 待开始 | 300 秒 RX/TX、averaging、内存、回归 | 待提交 |
 | 6 卫星页面、轨道预测和双向 Doppler | 待开始 | SGP4 golden、pass、fake rig、离线缓存 | 待提交 |
 | 7 本地日志、ADIF 和 LoTW | 待开始 | Room、ADIF、幂等上传、签名安全 | 待提交 |
@@ -54,3 +54,12 @@
 - 8 项 radio JVM 测试、Debug/Release、第三方清单、host O2 与官方 jt9 通过；FT8/FT4/Q65 哈希不变，p95 均在阶段门槛内。
 - 真机 Debug FT8 在 12/24/48 kHz 均稳定得到 20 条且哈希一致。实体电台低功率/PTT 与 Android USB fd 机型矩阵记为 `BLOCKED_HARDWARE_RIG`，不伪报硬件 PASS。
 - 详见 `docs/verification/radio-control-2026-07-26.md`。
+
+## 阶段 4 记录
+
+- Call 页面只保留 FT8/FT4；Q65/EME 控件保留实现但隐藏，等待独立 EME 页面接管。
+- 新增自动 QSO 确定性门禁，同一 slot 的 early/full/deep 重复回调只推进一次，同一 slot 最多认领一次自动 TX；模式切换和 stop 会隔离旧会话。
+- 6 项状态机测试、完整 Debug/Release JVM 与 APK、官方 `jt9` FT8 20/20、FT4 16/16、各 200 个纯噪声时隙 0 假解码均通过。
+- 真机 Debug/Release 在 12/24/48 kHz 下：FT8 均为 20 条且哈希一致，FT4 均为 16 条并保持既有每采样率哈希；Release p95 详见阶段报告。
+- Host native 未修改。20 次 FT8 最终 p95 相对阶段 3 增加 2.503%；严格脚本对较早历史参考的一次波动失败已保留，阶段 9 在稳定环境重测，不以降低灵敏度掩盖。
+- 详见 `docs/verification/ft8-ft4-operating-workflow-2026-07-26.md`。

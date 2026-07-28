@@ -147,14 +147,15 @@
 
                     <RadioGroup
                             android:id="@+id/rgSignalMode"
-                            android:layout_width="wrap_content"
+                            android:layout_width="132dp"
                             android:layout_height="wrap_content"
                             android:orientation="horizontal">
 
                         <RadioButton
                                 android:id="@+id/rbFt8"
-                                android:layout_width="wrap_content"
+                                android:layout_width="0dp"
                                 android:layout_height="wrap_content"
+                                android:layout_weight="1"
                                 android:buttonTint="@color/bar_text_view_color"
                                 android:checked="true"
                                 android:minHeight="24dp"
@@ -164,8 +165,9 @@
 
                         <RadioButton
                                 android:id="@+id/rbFt4"
-                                android:layout_width="wrap_content"
+                                android:layout_width="0dp"
                                 android:layout_height="wrap_content"
+                                android:layout_weight="1"
                                 android:buttonTint="@color/bar_text_view_color"
                                 android:minHeight="24dp"
                                 android:text="FT4"
@@ -180,7 +182,8 @@
                                 android:minHeight="24dp"
                                 android:text="Q65"
                                 android:textColor="@color/bar_text_view_color"
-                                android:textSize="12sp" />
+                                android:textSize="12sp"
+                                android:visibility="gone" />
                     </RadioGroup>
 
                     <Button
@@ -212,7 +215,8 @@
                             android:paddingRight="8dp"
                             android:text="@string/eme_assist_button"
                             android:textColor="@color/bar_text_view_color"
-                            android:textSize="11sp" />
+                            android:textSize="11sp"
+                            android:visibility="gone" />
 
                     <CheckBox
                             android:id="@+id/dxpeditionManualCheckBox"
