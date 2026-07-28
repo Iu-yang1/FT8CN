@@ -31,10 +31,10 @@ data class FeatureState(
 )
 
 enum class FeatureDestination(val route: String, val label: String, val shortLabel: String) {
-    CALL("call", "呼叫", "呼"),
-    EME("eme", "月面通信", "月"),
-    SATELLITE("satellite", "卫星", "星"),
-    LOGBOOK("logbook", "日志", "志"),
-    RADIO("radio", "电台", "台"),
+    CALL("call", "FT8 / FT4 呼叫", "呼"),
+    EME("eme", "Q65 月面通信", "月"),
+    SATELLITE("satellite", "卫星工作台", "星"),
+    LOGBOOK("logbook", "日志与 LoTW", "志"),
+    RADIO("radio", "电台控制", "台"),
     SETTINGS("settings", "设置与时间", "设"),
 }

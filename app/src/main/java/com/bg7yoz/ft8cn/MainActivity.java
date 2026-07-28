@@ -52,6 +52,7 @@ import com.bg7yoz.ft8cn.database.OperationBand;
 import com.bg7yoz.ft8cn.databinding.MainActivityBinding;
 import com.bg7yoz.ft8cn.floatview.FloatView;
 import com.bg7yoz.ft8cn.floatview.FloatViewButton;
+import com.bg7yoz.ft8cn.feature.shell.LegacyConsoleLauncher;
 import com.bg7yoz.ft8cn.grid_tracker.GridTrackerMainActivity;
 import com.bg7yoz.ft8cn.log.ImportSharedLogs;
 import com.bg7yoz.ft8cn.log.OnShareLogEvents;
@@ -223,6 +224,7 @@ public class MainActivity extends AppCompatActivity {
                 return true;
             }
         });
+        routeLegacyIntent(getIntent());
 
         binding.welcomTextView.setText(String.format(getString(R.string.version_info)
                 , GeneralVariables.VERSION, GeneralVariables.BUILD_DATE));
@@ -332,6 +334,23 @@ public class MainActivity extends AppCompatActivity {
         // 启动顶部连续进度刷新
         progressHandler.removeCallbacks(progressRunnable);
         progressHandler.post(progressRunnable);
+    }
+
+    private void routeLegacyIntent(Intent intent) {
+        if (navController == null) {
+            return;
+        }
+        int destination = LegacyConsoleLauncher.resolveDestination(intent);
+        if (destination == 0
+                || (navController.getCurrentDestination() != null
+                && navController.getCurrentDestination().getId() == destination)) {
+            return;
+        }
+        try {
+            navController.navigate(destination);
+        } catch (IllegalArgumentException error) {
+            Log.w(TAG, "忽略无效兼容页面跳转: " + destination, error);
+        }
     }
 
     /**
@@ -684,13 +703,18 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (LegacyConsoleLauncher.resolveDestination(intent) != 0) {
+            setIntent(intent);
+            routeLegacyIntent(intent);
+            return;
+        }
         if ("android.hardware.usb.action.USB_DEVICE_ATTACHED".equals(intent.getAction())) {
             mainViewModel.getUsbDevice();
         } else {
             setIntent(intent);
             doReceiveShareFile(getIntent());
         }
-        super.onNewIntent(intent);
     }
 
     @Override

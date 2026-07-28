@@ -12,6 +12,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 录音数据分发器。
@@ -30,8 +31,9 @@ public class HamRecorder {
     private static final int channelConfig = AudioFormat.CHANNEL_IN_MONO;
     private static final int audioFormat = AudioFormat.ENCODING_PCM_FLOAT;
 
-    private boolean isRunning = false;
-    private final ArrayList<VoiceDataMonitor> voiceDataMonitorList = new ArrayList<>();
+    private volatile boolean isRunning = false;
+    private final CopyOnWriteArrayList<VoiceDataMonitor> voiceDataMonitorList =
+            new CopyOnWriteArrayList<>();
     private OnVoiceMonitorChanged onVoiceMonitorChanged = null;
 
     private boolean isMicRecord = true;
@@ -67,11 +69,8 @@ public class HamRecorder {
         }
 
         currentInputSampleRate = normalizeInputSampleRate(sampleRate);
-        ArrayList<VoiceDataMonitor> monitors;
-        synchronized (voiceDataMonitorList) {
-            monitors = new ArrayList<>(voiceDataMonitorList);
-        }
-        for (VoiceDataMonitor monitor : monitors) {
+        // 录音热路径直接遍历稳定快照，避免每个音频块复制监听器列表。
+        for (VoiceDataMonitor monitor : voiceDataMonitorList) {
             if (monitor != null) {
                 monitor.consumeFromSource(buffer, bufferLen, currentInputSampleRate);
             }
@@ -85,8 +84,6 @@ public class HamRecorder {
     @SuppressLint("MissingPermission")
     public void startRecord() {
         if (isMicRecord) {
-            micRecorder.start();
-            currentInputSampleRate = micRecorder.getCurrentSampleRate();
             micRecorder.setOnDataListener(new MicRecorder.OnDataListener() {
                 @Override
                 public void onDataReceived(float[] data, int len) {
@@ -94,6 +91,13 @@ public class HamRecorder {
                     doOnWaveDataReceived(len, data, currentInputSampleRate);
                 }
             });
+            isRunning = true;
+            if (!micRecorder.start()) {
+                isRunning = false;
+                return;
+            }
+            currentInputSampleRate = micRecorder.getCurrentSampleRate();
+            return;
         }
         isRunning = true;
     }
@@ -107,11 +111,7 @@ public class HamRecorder {
 
     private void doDataMonitorChanged() {
         if (onVoiceMonitorChanged != null) {
-            final int count;
-            synchronized (voiceDataMonitorList) {
-                count = voiceDataMonitorList.size();
-            }
-            onVoiceMonitorChanged.onMonitorChanged(count);
+            onVoiceMonitorChanged.onMonitorChanged(voiceDataMonitorList.size());
         }
     }
 
@@ -120,27 +120,21 @@ public class HamRecorder {
             return;
         }
         monitor.cancel();
-        synchronized (voiceDataMonitorList) {
-            voiceDataMonitorList.remove(monitor);
-        }
+        voiceDataMonitorList.remove(monitor);
         doDataMonitorChanged();
     }
 
     public int getVoiceMonitorCount() {
-        synchronized (voiceDataMonitorList) {
-            return voiceDataMonitorList.size();
-        }
+        return voiceDataMonitorList.size();
     }
 
     public ArrayList<VoiceDataMonitor> getVoiceDataMonitors() {
-        synchronized (voiceDataMonitorList) {
-            return new ArrayList<>(voiceDataMonitorList);
-        }
+        return new ArrayList<>(voiceDataMonitorList);
     }
 
     public void stopRecord() {
-        micRecorder.stopRecord();
         isRunning = false;
+        micRecorder.stopRecord();
     }
 
     public VoiceDataMonitor getVoiceData(int duration,
@@ -158,9 +152,7 @@ public class HamRecorder {
                 getVoiceDataDone
         );
         dataMonitor.voiceDataMonitor = dataMonitor;
-        synchronized (voiceDataMonitorList) {
-            voiceDataMonitorList.add(dataMonitor);
-        }
+        voiceDataMonitorList.add(dataMonitor);
         doDataMonitorChanged();
         return dataMonitor;
     }
@@ -186,9 +178,7 @@ public class HamRecorder {
                     getVoiceDataDone
             );
             dataMonitor.voiceDataMonitor = dataMonitor;
-            synchronized (voiceDataMonitorList) {
-                voiceDataMonitorList.add(dataMonitor);
-            }
+            voiceDataMonitorList.add(dataMonitor);
             doDataMonitorChanged();
             return dataMonitor;
         } catch (RuntimeException error) {

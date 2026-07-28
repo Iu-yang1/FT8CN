@@ -17,6 +17,8 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.ui.ToastMessage;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class MicRecorder {
     private static final String TAG = "MicRecorder";
     private static final int DEFAULT_SAMPLE_RATE_IN_HZ = 12000;
@@ -24,10 +26,11 @@ public class MicRecorder {
     private static final int audioFormat = AudioFormat.ENCODING_PCM_FLOAT;
 
     private int bufferSize = 0;
-    private int currentSampleRateInHz = DEFAULT_SAMPLE_RATE_IN_HZ;
-    private AudioRecord audioRecord = null;
-    private boolean isRunning = false;
-    private OnDataListener onDataListener;
+    private volatile int currentSampleRateInHz = DEFAULT_SAMPLE_RATE_IN_HZ;
+    private final Object recorderLock = new Object();
+    private volatile AudioRecord audioRecord = null;
+    private final AtomicBoolean isRunning = new AtomicBoolean(false);
+    private volatile OnDataListener onDataListener;
 
     public interface OnDataListener {
         void onDataReceived(float[] data, int len);
@@ -92,78 +95,110 @@ public class MicRecorder {
         audioRecord = null;
     }
 
-    public void start() {
-        if (isRunning) {
-            return;
-        }
-        if (!ensureAudioRecord()) {
-            ToastMessage.show(String.format(
-                    GeneralVariables.getStringFromResource(R.string.recorder_cannot_record),
-                    "AudioRecord init failed"
-            ));
-            return;
-        }
-
-        final float[] buffer = new float[Math.max(1, bufferSize / 4)];
-        try {
-            audioRecord.startRecording();
-        } catch (Exception e) {
-            ToastMessage.show(String.format(
-                    GeneralVariables.getStringFromResource(R.string.recorder_cannot_record),
-                    e.getMessage()
-            ));
-            Log.d(TAG, "startRecord: " + e.getMessage());
-            return;
-        }
-
-        isRunning = true;
-
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                while (isRunning) {
-                    if (audioRecord == null
-                            || audioRecord.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
-                        isRunning = false;
-                        Log.d(TAG, String.format(
-                                "录音失败，状态码=%d, sampleRate=%d",
-                                audioRecord == null ? -1 : audioRecord.getRecordingState(),
-                                currentSampleRateInHz
-                        ));
-                        break;
-                    }
-
-                    int bufferReadResult = audioRecord.read(
-                            buffer,
-                            0,
-                            buffer.length,
-                            AudioRecord.READ_BLOCKING
-                    );
-
-                    if (onDataListener != null && bufferReadResult > 0) {
-                        onDataListener.onDataReceived(buffer, bufferReadResult);
-                    }
-                }
-
-                try {
-                    if (audioRecord != null
-                            && audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
-                        audioRecord.stop();
-                    }
-                } catch (Exception e) {
-                    ToastMessage.show(String.format(
-                            GeneralVariables.getStringFromResource(R.string.recorder_stop_record_error),
-                            e.getMessage()
-                    ));
-                    Log.d(TAG, "stopRecord: " + e.getMessage());
-                }
+    public boolean start() {
+        final AudioRecord recorder;
+        final int readBufferSize;
+        synchronized (recorderLock) {
+            if (isRunning.get()) {
+                return true;
             }
-        }).start();
+            if (!ensureAudioRecord()) {
+                ToastMessage.show(String.format(
+                        GeneralVariables.getStringFromResource(R.string.recorder_cannot_record),
+                        "AudioRecord init failed"
+                ));
+                return false;
+            }
+            recorder = audioRecord;
+            readBufferSize = Math.max(1, bufferSize / 4);
+            try {
+                recorder.startRecording();
+            } catch (Exception e) {
+                releaseAudioRecord();
+                ToastMessage.show(String.format(
+                        GeneralVariables.getStringFromResource(R.string.recorder_cannot_record),
+                        e.getMessage()
+                ));
+                Log.d(TAG, "startRecord: " + e.getMessage());
+                return false;
+            }
+            isRunning.set(true);
+        }
+
+        Thread recordThread = new Thread(
+                () -> recordLoop(recorder, new float[readBufferSize]),
+                "FT8CN-AudioRecord");
+        recordThread.start();
+        return true;
     }
 
     public void stopRecord() {
-        isRunning = false;
-        releaseAudioRecord();
+        isRunning.set(false);
+        final AudioRecord recorder;
+        synchronized (recorderLock) {
+            recorder = audioRecord;
+            audioRecord = null;
+        }
+        stopAndRelease(recorder);
+    }
+
+    private void recordLoop(AudioRecord recorder, float[] buffer) {
+        try {
+            // 录音重启后，旧线程只能退出自己的 recorder，不能干扰新会话。
+            while (isRunning.get() && audioRecord == recorder) {
+                if (recorder.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+                    Log.d(TAG, String.format(
+                            "录音停止，状态码=%d, sampleRate=%d",
+                            recorder.getRecordingState(),
+                            currentSampleRateInHz));
+                    break;
+                }
+                final int count = recorder.read(
+                        buffer,
+                        0,
+                        buffer.length,
+                        AudioRecord.READ_BLOCKING);
+                final OnDataListener listener = onDataListener;
+                if (listener != null && count > 0
+                        && isRunning.get() && audioRecord == recorder) {
+                    listener.onDataReceived(buffer, count);
+                }
+            }
+        } catch (RuntimeException error) {
+            if (isRunning.get() && audioRecord == recorder) {
+                Log.e(TAG, "录音线程异常", error);
+            }
+        } finally {
+            boolean releaseRecorder = false;
+            synchronized (recorderLock) {
+                if (audioRecord == recorder) {
+                    audioRecord = null;
+                    isRunning.set(false);
+                    releaseRecorder = true;
+                }
+            }
+            if (releaseRecorder) {
+                stopAndRelease(recorder);
+            }
+        }
+    }
+
+    private void stopAndRelease(AudioRecord recorder) {
+        if (recorder == null) {
+            return;
+        }
+        try {
+            if (recorder.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                recorder.stop();
+            }
+        } catch (RuntimeException error) {
+            Log.d(TAG, "stopRecord: " + error.getMessage());
+        }
+        try {
+            recorder.release();
+        } catch (RuntimeException error) {
+            Log.d(TAG, "releaseRecord: " + error.getMessage());
+        }
     }
 
     public OnDataListener getOnDataListener() {

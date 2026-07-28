@@ -7,19 +7,25 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bg7yoz.ft8cn.core.time.ClockSnapshot
 import com.bg7yoz.ft8cn.core.time.DisciplinedClockRegistry
+import com.bg7yoz.ft8cn.feature.shell.LegacyConsoleDestination
+import com.bg7yoz.ft8cn.feature.shell.LegacyConsoleLauncher
 import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen() {
+    val context = LocalContext.current
     val clock by DisciplinedClockRegistry.state().collectAsStateWithLifecycle()
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -28,9 +34,17 @@ fun SettingsScreen() {
         Text(text = "设置与时间", style = MaterialTheme.typography.headlineMedium)
         ClockStatusCard(clock, DisciplinedClockRegistry.isAutomaticTransmitAllowed())
         Text(
-            text = "原设置页在迁移期间继续保留；自动发射只在 NTP/GNSS 时间健康时允许。",
+            text = "完整设置仍由兼容操作台承载；自动发射只在 NTP/GNSS 时间健康时允许。",
             style = MaterialTheme.typography.bodyLarge,
         )
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { LegacyConsoleLauncher.open(context, LegacyConsoleDestination.SETTINGS) },
+        ) { Text("打开完整设置") }
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { LegacyConsoleLauncher.open(context, LegacyConsoleDestination.HISTORY) },
+        ) { Text("打开兼容通联记录") }
     }
 }
 

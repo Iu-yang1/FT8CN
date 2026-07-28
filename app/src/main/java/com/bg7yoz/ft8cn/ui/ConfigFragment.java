@@ -24,6 +24,7 @@ import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Observer;
 
 import com.bg7yoz.ft8cn.FAQActivity;
+import com.bg7yoz.ft8cn.feature.shell.ModernShellActivity;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
@@ -444,6 +445,8 @@ public class ConfigFragment extends Fragment {
                 startActivity(intent);
             }
         });
+        binding.modernWorkbenchButton.setOnClickListener(view ->
+                startActivity(new Intent(requireContext(), ModernShellActivity.class)));
 
         //梅登海德网格
         binding.inputMyGridEdit.removeTextChangedListener(onGridEditorChanged);

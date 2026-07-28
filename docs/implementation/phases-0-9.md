@@ -16,8 +16,8 @@
 | 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 完成 | oracle、状态机、纯噪声、Debug/Release 真机矩阵 PASS；`BLOCKED_HARDWARE_TX` | `68cf7b29` |
 | 5 Q65-EME 页面和生产流式内存 | 完成 | 300 秒 RX/TX、averaging、内存、host/oracle/Debug/Release 真机回归 PASS；`BLOCKED_SANITIZER` | `16e4a26c` |
 | 6 卫星页面、轨道预测和双向 Doppler | 完成 | SGP4/Skyfield golden、pass、fake rig、离线缓存、Debug/Release/device/DSP PASS；`BLOCKED_HARDWARE_RIG` | `2bd9b82e` |
-| 7 本地日志、ADIF 和 LoTW | 完成 | Room v4、ADIF 3.1.5、签名 TQ8、幂等上传与 mock PASS；`BLOCKED_TQSL_EMBEDDED_SIGNING`、`BLOCKED_LOTW_ACCOUNT` | 本阶段提交 |
-| 8 Kotlin/Compose Material 3 UI 和全局优化 | 待开始 | UI/旋转/恢复、泄漏、宏基准、DSP 回归 | 待提交 |
+| 7 本地日志、ADIF 和 LoTW | 完成 | Room v4、ADIF 3.1.5、签名 TQ8、幂等上传与 mock PASS；`BLOCKED_TQSL_EMBEDDED_SIGNING`、`BLOCKED_LOTW_ACCOUNT` | `11f8d86b` |
+| 8 Kotlin/Compose Material 3 UI 和全局优化 | 部分完成 | DSP/device PASS；`BLOCKED_DEVICE_UI_UNLOCK`、`BLOCKED_COMPLETE_COMPOSE_MIGRATION`、`BLOCKED_BASELINE_PROFILE_GENERATION` | 本阶段提交 |
 | 9 集成验收、发布门禁和最终交付 | 待开始 | 全量 verify、device、ELF、SBOM、secret | 待提交 |
 
 状态只能在该阶段实现和门禁完成后改为“完成”。外部硬件、账户或平台工具缺失时，记录精确的 `BLOCKED_*`，并保留已完成的 fake、离线或 host 证据。
@@ -90,3 +90,18 @@
 - 完整发布回归状态为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`；官方 `jt9` 对 FT8 20 条、FT4 16 条逐条多重集合匹配，Q65 4 条固定结果保持不变。
 - Host O2 的 FT8/FT4/Q65 p50/p95 分别为 522.145/548.953、261.002/269.214、221.922/233.311 ms；FT8、FT4 相对历史 p95 为 +1.075%、-0.096%，均未超过 3% 门槛。
 - 详见 `docs/verification/logbook-lotw-2026-07-28.md`。
+
+## 阶段 8 记录
+
+- Material 3 工作台提供 Call、EME、Satellite、Logbook、Radio、Settings 六入口；Call 只包含
+  FT8/FT4，手机抽屉和宽屏 NavigationRail 使用同一稳定路由。
+- 修复 AudioRecord 快速停止/重启竞态，monitor 热路径不再逐 block 复制列表；频谱固定复用
+  640-bin、`Rect[]` 和 bitmap，并在 View 生命周期边界释放/重建。
+- Debug/Release 各 88 项 JVM、APK、lint、host CTest、官方 `jt9` 和真机 Debug/Release
+  12/24/48 kHz 门禁通过；FT8/FT4/Q65 哈希保持不变。
+- Host O2 FT8/FT4/Q65 p50/p95 为 523.227/530.964、260.421/271.920、
+  218.259/218.943 ms；FT8/FT4 p95 相对阶段 7为 -3.277%/+1.005%。
+- 安全锁屏和 Oplus 后台 Activity 门禁阻止 Compose 真机交互/宏基准；默认入口仍保留完整兼容
+  操作台，分别记录 `BLOCKED_DEVICE_UI_UNLOCK`、`BLOCKED_COMPLETE_COMPOSE_MIGRATION` 和
+  `BLOCKED_BASELINE_PROFILE_GENERATION`，不伪报完成。
+- 详见 `docs/verification/compose-memory-2026-07-29.md`。

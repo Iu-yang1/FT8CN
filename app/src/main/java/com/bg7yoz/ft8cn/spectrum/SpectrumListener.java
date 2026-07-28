@@ -10,6 +10,8 @@ import androidx.lifecycle.MutableLiveData;
 import com.bg7yoz.ft8cn.wave.HamRecorder;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 
+import java.util.Arrays;
+
 public class SpectrumListener {
     private static final String TAG = "SpectrumListener";
     public static final int DISPLAY_MIN_FREQUENCY_HZ = 0;
@@ -72,6 +74,22 @@ public class SpectrumListener {
             return new int[0];
         }
         int[] display = new int[DISPLAY_BIN_COUNT];
+        normalizeDisplayBins(source, validLength, display);
+        return display;
+    }
+
+    /**
+     * 把频谱写入调用方复用的固定显示缓冲，避免每个 160 ms 帧创建新数组。
+     */
+    public static int normalizeDisplayBins(int[] source, int sourceLength, int[] display) {
+        int validLength = Math.max(0, Math.min(source == null ? 0 : source.length, sourceLength));
+        if (display == null || display.length < DISPLAY_BIN_COUNT) {
+            return 0;
+        }
+        if (validLength <= 0) {
+            Arrays.fill(display, 0, DISPLAY_BIN_COUNT, 0);
+            return 0;
+        }
         for (int i = 0; i < DISPLAY_BIN_COUNT; i++) {
             int start = Math.round(i * validLength / (float) DISPLAY_BIN_COUNT);
             int end = Math.round((i + 1) * validLength / (float) DISPLAY_BIN_COUNT);
@@ -90,7 +108,7 @@ public class SpectrumListener {
             }
             display[i] = peak;
         }
-        return display;
+        return DISPLAY_BIN_COUNT;
     }
 }
 
