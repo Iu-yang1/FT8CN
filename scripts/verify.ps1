@@ -44,6 +44,7 @@ $deviceBlocked = $false
 $sanitizerBlocked = $false
 $corpusBlocked = $false
 $q65StreamingBlocked = $true
+$q65StreamingPassed = $false
 $tools = $null
 $oracleFrequencyToleranceHz = 3.2
 $oracleDtToleranceSec = 0.06
@@ -633,7 +634,13 @@ if ($SkipDeviceGate) {
             Assert-LastExitCode 'Android device benchmark'
             $deviceData = Get-Content -LiteralPath $deviceReport -Raw | ConvertFrom-Json
             if (-not $deviceData.passed) { throw 'device benchmark report did not pass' }
+            if ($deviceData.PSObject.Properties.Name -notcontains 'q65_streaming' `
+                    -or -not $deviceData.q65_streaming.passed) {
+                throw 'Q65 bounded streaming device gate did not pass'
+            }
             $devicePassed = $true
+            $q65StreamingPassed = $true
+            $q65StreamingBlocked = $false
             Add-Gate 'Android device benchmark' 'PASS' 'debug/release native device gates passed' $deviceData
         } catch {
             $hasFailure = $true
@@ -642,8 +649,13 @@ if ($SkipDeviceGate) {
     }
 }
 
-Add-Gate 'Q65 long-period streaming' 'BLOCKED_Q65_STREAMING' `
-    'bounded chunk resampler is verified, but production RX capture and AudioTrack TX remain full-slot paths'
+if ($q65StreamingPassed) {
+    Add-Gate 'Q65 long-period streaming' 'PASS' `
+        'production RX uses 4096-sample chunks into the final 12 kHz frame; TX uses bounded MODE_STREAM chunks'
+} else {
+    Add-Gate 'Q65 long-period streaming' 'BLOCKED_Q65_STREAMING' `
+        'production code and internal tests exist, but Debug/Release device evidence is unavailable'
+}
 
 $finalStates = New-Object System.Collections.Generic.List[string]
 if ($hostPassed) { $finalStates.Add('HOST_RC_PASS') }

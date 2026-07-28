@@ -14,7 +14,7 @@ import android.widget.TextView;
  * <p>该 Activity 不读取用户数据、不启动录音，也不执行任何解码。</p>
  */
 public final class DeviceBenchmarkActivity extends Activity {
-    static Intent buildStartIntent(Context context) {
+    public static Intent buildStartIntent(Context context) {
         return new Intent(context, DeviceBenchmarkActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
     }

@@ -13,8 +13,8 @@
 | 1 Kotlin 功能架构和数据基础 | 完成 | JVM/迁移/导航、Debug/Release、DSP 回归 PASS；`BLOCKED_DEVICE_LEAK` | `888738a6` |
 | 2 NTP/GNSS 时间纪律和 slot 调度 | 完成 | fake clock、本地 NTP mock、GNSS 转换、slot、DSP/oracle PASS；`BLOCKED_DEVICE` | `fac3c4c0` |
 | 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 完成 | API 28 AArch64 ELF、fake rig/rigctld、PTT 安全、device FT8 PASS；`BLOCKED_HARDWARE_RIG` | `dab521a4` |
-| 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 完成 | oracle、状态机、纯噪声、Debug/Release 真机矩阵 PASS；`BLOCKED_HARDWARE_TX` | 本阶段提交 |
-| 5 Q65-EME 页面和生产流式内存 | 待开始 | 300 秒 RX/TX、averaging、内存、回归 | 待提交 |
+| 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 完成 | oracle、状态机、纯噪声、Debug/Release 真机矩阵 PASS；`BLOCKED_HARDWARE_TX` | `68cf7b29` |
+| 5 Q65-EME 页面和生产流式内存 | 完成 | 300 秒 RX/TX、averaging、内存、host/oracle/Debug/Release 真机回归 PASS；`BLOCKED_SANITIZER` | 本阶段提交 |
 | 6 卫星页面、轨道预测和双向 Doppler | 待开始 | SGP4 golden、pass、fake rig、离线缓存 | 待提交 |
 | 7 本地日志、ADIF 和 LoTW | 待开始 | Room、ADIF、幂等上传、签名安全 | 待提交 |
 | 8 Kotlin/Compose Material 3 UI 和全局优化 | 待开始 | UI/旋转/恢复、泄漏、宏基准、DSP 回归 | 待提交 |
@@ -63,3 +63,12 @@
 - 真机 Debug/Release 在 12/24/48 kHz 下：FT8 均为 20 条且哈希一致，FT4 均为 16 条并保持既有每采样率哈希；Release p95 详见阶段报告。
 - Host native 未修改。20 次 FT8 最终 p95 相对阶段 3 增加 2.503%；严格脚本对较早历史参考的一次波动失败已保留，阶段 9 在稳定环境重测，不以降低灵敏度掩盖。
 - 详见 `docs/verification/ft8-ft4-operating-workflow-2026-07-26.md`。
+
+## 阶段 5 记录
+
+- Q65 24/48 kHz RX 改为录音 chunk 直接写入最终 12 kHz slot；300 秒 48 kHz 不再同时持有约 57.6 MB 源数组和 14.4 MB 输出数组。
+- Q65 A-E TX 改为官方 tone 一次生成、连续相位 JNI 分块合成和 `AudioTrack.MODE_STREAM`；Java/native/PCM chunk 均固定为 4096 samples，Q65F 保持诊断限定。
+- 独立 EME Compose 页面展示 A-E、周期、grids、averaging 和三种 WSJT-X Doppler 组合；Call 页仍不混入 Q65。
+- Host FT8/FT4/Q65 哈希不变，官方 `jt9` FT8/FT4 严格一致；Debug/Release 真机 12/24/48 kHz 结果一致，Q65 流式 instrumentation 各 7 项通过。
+- 完整门禁状态为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`。高精度月面天文 oracle 与外部 wave transport 流式协议分别记录为 `BLOCKED_EME_EPHEMERIS_ORACLE`、`BLOCKED_Q65_EXTERNAL_STREAMING`，不伪报完成。
+- 详见 `docs/verification/q65-eme-streaming-2026-07-28.md`。

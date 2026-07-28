@@ -23,6 +23,10 @@ import java.util.ArrayList;
 public class HamRecorder {
     private static final String TAG = "HamRecorder";
     private static final int DEFAULT_SAMPLE_RATE_IN_HZ = 12000;
+    private static final int MAX_CAPTURE_DURATION_MS = 300_000;
+    private static final int MAX_CAPTURE_SAMPLE_RATE = 48_000;
+    private static final int MAX_CAPTURE_SAMPLES = MAX_CAPTURE_DURATION_MS
+            / 1000 * MAX_CAPTURE_SAMPLE_RATE;
     private static final int channelConfig = AudioFormat.CHANNEL_IN_MONO;
     private static final int audioFormat = AudioFormat.ENCODING_PCM_FLOAT;
 
@@ -63,10 +67,13 @@ public class HamRecorder {
         }
 
         currentInputSampleRate = normalizeInputSampleRate(sampleRate);
-        ArrayList<VoiceDataMonitor> monitors = new ArrayList<>(voiceDataMonitorList);
+        ArrayList<VoiceDataMonitor> monitors;
+        synchronized (voiceDataMonitorList) {
+            monitors = new ArrayList<>(voiceDataMonitorList);
+        }
         for (VoiceDataMonitor monitor : monitors) {
-            if (monitor != null && voiceDataMonitorList.contains(monitor)) {
-                monitor.onHamRecord.OnReceiveData(buffer, bufferLen);
+            if (monitor != null) {
+                monitor.consumeFromSource(buffer, bufferLen, currentInputSampleRate);
             }
         }
     }
@@ -100,21 +107,35 @@ public class HamRecorder {
 
     private void doDataMonitorChanged() {
         if (onVoiceMonitorChanged != null) {
-            onVoiceMonitorChanged.onMonitorChanged(voiceDataMonitorList.size());
+            final int count;
+            synchronized (voiceDataMonitorList) {
+                count = voiceDataMonitorList.size();
+            }
+            onVoiceMonitorChanged.onMonitorChanged(count);
         }
     }
 
     public void deleteVoiceDataMonitor(VoiceDataMonitor monitor) {
-        voiceDataMonitorList.remove(monitor);
+        if (monitor == null) {
+            return;
+        }
+        monitor.cancel();
+        synchronized (voiceDataMonitorList) {
+            voiceDataMonitorList.remove(monitor);
+        }
         doDataMonitorChanged();
     }
 
     public int getVoiceMonitorCount() {
-        return voiceDataMonitorList.size();
+        synchronized (voiceDataMonitorList) {
+            return voiceDataMonitorList.size();
+        }
     }
 
     public ArrayList<VoiceDataMonitor> getVoiceDataMonitors() {
-        return this.voiceDataMonitorList;
+        synchronized (voiceDataMonitorList) {
+            return new ArrayList<>(voiceDataMonitorList);
+        }
     }
 
     public void stopRecord() {
@@ -125,7 +146,7 @@ public class HamRecorder {
     public VoiceDataMonitor getVoiceData(int duration,
                                          boolean afterDoneRemove,
                                          OnGetVoiceDataDone getVoiceDataDone) {
-        if (!isRunning) {
+        if (!isRunning || getVoiceDataDone == null) {
             return null;
         }
 
@@ -137,9 +158,44 @@ public class HamRecorder {
                 getVoiceDataDone
         );
         dataMonitor.voiceDataMonitor = dataMonitor;
-        voiceDataMonitorList.add(dataMonitor);
+        synchronized (voiceDataMonitorList) {
+            voiceDataMonitorList.add(dataMonitor);
+        }
         doDataMonitorChanged();
         return dataMonitor;
+    }
+
+    /**
+     * Q65 长时隙入口：高采样率数据按录音小块抽取，最终只常驻目标采样率缓冲区。
+     */
+    public VoiceDataMonitor getVoiceDataAtSampleRate(int duration,
+                                                     int targetSampleRate,
+                                                     boolean afterDoneRemove,
+                                                     OnGetVoiceDataDone getVoiceDataDone) {
+        if (!isRunning || getVoiceDataDone == null) {
+            return null;
+        }
+        final int inputSampleRate = getCurrentSampleRate();
+        try {
+            VoiceDataMonitor dataMonitor = new VoiceDataMonitor(
+                    duration,
+                    inputSampleRate,
+                    targetSampleRate,
+                    this,
+                    afterDoneRemove,
+                    getVoiceDataDone
+            );
+            dataMonitor.voiceDataMonitor = dataMonitor;
+            synchronized (voiceDataMonitorList) {
+                voiceDataMonitorList.add(dataMonitor);
+            }
+            doDataMonitorChanged();
+            return dataMonitor;
+        } catch (RuntimeException error) {
+            Log.e(TAG, "create streaming voice monitor failed: inputRate="
+                    + inputSampleRate + ", targetRate=" + targetSampleRate, error);
+            return null;
+        }
     }
 
     public int getCurrentSampleRate() {
@@ -169,24 +225,31 @@ public class HamRecorder {
     static class VoiceDataMonitor {
         private final float[] voiceData;
         private int dataCount;
+        private int inputDataCount;
+        private final int expectedInputSamples;
+        private final int inputSampleRate;
+        private final int targetSampleRate;
+        private final HamRecorder hamRecorder;
+        private final boolean afterDoneRemove;
+        private final OnGetVoiceDataDone onGetVoiceDataDone;
+        private FtxStreamingResampler streamingResampler;
+        private boolean closed;
         public OnHamRecord onHamRecord;
         public VoiceDataMonitor voiceDataMonitor = null;
 
         private static int resolveVoiceBufferLength(int durationMs, int sampleRate) {
-            long requestedSamples = (long) Math.max(0, durationMs)
-                    * (long) Math.max(1, sampleRate)
-                    / 1000L;
-            if (requestedSamples <= 0L) {
-                return 1;
+            if (durationMs <= 0 || durationMs > MAX_CAPTURE_DURATION_MS
+                    || sampleRate <= 0 || sampleRate > MAX_CAPTURE_SAMPLE_RATE) {
+                throw new IllegalArgumentException(
+                        "unsupported capture size: durationMs=" + durationMs
+                                + ", sampleRate=" + sampleRate);
             }
-            if (requestedSamples > Integer.MAX_VALUE) {
-                Log.w(TAG, String.format(
-                        "voice monitor sample request overflow, durationMs=%d, sampleRate=%d, requestedSamples=%d",
-                        durationMs,
-                        sampleRate,
-                        requestedSamples
-                ));
-                return Integer.MAX_VALUE;
+            long requestedSamples = (long) durationMs
+                    * (long) sampleRate
+                    / 1000L;
+            if (requestedSamples <= 0L || requestedSamples > MAX_CAPTURE_SAMPLES) {
+                throw new IllegalArgumentException(
+                        "capture sample count overflow: " + requestedSamples);
             }
             return (int) requestedSamples;
         }
@@ -196,42 +259,148 @@ public class HamRecorder {
                                 HamRecorder hamRecorder,
                                 boolean afterDoneRemove,
                                 OnGetVoiceDataDone onGetVoiceDataDone) {
+            this(duration,
+                    sampleRate,
+                    sampleRate,
+                    hamRecorder,
+                    afterDoneRemove,
+                    onGetVoiceDataDone);
+        }
+
+        public VoiceDataMonitor(int duration,
+                                int inputSampleRate,
+                                int targetSampleRate,
+                                HamRecorder hamRecorder,
+                                boolean afterDoneRemove,
+                                OnGetVoiceDataDone onGetVoiceDataDone) {
             dataCount = 0;
-            final int normalizedSampleRate = sampleRate <= 0 ? DEFAULT_SAMPLE_RATE_IN_HZ : sampleRate;
-            final int requestedSamples = resolveVoiceBufferLength(duration, normalizedSampleRate);
+            inputDataCount = 0;
+            this.inputSampleRate = inputSampleRate <= 0
+                    ? DEFAULT_SAMPLE_RATE_IN_HZ
+                    : inputSampleRate;
+            this.targetSampleRate = targetSampleRate <= 0
+                    ? this.inputSampleRate
+                    : targetSampleRate;
+            this.hamRecorder = hamRecorder;
+            this.afterDoneRemove = afterDoneRemove;
+            this.onGetVoiceDataDone = onGetVoiceDataDone;
+            if (this.inputSampleRate != this.targetSampleRate && !afterDoneRemove) {
+                throw new IllegalArgumentException(
+                        "streaming resample monitor must be one-shot");
+            }
+            expectedInputSamples = resolveVoiceBufferLength(duration, this.inputSampleRate);
+            final int requestedSamples = resolveVoiceBufferLength(duration, this.targetSampleRate);
             voiceData = new float[requestedSamples];
+            if (this.inputSampleRate != this.targetSampleRate) {
+                streamingResampler = new FtxStreamingResampler(
+                        this.inputSampleRate,
+                        this.targetSampleRate);
+            }
             Log.d(TAG, String.format(
-                    "create voice monitor: durationMs=%d, sampleRate=%d, requestedSamples=%d, afterDoneRemove=%s",
+                    "create voice monitor: durationMs=%d, inputRate=%d, targetRate=%d, inputSamples=%d, outputSamples=%d, streaming=%s, afterDoneRemove=%s",
                     duration,
-                    normalizedSampleRate,
+                    this.inputSampleRate,
+                    this.targetSampleRate,
+                    expectedInputSamples,
                     requestedSamples,
+                    streamingResampler == null ? "N" : "Y",
                     afterDoneRemove ? "Y" : "N"
             ));
 
-            onHamRecord = new OnHamRecord() {
-                @Override
-                public void OnReceiveData(float[] data, int size) {
-                    int remainingSize = size + dataCount - voiceData.length;
-                    for (int i = 0; (i < size) && (dataCount < voiceData.length); i++) {
-                        voiceData[dataCount] = data[i];
-                        dataCount++;
-                    }
+            onHamRecord = (data, size) -> consumeFromSource(data, size, this.inputSampleRate);
+        }
 
-                    if (dataCount >= voiceData.length) {
-                        onGetVoiceDataDone.onGetDone(voiceData);
-                        if (afterDoneRemove) {
-                            hamRecorder.deleteVoiceDataMonitor(voiceDataMonitor);
-                        } else {
-                            dataCount = 0;
-                            if (remainingSize > 0) {
-                                float[] remainingData = new float[remainingSize];
-                                System.arraycopy(data, size - remainingSize, remainingData, 0, remainingSize);
-                                OnReceiveData(remainingData, remainingSize);
-                            }
-                        }
+        private void consumeFromSource(float[] data, int size, int sourceSampleRate) {
+            if (sourceSampleRate != inputSampleRate) {
+                Log.w(TAG, "capture sample rate changed mid-slot: expected="
+                        + inputSampleRate + ", actual=" + sourceSampleRate);
+                hamRecorder.deleteVoiceDataMonitor(voiceDataMonitor);
+                return;
+            }
+            consume(data, size);
+        }
+
+        private synchronized void consume(float[] data, int size) {
+            if (closed || data == null || size <= 0) {
+                return;
+            }
+            int available = Math.min(size, data.length);
+            if (streamingResampler != null) {
+                consumeStreaming(data, available);
+                return;
+            }
+            int offset = 0;
+            while (!closed && offset < available) {
+                int copyCount = Math.min(available - offset, voiceData.length - dataCount);
+                System.arraycopy(data, offset, voiceData, dataCount, copyCount);
+                offset += copyCount;
+                dataCount += copyCount;
+                inputDataCount += copyCount;
+                if (dataCount == voiceData.length) {
+                    publishCompletedSlot();
+                    if (!afterDoneRemove && !closed) {
+                        dataCount = 0;
+                        inputDataCount = 0;
                     }
                 }
-            };
+            }
+        }
+
+        private void consumeStreaming(float[] data, int available) {
+            int accepted = Math.min(available, expectedInputSamples - inputDataCount);
+            if (accepted <= 0) {
+                return;
+            }
+            try {
+                int written = streamingResampler.process(
+                        data,
+                        0,
+                        accepted,
+                        voiceData,
+                        dataCount,
+                        voiceData.length - dataCount);
+                inputDataCount += accepted;
+                dataCount += written;
+                if (inputDataCount == expectedInputSamples) {
+                    dataCount += streamingResampler.finish(
+                            voiceData,
+                            dataCount,
+                            voiceData.length - dataCount);
+                    if (dataCount != voiceData.length) {
+                        throw new IllegalStateException(
+                                "stream output length mismatch: " + dataCount + " != " + voiceData.length);
+                    }
+                    publishCompletedSlot();
+                }
+            } catch (RuntimeException error) {
+                Log.e(TAG, "streaming voice monitor failed", error);
+                hamRecorder.deleteVoiceDataMonitor(voiceDataMonitor);
+            }
+        }
+
+        private void publishCompletedSlot() {
+            closeResampler();
+            try {
+                onGetVoiceDataDone.onGetDone(voiceData);
+            } finally {
+                if (afterDoneRemove) {
+                    hamRecorder.deleteVoiceDataMonitor(voiceDataMonitor);
+                }
+            }
+        }
+
+        private void closeResampler() {
+            if (streamingResampler != null) {
+                streamingResampler.close();
+                streamingResampler = null;
+            }
+        }
+
+        synchronized void cancel() {
+            if (!closed) {
+                closed = true;
+                closeResampler();
+            }
         }
     }
 

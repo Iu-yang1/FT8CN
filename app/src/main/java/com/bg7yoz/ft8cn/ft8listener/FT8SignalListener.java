@@ -119,6 +119,13 @@ public class FT8SignalListener {
     public interface OnWaveDataListener {
         void getVoiceData(int duration, boolean afterDoneRemove, OnGetVoiceDataDone getVoiceDataDone);
 
+        default boolean getVoiceDataAtSampleRate(int duration,
+                                                 int targetSampleRate,
+                                                 boolean afterDoneRemove,
+                                                 OnGetVoiceDataDone getVoiceDataDone) {
+            return false;
+        }
+
         int getCurrentSampleRate();
     }
 
@@ -385,31 +392,49 @@ public class FT8SignalListener {
                         });
             }
 
-            onWaveDataListener.getVoiceData(
-                    duration,
-                    true,
-                    new OnGetVoiceDataDone() {
-                        @Override
-                        public void onGetDone(float[] data) {
-                            Log.d(TAG, String.format("received full-slot audio: samples=%d, mode=%s",
-                                    data.length,
-                                    FT8Common.modeToString(recordMode)));
-                            decodeFt8(
-                                    utc,
-                                    data,
-                                    sourceSampleRate,
-                                    recordMode,
-                                    DECODE_STAGE_FULL,
-                                    true,
-                                    expectedSamples,
-                                    false,
-                                    true,
-                                    "real",
-                                    "timer-full",
-                                    triggerSequence
-                            );
-                        }
-                    });
+            final OnGetVoiceDataDone fullSlotCallback = new OnGetVoiceDataDone() {
+                @Override
+                public void onGetDone(float[] data) {
+                    Log.d(TAG, String.format("received full-slot audio: samples=%d, mode=%s",
+                            data.length,
+                            FT8Common.modeToString(recordMode)));
+                    decodeFt8(
+                            utc,
+                            data,
+                            recordMode == FT8Common.Q65_MODE
+                                    ? FT8Common.SAMPLE_RATE
+                                    : sourceSampleRate,
+                            recordMode,
+                            DECODE_STAGE_FULL,
+                            true,
+                            expectedSamples,
+                            false,
+                            true,
+                            "real",
+                            "timer-full",
+                            triggerSequence
+                    );
+                }
+            };
+            if (recordMode == FT8Common.Q65_MODE) {
+                boolean started = onWaveDataListener.getVoiceDataAtSampleRate(
+                        duration,
+                        FT8Common.SAMPLE_RATE,
+                        true,
+                        fullSlotCallback);
+                if (!started) {
+                    Log.e(TAG, String.format(Locale.US,
+                            "Q65 streaming capture unavailable; skip slot utc=%d sourceRate=%d periodMs=%d",
+                            utc,
+                            sourceSampleRate,
+                            duration));
+                    if (onFt8Listen != null) {
+                        onFt8Listen.afterDecodeFinished(utc, 0L);
+                    }
+                }
+                return;
+            }
+            onWaveDataListener.getVoiceData(duration, true, fullSlotCallback);
         }
     }
 

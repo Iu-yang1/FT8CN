@@ -101,6 +101,7 @@ public class FT8TransmitSignal {
     private AudioAttributes attributes = null;
     private AudioFormat myFormat = null;
     private AudioTrack audioTrack = null;
+    private volatile boolean q65StreamCancelled = false;
     public UtcTimer utcTimer;
     public ArrayList<FunctionOfTransmit> functionList = new ArrayList<>();
     public MutableLiveData<ArrayList<FunctionOfTransmit>> mutableFunctions = new MutableLiveData<>();
@@ -495,6 +496,7 @@ public class FT8TransmitSignal {
     }
 
     public void release() {
+        q65StreamCancelled = true;
         GeneralVariables.mutableVolumePercent.removeObserver(volumePercentObserver);
         if (utcTimer != null) {
             utcTimer.destroy();
@@ -912,22 +914,27 @@ public class FT8TransmitSignal {
     }
 
     private int writeAudioTrackFully(AudioTrack track, float[] buffer) {
+        return writeAudioTrackFully(track, buffer, buffer == null ? 0 : buffer.length);
+    }
+
+    private int writeAudioTrackFully(AudioTrack track, float[] buffer, int sampleCount) {
         if (track == null || buffer == null) {
             return AudioTrack.ERROR_BAD_VALUE;
         }
+        int boundedCount = Math.max(0, Math.min(sampleCount, buffer.length));
         int totalWritten = 0;
-        while (totalWritten < buffer.length) {
+        while (totalWritten < boundedCount) {
             int written = track.write(
                     buffer,
                     totalWritten,
-                    buffer.length - totalWritten,
+                    boundedCount - totalWritten,
                     AudioTrack.WRITE_BLOCKING
             );
             if (written <= 0) {
                 Log.e(TAG, String.format(java.util.Locale.US,
                         "audio float write stopped: offset=%d, remaining=%d, result=%d",
                         totalWritten,
-                        buffer.length - totalWritten,
+                        boundedCount - totalWritten,
                         written));
                 return written;
             }
@@ -937,28 +944,169 @@ public class FT8TransmitSignal {
     }
 
     private int writeAudioTrackFully(AudioTrack track, short[] buffer) {
+        return writeAudioTrackFully(track, buffer, buffer == null ? 0 : buffer.length);
+    }
+
+    private int writeAudioTrackFully(AudioTrack track, short[] buffer, int sampleCount) {
         if (track == null || buffer == null) {
             return AudioTrack.ERROR_BAD_VALUE;
         }
+        int boundedCount = Math.max(0, Math.min(sampleCount, buffer.length));
         int totalWritten = 0;
-        while (totalWritten < buffer.length) {
+        while (totalWritten < boundedCount) {
             int written = track.write(
                     buffer,
                     totalWritten,
-                    buffer.length - totalWritten,
+                    boundedCount - totalWritten,
                     AudioTrack.WRITE_BLOCKING
             );
             if (written <= 0) {
                 Log.e(TAG, String.format(java.util.Locale.US,
                         "audio short write stopped: offset=%d, remaining=%d, result=%d",
                         totalWritten,
-                        buffer.length - totalWritten,
+                        boundedCount - totalWritten,
                         written));
                 return written;
             }
             totalWritten += written;
         }
         return totalWritten;
+    }
+
+    private int convertFloatChunkToShort(float[] input, short[] output, int sampleCount) {
+        int boundedCount = Math.min(sampleCount, Math.min(input.length, output.length));
+        for (int index = 0; index < boundedCount; index++) {
+            float sample = Math.max(-1.0f, Math.min(1.0f, input[index]));
+            output[index] = (short) (sample * 32767.0f);
+        }
+        return boundedCount;
+    }
+
+    private void waitForQ65PlaybackDrain(long generatedSamples, int sampleRate) {
+        if (audioTrack == null || generatedSamples <= 0L || sampleRate <= 0) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() + 1500L;
+        while (!q65StreamCancelled && System.currentTimeMillis() < deadline) {
+            long played = Integer.toUnsignedLong(audioTrack.getPlaybackHeadPosition());
+            if (played >= generatedSamples) {
+                return;
+            }
+            try {
+                Thread.sleep(10L);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Q65 使用有背压的流式播放；Java 与 JNI 均只持有一个固定小块。
+     */
+    private void playQ65Streaming(MultiSlotTransmitItem item,
+                                  int sampleRate,
+                                  int q65Submode,
+                                  int q65TrPeriodSeconds) {
+        final int chunkSamples = 4096;
+        final int frameBytes = GeneralVariables.audioOutput32Bit ? 4 : 2;
+        final int encoding = GeneralVariables.audioOutput32Bit
+                ? AudioFormat.ENCODING_PCM_FLOAT
+                : AudioFormat.ENCODING_PCM_16BIT;
+        final int minimumBufferBytes = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                encoding);
+        final int streamBufferBytes = Math.max(
+                minimumBufferBytes > 0 ? minimumBufferBytes : 0,
+                chunkSamples * frameBytes * 2);
+        q65StreamCancelled = false;
+
+        attributes = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build();
+        myFormat = new AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setEncoding(encoding)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build();
+        audioTrack = new AudioTrack(
+                attributes,
+                myFormat,
+                streamBufferBytes,
+                AudioTrack.MODE_STREAM,
+                0);
+        if (audioTrack.getState() != AudioTrack.STATE_INITIALIZED) {
+            updateLastTransmitStatus("lastTx mode=Q65 stage=audio-init failureReason=audio-track-uninitialized");
+            afterPlayAudio();
+            return;
+        }
+
+        float[] floatChunk = new float[chunkSamples];
+        short[] shortChunk = GeneralVariables.audioOutput32Bit
+                ? null
+                : new short[chunkSamples];
+        long generated = 0L;
+        double energy = 0.0;
+        float peak = 0.0f;
+        String failureReason = "none";
+        try (Q65WaveStream stream = new Q65WaveStream(
+                item.message.getMessageText(),
+                item.frequencyHz,
+                sampleRate,
+                q65Submode,
+                q65TrPeriodSeconds)) {
+            audioTrack.setVolume(GeneralVariables.volumePercent);
+            audioTrack.play();
+            while (!q65StreamCancelled && !Thread.currentThread().isInterrupted()) {
+                int count = stream.read(floatChunk, 0, floatChunk.length);
+                if (count == 0) {
+                    break;
+                }
+                for (int index = 0; index < count; index++) {
+                    float sample = floatChunk[index];
+                    peak = Math.max(peak, Math.abs(sample));
+                    energy += (double) sample * sample;
+                }
+                int written;
+                if (GeneralVariables.audioOutput32Bit) {
+                    written = writeAudioTrackFully(audioTrack, floatChunk, count);
+                } else {
+                    int converted = convertFloatChunkToShort(floatChunk, shortChunk, count);
+                    written = writeAudioTrackFully(audioTrack, shortChunk, converted);
+                }
+                if (written != count) {
+                    failureReason = "audio-write-failed:" + written;
+                    break;
+                }
+                generated += count;
+            }
+            if (q65StreamCancelled || Thread.currentThread().isInterrupted()) {
+                failureReason = "cancelled";
+            } else if (generated != stream.getTotalSamples()) {
+                failureReason = "short-generation:" + generated + "/" + stream.getTotalSamples();
+            } else {
+                waitForQ65PlaybackDrain(generated, sampleRate);
+            }
+            double rms = generated > 0L ? Math.sqrt(energy / generated) : 0.0;
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "lastTx mode=Q65 stage=stream samples=%d peak=%.6f rms=%.6f underruns=%d failureReason=%s",
+                    generated,
+                    peak,
+                    rms,
+                    audioTrack.getUnderrunCount(),
+                    failureReason));
+        } catch (RuntimeException error) {
+            failureReason = "stream-exception:" + error.getClass().getSimpleName();
+            updateLastTransmitStatus("lastTx mode=Q65 stage=stream failureReason=" + failureReason);
+            Log.e(TAG, "Q65 streaming TX failed", error);
+        } finally {
+            Log.i(TAG, "Q65 streaming TX finished: samples=" + generated
+                    + ", bufferSamples=" + chunkSamples
+                    + ", failureReason=" + failureReason);
+            afterPlayAudio();
+        }
     }
 
     private void updateMessageStartTimeForOrder(int order) {
@@ -1225,8 +1373,22 @@ public class FT8TransmitSignal {
         final int currentMode = plan.getSignalMode();
         final int currentSlotMs = FT8Common.getSlotTimeMillisecond(currentMode);
         final int currentSampleRate = GeneralVariables.audioSampleRate;
+        final int q65Submode = GeneralVariables.getQ65Submode();
+        final int q65TrPeriodSeconds = GeneralVariables.getQ65TrPeriodSeconds();
         final MultiSlotTransmitItem primaryItem = plan.getPrimaryItem();
         final Ft8Message primaryMessage = primaryItem.message;
+
+        if (currentMode == FT8Common.Q65_MODE
+                && (GeneralVariables.connectMode == ConnectMode.NETWORK
+                || (GeneralVariables.controlMode == ControlMode.CAT
+                && onDoTransmitted != null
+                && onDoTransmitted.supportTransmitOverCAT()))) {
+            updateLastTransmitStatus(
+                    "lastTx mode=Q65 stage=transport failureReason=external-streaming-unsupported");
+            Log.e(TAG, "Q65 external wave transport rejected: bounded streaming protocol unavailable");
+            afterPlayAudio();
+            return;
+        }
 
         if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
             Log.d(TAG, "playFT8Signal: start network audio transmit");
@@ -1263,6 +1425,20 @@ public class FT8TransmitSignal {
                     return;
                 }
             }
+        }
+
+        if (currentMode == FT8Common.Q65_MODE) {
+            if (plan.size() != 1) {
+                Log.e(TAG, "Q65 streaming TX requires a single message");
+                afterPlayAudio();
+                return;
+            }
+            playQ65Streaming(
+                    primaryItem,
+                    currentSampleRate,
+                    q65Submode,
+                    q65TrPeriodSeconds);
+            return;
         }
 
         // Build local sound-card audio for VOX playback.
@@ -2539,6 +2715,7 @@ public class FT8TransmitSignal {
         if (this.activated) {
             synchronizeAutomationSession();
         } else {
+            q65StreamCancelled = true;
             automationController.stopSession("自动通联已停止");
             lastAutomationTransmitSlot = Long.MIN_VALUE;
             lastAutomationTransmitMode = -1;
@@ -2560,6 +2737,7 @@ public class FT8TransmitSignal {
         }
 
         if (!transmitting) {
+            q65StreamCancelled = true;
             if (audioTrack != null) {
                 if (audioTrack.getState() != AudioTrack.STATE_UNINITIALIZED) {
                     audioTrack.pause();

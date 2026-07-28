@@ -42,6 +42,10 @@ int wsjtx3_backend_generate_q65_wave(const char *message,
                                      float base_frequency_hz,
                                      float *out_wave,
                                      int out_capacity);
+
+int wsjtx3_backend_generate_q65_tones(const char *message,
+                                      int *out_tones,
+                                      int out_capacity);
 bool wsjtx3_backend_owns_session_flow(decoder_t *decoder);
 void wsjtx3_backend_subtract_signal(decoder_t *decoder,
                                     const uint8_t *payload,

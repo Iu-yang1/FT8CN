@@ -204,6 +204,42 @@ function Invoke-BenchmarkVariant([string]$Variant) {
     return $json | ConvertFrom-Json
 }
 
+function Invoke-Q65StreamingGate([string]$Variant) {
+    $component = 'com.bg7yoz.ft8cn.ft4.test/androidx.test.runner.AndroidJUnitRunner'
+    $classes = @(
+        'com.bg7yoz.ft8cn.wave.FtxStreamingResamplerInstrumentationTest',
+        'com.bg7yoz.ft8cn.ft8transmit.Q65WaveStreamInstrumentationTest'
+    ) -join ','
+    $clearLogcatArguments = @('logcat', '-c')
+    $null = Invoke-Adb @clearLogcatArguments
+    # Explicit strings keep PowerShell 5.1 from treating adb's -w/-r as common parameters.
+    $adbArguments = @('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', $classes, $component)
+    $output = @(Invoke-Adb @adbArguments)
+    $text = $output -join "`n"
+    if ($text -match 'INSTRUMENTATION_FAILED|FAILURES!!!|INSTRUMENTATION_STATUS_CODE: -2') {
+        throw "Q65 streaming gate $Variant failed:`n$text"
+    }
+    $summary = [regex]::Match($text, '(?m)^OK \((\d+) tests?\)\s*$')
+    if (-not $summary.Success -or [int]$summary.Groups[1].Value -lt 7) {
+        throw "Q65 streaming gate $Variant did not report all tests:`n$text"
+    }
+    $logcatArguments = @('logcat', '-d', '-s', 'Q65StreamMemoryTest:I', '*:S')
+    $memoryLines = @(Invoke-Adb @logcatArguments |
+        Where-Object { $_ -match 'Q65 (RX|TX) 300s' })
+    if ($memoryLines.Count -lt 2) {
+        throw "Q65 streaming gate $Variant returned no bounded-memory evidence."
+    }
+    return [pscustomobject]@{
+        passed = $true
+        variant = $Variant
+        test_count = [int]$summary.Groups[1].Value
+        source_chunk_samples = 4096
+        tx_chunk_samples = 4096
+        rx_final_12k_samples = 3600000
+        memory_evidence = $memoryLines
+    }
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $assetDirectory | Out-Null
     foreach ($mode in @('FT8', 'FT4', 'Q65')) {
@@ -252,15 +288,19 @@ try {
 
     $debugReport = $null
     $releaseReport = $null
+    $debugStreamingReport = $null
+    $releaseStreamingReport = $null
     if ($VariantFilter -in @('ALL', 'DEBUG')) {
         Install-Apk $debugApk
         Install-Apk $testApk
+        $debugStreamingReport = Invoke-Q65StreamingGate 'debug'
         $debugReport = Invoke-BenchmarkVariant 'debug'
     }
 
     if ($VariantFilter -in @('ALL', 'RELEASE')) {
         Install-Apk $releaseApk -AllowDowngrade
         Install-Apk $testApk
+        $releaseStreamingReport = Invoke-Q65StreamingGate 'release'
         $releaseReport = Invoke-BenchmarkVariant 'release'
     }
 
@@ -295,6 +335,12 @@ try {
         variant_filter = $VariantFilter
         debug = $debugReport
         release = $releaseReport
+        q65_streaming = [ordered]@{
+            passed = (($null -eq $debugStreamingReport -or $debugStreamingReport.passed) -and
+                ($null -eq $releaseStreamingReport -or $releaseStreamingReport.passed))
+            debug = $debugStreamingReport
+            release = $releaseStreamingReport
+        }
         debug_release_mismatches = @()
     }
     $outputDirectory = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputJson))

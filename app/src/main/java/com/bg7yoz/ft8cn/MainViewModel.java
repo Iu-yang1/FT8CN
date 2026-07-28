@@ -443,6 +443,18 @@ public class MainViewModel extends ViewModel {
             }
 
             @Override
+            public boolean getVoiceDataAtSampleRate(int duration,
+                                                    int targetSampleRate,
+                                                    boolean afterDoneRemove,
+                                                    OnGetVoiceDataDone getVoiceDataDone) {
+                return hamRecorder.getVoiceDataAtSampleRate(
+                        duration,
+                        targetSampleRate,
+                        afterDoneRemove,
+                        getVoiceDataDone) != null;
+            }
+
+            @Override
             public int getCurrentSampleRate() {
                 return hamRecorder.getCurrentSampleRate();
             }

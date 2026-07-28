@@ -1037,6 +1037,41 @@ contains
          g_contexts(handle)%result_count, phase_trace_elapsed_us(trace_started_at))
   end subroutine run_q65_decode_pipeline
 
+  integer(c_int) function wsjtx3_bridge_generate_q65_tones(message, out_tones, out_capacity) &
+       bind(C, name="wsjtx3_bridge_generate_q65_tones")
+    character(kind=c_char), dimension(*), intent(in) :: message
+    integer(c_int), intent(out) :: out_tones(*)
+    integer(c_int), value :: out_capacity
+
+    integer :: index
+    integer :: itone(85)
+    integer :: i3
+    integer :: n3
+    character(len=37) :: message_text
+    character(len=37) :: msgsent
+
+    wsjtx3_bridge_generate_q65_tones = 0_c_int
+    if (out_capacity < 85_c_int) then
+       return
+    end if
+    message_text = ''
+    call copy_c_string(message, message_text)
+    if (len_trim(message_text) == 0) then
+       return
+    end if
+    itone = 0
+    i3 = -1
+    n3 = -1
+    call genq65(message_text, 0, msgsent, itone, i3, n3)
+    do index = 1, 85
+       if (itone(index) < 0 .or. itone(index) > 64) then
+          return
+       end if
+       out_tones(index) = int(itone(index), kind=c_int)
+    end do
+    wsjtx3_bridge_generate_q65_tones = 85_c_int
+  end function wsjtx3_bridge_generate_q65_tones
+
   integer(c_int) function wsjtx3_bridge_generate_q65_wave(message, q65_submode, q65_tr_period, &
        sample_rate, base_frequency_hz, out_wave, out_capacity) &
        bind(C, name="wsjtx3_bridge_generate_q65_wave")

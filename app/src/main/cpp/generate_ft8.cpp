@@ -14,6 +14,9 @@
 #include <cstring>
 #include <cmath>
 #include <climits>
+#include <algorithm>
+#include <cstdint>
+#include <new>
 
 extern "C" {
 #include "common/debug.h"
@@ -49,6 +52,27 @@ static int normalizeQ65TrPeriodSeconds(int q65TrPeriodSeconds) {
         default:
             return 60;
     }
+}
+
+static constexpr int Q65_TONE_COUNT = 85;
+static constexpr int Q65_TX_STREAM_CHUNK = 4096;
+static constexpr double Q65_TWO_PI = 6.283185307179586476925286766559;
+
+struct Q65TxStreamState {
+    int tones[Q65_TONE_COUNT]{};
+    int samplesPerSymbol = 0;
+    int sampleRate = 0;
+    size_t totalSamples = 0;
+    size_t generatedSamples = 0;
+    double baseFrequencyHz = 0.0;
+    double toneSpacingHz = 0.0;
+    double phase = 0.0;
+    double phaseScale = 0.0;
+    float scratch[Q65_TX_STREAM_CHUNK]{};
+};
+
+static Q65TxStreamState *q65TxStreamFromHandle(jlong handle) {
+    return reinterpret_cast<Q65TxStreamState *>(static_cast<uintptr_t>(handle));
 }
 
 char *Jstring2CStr(JNIEnv *env, jstring jstr) {
@@ -179,6 +203,136 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
     LOGI("Q65 TX waveform generated: submode=%c trPeriod=%ds sampleRate=%d freq=%.1f samples=%d durationMs=%.1f peak=%.6f rms=%.6f text=%s",
          'A' + q65Submode, q65TrPeriodSeconds, sampleRate, frequency, generated, durationMs, peak, rms, messageText);
     return result;
+}
+
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_com_bg7yoz_ft8cn_ft8transmit_Q65WaveStream_requiredSamplesNative(
+        JNIEnv *, jclass, jint q65TrPeriodSeconds, jint sampleRate) {
+    size_t required = 0;
+    if (!ftx_q65_required_samples(
+            normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds),
+            sampleRate,
+            &required)
+        || required > static_cast<size_t>(INT64_MAX)) {
+        return 0;
+    }
+    return static_cast<jlong>(required);
+}
+
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_com_bg7yoz_ft8cn_ft8transmit_Q65WaveStream_createNative(
+        JNIEnv *env,
+        jclass,
+        jstring message,
+        jfloat frequency,
+        jint sampleRate,
+        jint q65Submode,
+        jint q65TrPeriodSeconds) {
+    if (message == nullptr || sampleRate <= 0 || !std::isfinite(frequency)) {
+        return 0;
+    }
+    q65Submode = normalizeQ65Submode(q65Submode);
+    q65TrPeriodSeconds = normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds);
+    size_t required = 0;
+    if (!ftx_q65_required_samples(q65TrPeriodSeconds, sampleRate, &required)
+        || required == 0 || required % Q65_TONE_COUNT != 0) {
+        return 0;
+    }
+
+    auto *state = new (std::nothrow) Q65TxStreamState();
+    if (state == nullptr) {
+        return 0;
+    }
+    const char *text = env->GetStringUTFChars(message, nullptr);
+    if (text == nullptr) {
+        delete state;
+        return 0;
+    }
+    const int toneCount = wsjtx3_backend_generate_q65_tones(
+            text, state->tones, Q65_TONE_COUNT);
+    env->ReleaseStringUTFChars(message, text);
+    if (toneCount != Q65_TONE_COUNT) {
+        delete state;
+        return 0;
+    }
+
+    state->samplesPerSymbol = static_cast<int>(required / Q65_TONE_COUNT);
+    state->sampleRate = sampleRate;
+    state->totalSamples = required;
+    state->baseFrequencyHz = frequency;
+    state->toneSpacingHz = static_cast<double>(sampleRate)
+                           / static_cast<double>(state->samplesPerSymbol)
+                           * static_cast<double>(1 << q65Submode);
+    const double highestToneHz = state->baseFrequencyHz
+                                 + 64.0 * state->toneSpacingHz;
+    if (state->baseFrequencyHz < 0.0
+        || highestToneHz >= static_cast<double>(sampleRate) * 0.5) {
+        delete state;
+        return 0;
+    }
+    state->phaseScale = Q65_TWO_PI / static_cast<double>(sampleRate);
+    return static_cast<jlong>(reinterpret_cast<uintptr_t>(state));
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_bg7yoz_ft8cn_ft8transmit_Q65WaveStream_readNative(
+        JNIEnv *env,
+        jclass,
+        jlong handle,
+        jfloatArray output,
+        jint outputOffset,
+        jint requestedSamples) {
+    Q65TxStreamState *state = q65TxStreamFromHandle(handle);
+    if (state == nullptr || output == nullptr
+        || outputOffset < 0 || requestedSamples < 0) {
+        return -1;
+    }
+    const jsize outputLength = env->GetArrayLength(output);
+    if ((int64_t) outputOffset + requestedSamples > outputLength) {
+        return -1;
+    }
+    const size_t remaining = state->totalSamples - state->generatedSamples;
+    const size_t requested = std::min((size_t) requestedSamples, remaining);
+    size_t produced = 0;
+    while (produced < requested) {
+        const size_t chunk = std::min(
+                (size_t) Q65_TX_STREAM_CHUNK, requested - produced);
+        for (size_t index = 0; index < chunk; ++index) {
+            const size_t absoluteIndex = state->generatedSamples + produced + index;
+            const size_t symbolIndex = absoluteIndex / (size_t) state->samplesPerSymbol;
+            const double frequencyHz = state->baseFrequencyHz
+                                       + state->tones[symbolIndex] * state->toneSpacingHz;
+            state->scratch[index] = static_cast<float>(std::sin(state->phase));
+            state->phase += state->phaseScale * frequencyHz;
+            if (state->phase > Q65_TWO_PI) {
+                state->phase -= Q65_TWO_PI;
+            }
+        }
+        env->SetFloatArrayRegion(output,
+                                 outputOffset + (jsize) produced,
+                                 (jsize) chunk,
+                                 state->scratch);
+        if (env->ExceptionCheck()) {
+            return -1;
+        }
+        produced += chunk;
+    }
+    state->generatedSamples += produced;
+    return static_cast<jint>(produced);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bg7yoz_ft8cn_ft8transmit_Q65WaveStream_destroyNative(
+        JNIEnv *, jclass, jlong handle) {
+    Q65TxStreamState *state = q65TxStreamFromHandle(handle);
+    if (state != nullptr) {
+        std::memset(state, 0, sizeof(*state));
+        delete state;
+    }
 }
 
 extern "C"

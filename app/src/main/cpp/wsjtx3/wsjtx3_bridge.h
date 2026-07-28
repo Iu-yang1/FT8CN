@@ -59,6 +59,10 @@ int wsjtx3_bridge_generate_q65_wave(const char *message,
                                     float base_frequency_hz,
                                     float *out_wave,
                                     int out_capacity);
+
+int wsjtx3_bridge_generate_q65_tones(const char *message,
+                                     int *out_tones,
+                                     int out_capacity);
 int wsjtx3_bridge_process_float(int handle, const float *samples, int sample_count);
 int wsjtx3_bridge_get_result_count(int handle);
 int wsjtx3_bridge_get_result(int handle,

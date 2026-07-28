@@ -637,6 +637,17 @@ static int bridge_generate_q65_wave_locked(const char *message,
     return sample_count;
 }
 
+static int bridge_generate_q65_tones_locked(const char *message,
+                                             int *out_tones,
+                                             int out_capacity) {
+    int tone_count;
+    wsjtx3_bridge_lock();
+    tone_count = wsjtx3_bridge_generate_q65_tones(
+            message, out_tones, out_capacity);
+    wsjtx3_bridge_unlock();
+    return tone_count;
+}
+
 static int bridge_process_float_locked(int handle,
                                        const float *samples,
                                        int sample_count,
@@ -1934,7 +1945,13 @@ int wsjtx3_backend_generate_q65_wave(const char *message,
                                            sample_rate,
                                            base_frequency_hz,
                                            out_wave,
-                                           out_capacity);
+                                            out_capacity);
+}
+
+int wsjtx3_backend_generate_q65_tones(const char *message,
+                                      int *out_tones,
+                                      int out_capacity) {
+    return bridge_generate_q65_tones_locked(message, out_tones, out_capacity);
 }
 
 bool wsjtx3_backend_owns_session_flow(decoder_t *decoder) {

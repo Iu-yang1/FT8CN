@@ -43,6 +43,23 @@ public final class FT8Resample {
                                                 int outputRate,
                                                 int channels);
 
+    static native long createFloatStream(int inputRate, int outputRate);
+
+    static native int processFloatStream(long handle,
+                                         float[] inputData,
+                                         int inputOffset,
+                                         int inputCount,
+                                         float[] outputData,
+                                         int outputOffset,
+                                         int outputCapacity);
+
+    static native int finishFloatStream(long handle,
+                                        float[] outputData,
+                                        int outputOffset,
+                                        int outputCapacity);
+
+    static native void destroyFloatStream(long handle);
+
     /**
      * 解码链路优先使用 native 直接输出抽取；JNI 不可用时才走 Java 实现。
      * 不支持的采样率返回 null，由调用方明确跳过，不能误送给 12 kHz decoder。
