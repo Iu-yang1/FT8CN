@@ -2,7 +2,6 @@ package com.bg7yoz.ft8cn.feature.shell
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -29,17 +28,14 @@ class ModernShellUiTest {
         // EME 页面有生产用周期刷新；测试只手动推进有限的抽屉动画。
         composeRule.onNodeWithText("FT8 · 15 秒").assertIsDisplayed()
         composeRule.onNodeWithText("FT4 · 7.5 秒").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("打开功能导航").performClick()
+        composeRule.onNodeWithTag("bottom-nav-eme").assertIsDisplayed().performClick()
         composeRule.mainClock.advanceTimeBy(1_000L)
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("nav-eme").performClick()
-        composeRule.mainClock.advanceTimeBy(1_000L)
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Q65 月面通信").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("打开功能导航").performClick()
-        composeRule.mainClock.advanceTimeBy(1_000L)
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("nav-settings").performClick()
+        composeRule.onNodeWithTag("eme-screen-title").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom-nav-satellite").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom-nav-logbook").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom-nav-radio").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom-nav-settings").assertIsDisplayed().performClick()
         composeRule.mainClock.advanceTimeBy(1_000L)
         composeRule.waitForIdle()
         composeRule.onNodeWithText("打开完整设置").assertIsDisplayed()

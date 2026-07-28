@@ -61,6 +61,15 @@ public class SpectrumFragment extends Fragment {
         return binding.getRoot();
     }
 
+    @Override
+    public void onStart() {
+        super.onStart();
+        // 从配置页返回时，采样率或输入源可能已变化，需要用最新参数重建窗口。
+        if (mainViewModel != null && mainViewModel.spectrumListener != null) {
+            mainViewModel.spectrumListener.start();
+        }
+    }
+
     private void setupSwitchListeners() {
         binding.deNoiseSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override

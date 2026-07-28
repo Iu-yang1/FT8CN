@@ -12,12 +12,13 @@ import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 
 import java.util.Arrays;
 
-public class SpectrumListener {
+public class SpectrumListener implements HamRecorder.OnCaptureStateChanged {
     private static final String TAG = "SpectrumListener";
     public static final int DISPLAY_MIN_FREQUENCY_HZ = 0;
     public static final int DISPLAY_MAX_FREQUENCY_HZ = 3000;
     public static final int DISPLAY_BIN_COUNT = 640;
-    private HamRecorder hamRecorder;
+    private final HamRecorder hamRecorder;
+    private HamRecorder.VoiceDataSubscription subscription;
 
     public static final class SpectrumFrame {
         public final float[] samples;
@@ -43,12 +44,41 @@ public class SpectrumListener {
 
     public SpectrumListener(HamRecorder hamRecorder) {
         this.hamRecorder = hamRecorder;
-        doReceiveData();
+        hamRecorder.addCaptureStateListener(this);
+        start();
     }
 
+    /** 每次录音源变化都丢弃旧窗口，确保频谱使用当前真实采样率。 */
+    public synchronized void start() {
+        stopSubscription();
+        if (hamRecorder.isRunning()) {
+            subscription = hamRecorder.getVoiceData(160, false, onGetVoiceDataDone);
+        }
+    }
 
-    private void doReceiveData(){
-        hamRecorder.getVoiceData(160,false,onGetVoiceDataDone);
+    public synchronized void stop() {
+        stopSubscription();
+    }
+
+    public synchronized void release() {
+        hamRecorder.removeCaptureStateListener(this);
+        stopSubscription();
+    }
+
+    private void stopSubscription() {
+        if (subscription != null) {
+            hamRecorder.deleteVoiceDataMonitor(subscription);
+            subscription = null;
+        }
+    }
+
+    @Override
+    public void onCaptureStateChanged(boolean running, int sampleRate) {
+        if (running) {
+            start();
+        } else {
+            stop();
+        }
     }
 
     public float[] getDataBuffer() {

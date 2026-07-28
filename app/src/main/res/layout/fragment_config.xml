@@ -2801,21 +2801,21 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
-                android:layout_marginEnd="6dp"
-                android:layout_marginBottom="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginBottom="8dp"
                 android:background="@drawable/imagebutton_style"
                 android:elevation="6dp"
                 android:text="@string/modern_workbench"
                 android:textColor="@color/bar_text_view_color"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toStartOf="@+id/aboutButton"
+                app:layout_constraintBottom_toTopOf="@+id/aboutButton"
+                app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent" />
 
         <Button
                 android:id="@+id/aboutButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
+                android:layout_marginStart="12dp"
                 android:layout_marginEnd="6dp"
                 android:layout_marginBottom="12dp"
                 android:background="@drawable/imagebutton_style"
@@ -2825,7 +2825,7 @@
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toStartOf="@+id/faqButton"
                 app:layout_constraintHorizontal_bias="0.5"
-                app:layout_constraintStart_toEndOf="@+id/modernWorkbenchButton" />
+                app:layout_constraintStart_toStartOf="parent" />
 
         <Button
                 android:id="@+id/faqButton"

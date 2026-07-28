@@ -14,15 +14,18 @@ package com.bg7yoz.ft8cn;
 
 import static com.bg7yoz.ft8cn.GeneralVariables.getStringFromResource;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.os.Handler;
 import android.util.Log;
 
+import androidx.core.content.ContextCompat;
 import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModel;
@@ -318,7 +321,11 @@ public class MainViewModel extends ViewModel {
         mutableIsDecoding.postValue(false);
 
         hamRecorder = new HamRecorder(null);
-        hamRecorder.startRecord();
+        if (ContextCompat.checkSelfPermission(
+                GeneralVariables.getMainContext(),
+                Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            hamRecorder.startRecord();
+        }
 
         mutableIsFlexRadio.setValue(false);
         mutableIsXieguRadio.setValue(false);
@@ -1172,6 +1179,13 @@ public class MainViewModel extends ViewModel {
         }
     }
 
+    /** 首次授权录音后恢复构造阶段被安全跳过的录音链路。 */
+    public void ensureAudioCaptureRunning() {
+        if (hamRecorder != null && !hamRecorder.isRunning()) {
+            hamRecorder.startRecord();
+        }
+    }
+
     public void setBlueToothOn() {
         AudioManager audioManager = (AudioManager) GeneralVariables.getMainContext()
                 .getSystemService(Context.AUDIO_SERVICE);
@@ -1266,6 +1280,9 @@ public class MainViewModel extends ViewModel {
         }
         if (hamRecorder != null) {
             hamRecorder.stopRecord();
+        }
+        if (spectrumListener != null) {
+            spectrumListener.release();
         }
         if (ft8SignalListener != null) {
             ft8SignalListener.release();

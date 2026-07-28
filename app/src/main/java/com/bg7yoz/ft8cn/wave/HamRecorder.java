@@ -34,6 +34,8 @@ public class HamRecorder {
     private volatile boolean isRunning = false;
     private final CopyOnWriteArrayList<VoiceDataMonitor> voiceDataMonitorList =
             new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<OnCaptureStateChanged> captureStateListeners =
+            new CopyOnWriteArrayList<>();
     private OnVoiceMonitorChanged onVoiceMonitorChanged = null;
 
     private boolean isMicRecord = true;
@@ -42,6 +44,33 @@ public class HamRecorder {
 
     public HamRecorder(OnVoiceMonitorChanged onVoiceMonitorChanged) {
         this.onVoiceMonitorChanged = onVoiceMonitorChanged;
+    }
+
+    /** 录音源重启或采样率变化时通知长期消费者重建固定长度窗口。 */
+    public interface OnCaptureStateChanged {
+        void onCaptureStateChanged(boolean running, int sampleRate);
+    }
+
+    /** 供长期消费者持有并安全取消订阅，不暴露内部采样缓冲区。 */
+    public interface VoiceDataSubscription {
+    }
+
+    public void addCaptureStateListener(OnCaptureStateChanged listener) {
+        if (listener != null) {
+            captureStateListeners.addIfAbsent(listener);
+        }
+    }
+
+    public void removeCaptureStateListener(OnCaptureStateChanged listener) {
+        captureStateListeners.remove(listener);
+    }
+
+    private void notifyCaptureStateChanged() {
+        final boolean running = isRunning;
+        final int sampleRate = getCurrentSampleRate();
+        for (OnCaptureStateChanged listener : captureStateListeners) {
+            listener.onCaptureStateChanged(running, sampleRate);
+        }
     }
 
     public void setDataFromMic() {
@@ -54,6 +83,7 @@ public class HamRecorder {
         isMicRecord = false;
         currentInputSampleRate = DEFAULT_SAMPLE_RATE_IN_HZ;
         micRecorder.stopRecord();
+        notifyCaptureStateChanged();
     }
 
     /**
@@ -68,7 +98,11 @@ public class HamRecorder {
             return;
         }
 
-        currentInputSampleRate = normalizeInputSampleRate(sampleRate);
+        final int normalizedSampleRate = normalizeInputSampleRate(sampleRate);
+        if (currentInputSampleRate != normalizedSampleRate) {
+            currentInputSampleRate = normalizedSampleRate;
+            notifyCaptureStateChanged();
+        }
         // 录音热路径直接遍历稳定快照，避免每个音频块复制监听器列表。
         for (VoiceDataMonitor monitor : voiceDataMonitorList) {
             if (monitor != null) {
@@ -94,12 +128,15 @@ public class HamRecorder {
             isRunning = true;
             if (!micRecorder.start()) {
                 isRunning = false;
+                notifyCaptureStateChanged();
                 return;
             }
             currentInputSampleRate = micRecorder.getCurrentSampleRate();
+            notifyCaptureStateChanged();
             return;
         }
         isRunning = true;
+        notifyCaptureStateChanged();
     }
 
     private int normalizeInputSampleRate(int sampleRate) {
@@ -115,10 +152,11 @@ public class HamRecorder {
         }
     }
 
-    public void deleteVoiceDataMonitor(VoiceDataMonitor monitor) {
-        if (monitor == null) {
+    public void deleteVoiceDataMonitor(VoiceDataSubscription subscription) {
+        if (!(subscription instanceof VoiceDataMonitor)) {
             return;
         }
+        VoiceDataMonitor monitor = (VoiceDataMonitor) subscription;
         monitor.cancel();
         voiceDataMonitorList.remove(monitor);
         doDataMonitorChanged();
@@ -135,11 +173,12 @@ public class HamRecorder {
     public void stopRecord() {
         isRunning = false;
         micRecorder.stopRecord();
+        notifyCaptureStateChanged();
     }
 
-    public VoiceDataMonitor getVoiceData(int duration,
-                                         boolean afterDoneRemove,
-                                         OnGetVoiceDataDone getVoiceDataDone) {
+    public VoiceDataSubscription getVoiceData(int duration,
+                                              boolean afterDoneRemove,
+                                              OnGetVoiceDataDone getVoiceDataDone) {
         if (!isRunning || getVoiceDataDone == null) {
             return null;
         }
@@ -212,7 +251,7 @@ public class HamRecorder {
         }
     }
 
-    static class VoiceDataMonitor {
+    static class VoiceDataMonitor implements VoiceDataSubscription {
         private final float[] voiceData;
         private int dataCount;
         private int inputDataCount;

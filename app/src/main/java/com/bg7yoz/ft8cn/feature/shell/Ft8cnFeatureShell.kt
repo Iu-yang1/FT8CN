@@ -13,6 +13,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
@@ -117,6 +119,7 @@ fun Ft8cnFeatureShell() {
                             Text("菜单", style = MaterialTheme.typography.labelLarge)
                         }
                     },
+                    bottomBar = { FeatureBottomNavigation(selectedRoute, navigate) },
                     navHost = { modifier -> FeatureNavHost(navController, modifier) },
                 )
             }
@@ -130,6 +133,7 @@ private fun FeatureScaffold(
     destination: FeatureDestination,
     modifier: Modifier = Modifier,
     navigationIcon: @Composable () -> Unit = {},
+    bottomBar: @Composable () -> Unit = {},
     navHost: @Composable (Modifier) -> Unit,
 ) {
     Scaffold(
@@ -140,8 +144,27 @@ private fun FeatureScaffold(
                 navigationIcon = navigationIcon,
             )
         },
+        bottomBar = bottomBar,
     ) { padding ->
         navHost(Modifier.padding(padding))
+    }
+}
+
+@Composable
+private fun FeatureBottomNavigation(
+    selectedRoute: String,
+    navigate: (FeatureDestination) -> Unit,
+) {
+    NavigationBar {
+        FeatureDestination.values().forEach { destination ->
+            NavigationBarItem(
+                selected = selectedRoute == destination.route,
+                onClick = { navigate(destination) },
+                icon = { DestinationMark(destination) },
+                label = { Text(destination.navigationLabel, maxLines = 1) },
+                modifier = Modifier.testTag("bottom-nav-${destination.route}"),
+            )
+        }
     }
 }
 

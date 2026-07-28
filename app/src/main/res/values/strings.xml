@@ -685,5 +685,5 @@
     <string name="q65_config_applied">Q65 配置已切换到 %1$s</string>
     <string name="q65_config_saved">Q65 配置已保存为 %1$s</string>
 
-    <string name="modern_workbench">现代工作台</string>
+    <string name="modern_workbench">功能工作台：Q65/EME · 卫星 · LoTW · 电台</string>
 </resources>

@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.bg7yoz.ft8cn.FT8Common
 import com.bg7yoz.ft8cn.GeneralVariables
@@ -92,7 +93,11 @@ fun EmeScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("Q65 月面通信", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                "Q65 月面通信",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.testTag("eme-screen-title"),
+            )
             Text(
                 "Q65 A–E · 串行官方核心 · 长周期流式音频",
                 style = MaterialTheme.typography.bodyMedium,

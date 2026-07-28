@@ -615,11 +615,19 @@ public class MainActivity extends AppCompatActivity {
         if (gnssTimeDiscipline != null) {
             gnssTimeDiscipline.start();
         }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED && mainViewModel != null) {
+            mainViewModel.ensureAudioCaptureRunning();
+        }
     }
 
     @Override
     protected void onStart() {
         super.onStart();
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED && mainViewModel != null) {
+            mainViewModel.ensureAudioCaptureRunning();
+        }
         if (gnssTimeDiscipline != null) {
             gnssTimeDiscipline.start();
         }

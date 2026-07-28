@@ -30,11 +30,16 @@ data class FeatureState(
     val decodeResults: List<DecodeResultSummary> = emptyList(),
 )
 
-enum class FeatureDestination(val route: String, val label: String, val shortLabel: String) {
-    CALL("call", "FT8 / FT4 呼叫", "呼"),
-    EME("eme", "Q65 月面通信", "月"),
-    SATELLITE("satellite", "卫星工作台", "星"),
-    LOGBOOK("logbook", "日志与 LoTW", "志"),
-    RADIO("radio", "电台控制", "台"),
-    SETTINGS("settings", "设置与时间", "设"),
+enum class FeatureDestination(
+    val route: String,
+    val label: String,
+    val shortLabel: String,
+    val navigationLabel: String,
+) {
+    CALL("call", "FT8 / FT4 呼叫", "呼", "呼叫"),
+    EME("eme", "Q65 月面通信", "月", "Q65"),
+    SATELLITE("satellite", "卫星工作台", "星", "卫星"),
+    LOGBOOK("logbook", "日志与 LoTW", "志", "日志"),
+    RADIO("radio", "电台控制", "台", "电台"),
+    SETTINGS("settings", "设置与时间", "设", "设置"),
 }
