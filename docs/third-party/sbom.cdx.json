@@ -115,6 +115,16 @@
       "hashes": [{"alg": "SHA-256", "content": "12af6e4fce194d7eb3b48cd0afd2a70edf2fcfd9501d775cef08b5fba451d119"}],
       "licenses": [{"license": {"id": "Unlicense"}}],
       "externalReferences": [{"type": "vcs", "url": "https://github.com/aholinch/sgp4/tree/552cb1489a52c3023ae70cb6c7e239e84c5950fe"}]
+    },
+    {
+      "type": "library",
+      "scope": "excluded",
+      "bom-ref": "pkg:generic/trustedqsl@2.8.6",
+      "name": "TrustedQSL external signing reference",
+      "version": "2.8.6",
+      "hashes": [{"alg": "SHA-256", "content": "182e5f2ac35a3db8b409b45d96505e6bd265ae4668ed064754209c4b8e7bdf37"}],
+      "licenses": [{"license": {"name": "TrustedQSL License"}}],
+      "externalReferences": [{"type": "distribution", "url": "https://downloads.sourceforge.net/project/trustedqsl/tqsl-2.8.6.tar.gz"}]
     }
   ],
   "dependencies": [

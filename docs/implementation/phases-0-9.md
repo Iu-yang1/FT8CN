@@ -15,8 +15,8 @@
 | 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 完成 | API 28 AArch64 ELF、fake rig/rigctld、PTT 安全、device FT8 PASS；`BLOCKED_HARDWARE_RIG` | `dab521a4` |
 | 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 完成 | oracle、状态机、纯噪声、Debug/Release 真机矩阵 PASS；`BLOCKED_HARDWARE_TX` | `68cf7b29` |
 | 5 Q65-EME 页面和生产流式内存 | 完成 | 300 秒 RX/TX、averaging、内存、host/oracle/Debug/Release 真机回归 PASS；`BLOCKED_SANITIZER` | `16e4a26c` |
-| 6 卫星页面、轨道预测和双向 Doppler | 完成 | SGP4/Skyfield golden、pass、fake rig、离线缓存、Debug/Release/device/DSP PASS；`BLOCKED_HARDWARE_RIG` | 本阶段提交 |
-| 7 本地日志、ADIF 和 LoTW | 待开始 | Room、ADIF、幂等上传、签名安全 | 待提交 |
+| 6 卫星页面、轨道预测和双向 Doppler | 完成 | SGP4/Skyfield golden、pass、fake rig、离线缓存、Debug/Release/device/DSP PASS；`BLOCKED_HARDWARE_RIG` | `2bd9b82e` |
+| 7 本地日志、ADIF 和 LoTW | 完成 | Room v4、ADIF 3.1.5、签名 TQ8、幂等上传与 mock PASS；`BLOCKED_TQSL_EMBEDDED_SIGNING`、`BLOCKED_LOTW_ACCOUNT` | 本阶段提交 |
 | 8 Kotlin/Compose Material 3 UI 和全局优化 | 待开始 | UI/旋转/恢复、泄漏、宏基准、DSP 回归 | 待提交 |
 | 9 集成验收、发布门禁和最终交付 | 待开始 | 全量 verify、device、ELF、SBOM、secret | 待提交 |
 
@@ -80,3 +80,13 @@
 - CelesTrak/SatNOGS 使用 HTTPS、条件请求、响应上限、最短刷新间隔和 Room v3 离线元数据；官方仓库外快照与 Skyfield 1.54 golden PASS。
 - 全量 host/oracle/Gradle/真机门禁 PASS，FT8/FT4/Q65 结果哈希不变，host p95 相对阶段 0 均在 3% 内；sanitizer runtime 仍为 `BLOCKED_SANITIZER`。
 - 详见 `docs/verification/satellite-doppler-2026-07-28.md`。
+
+## 阶段 7 记录
+
+- 新日志仓库使用 Room v4 保留 FT8/FT4/Q65、卫星/EME、频率、网格、报告和 LoTW 审计状态；旧 SQLite 日志没有删除或覆盖。
+- ADIF 3.1.5 编解码按官方模式枚举导出，输入长度、字段和记录数量均有边界；重复 QSO 通过稳定 SHA256 合并。
+- LoTW 只允许外部 TQSL 数字签名的 `.tq8`：结构校验、私有 no-backup 存储、文件 SHA256、WorkManager 唯一任务、指数退避和官方 HTTPS 响应解析均已接线。
+- TrustedQSL 2.8.6 已在 `H:/tools` 做许可证与依赖审查，但未进入 APK；内置签名和真实账户上传分别记录为 `BLOCKED_TQSL_EMBEDDED_SIGNING`、`BLOCKED_LOTW_ACCOUNT`。
+- 完整发布回归状态为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`；官方 `jt9` 对 FT8 20 条、FT4 16 条逐条多重集合匹配，Q65 4 条固定结果保持不变。
+- Host O2 的 FT8/FT4/Q65 p50/p95 分别为 522.145/548.953、261.002/269.214、221.922/233.311 ms；FT8、FT4 相对历史 p95 为 +1.075%、-0.096%，均未超过 3% 门槛。
+- 详见 `docs/verification/logbook-lotw-2026-07-28.md`。

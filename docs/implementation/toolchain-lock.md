@@ -16,6 +16,7 @@
 | ADB | 1.0.41 | `56656270da132f44e9cb4fb86a12ba965635c80423d43dcdd944d9fec4ab4622` |
 | 官方 jt9 oracle | WSJT-X 3.0.1 | `fc3a1dcd0fcbc05752d3e8fca4527ac5b7bbc2b8a60b8cfee181536d68d78a1a` |
 | 卫星独立 oracle | Skyfield 1.54 / python-sgp4 2.27 | wheels `c9b313185448963ea7fa4cf8e4298ba028b179b80ebd4c5675497519f21c04a2` / `827c63feb60987ad177c2c80f3a927e721ead2f444d6560cd2a4337ca90d2490` |
+| LoTW 签名参考 | TrustedQSL 2.8.6（不进 APK） | 归档 `182e5f2ac35a3db8b409b45d96505e6bd265ae4668ed064754209c4b8e7bdf37`；许可证 `dcaa6b515c503ae57805f0168c65bd5755d7998d092a08144a079099a423ef7d` |
 
 Release native profile 固定为 `-O2 -DNDEBUG`。默认不使用 `-O3`、`-ffast-math`、LTO、主机专用指令或 `PARALLEL_NATIVE`。WSJT-X Android core 的构建指纹包含 manifest、全部源码 SHA256、编译器版本、target/ABI、flags、脚本和 patch hash。
 

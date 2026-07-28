@@ -136,6 +136,80 @@ class Ft8cnFeatureDatabaseTest {
     }
 
     @Test
+    fun migrationThreeToFourAddsAuditableLotwFieldsWithoutLosingRows() {
+        val versionThree = helper(version = 3, onCreate = { database ->
+            database.execSQL(
+                """
+                CREATE TABLE qso_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    stableId TEXT NOT NULL,
+                    startedUtcMillis INTEGER NOT NULL,
+                    endedUtcMillis INTEGER NOT NULL,
+                    mode TEXT NOT NULL,
+                    submode TEXT,
+                    stationCall TEXT NOT NULL,
+                    stationGrid TEXT NOT NULL,
+                    dxCall TEXT NOT NULL,
+                    dxGrid TEXT NOT NULL,
+                    frequencyHz INTEGER NOT NULL,
+                    reportSent TEXT NOT NULL,
+                    reportReceived TEXT NOT NULL,
+                    lotwStatus TEXT NOT NULL,
+                    propagationMode TEXT,
+                    satelliteName TEXT
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE TABLE lotw_upload_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    idempotencyKey TEXT NOT NULL,
+                    createdUtcMillis INTEGER NOT NULL,
+                    updatedUtcMillis INTEGER NOT NULL,
+                    state TEXT NOT NULL,
+                    attemptCount INTEGER NOT NULL,
+                    lastError TEXT
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                "INSERT INTO qso_records VALUES (1, 'keep-me', 1, 2, 'FT8', NULL, " +
+                    "'BG7YOZ', 'OL79', 'JA6RJK', 'PM53', 14074000, '-10', '-12', " +
+                    "'LOCAL', NULL, NULL)",
+            )
+            database.execSQL(
+                "INSERT INTO lotw_upload_jobs VALUES (1, 'hash', 1, 1, 'PENDING_SIGN', 0, NULL)",
+            )
+        })
+        versionThree.writableDatabase
+        versionThree.close()
+
+        val versionFour = helper(version = 4, onCreate = {}) { database, oldVersion, newVersion ->
+            assertEquals(3, oldVersion)
+            assertEquals(4, newVersion)
+            Ft8cnFeatureDatabase.MIGRATION_3_4.migrate(database)
+        }
+        versionFour.writableDatabase.query(
+            "SELECT stableId, satelliteMode, updatedUtcMillis FROM qso_records WHERE id = 1",
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("keep-me", it.getString(0))
+            assertTrue(it.isNull(1))
+            assertEquals(0, it.getLong(2))
+        }
+        versionFour.writableDatabase.query(
+            "SELECT idempotencyKey, qsoStableIds, nextAttemptUtcMillis FROM lotw_upload_jobs WHERE id = 1",
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("hash", it.getString(0))
+            assertEquals("", it.getString(1))
+            assertEquals(0, it.getLong(2))
+        }
+        versionFour.close()
+    }
+
+    @Test
     fun catalogRefreshPreservesFavoriteFlag() = runBlocking {
         val database = Room.inMemoryDatabaseBuilder(
             context,

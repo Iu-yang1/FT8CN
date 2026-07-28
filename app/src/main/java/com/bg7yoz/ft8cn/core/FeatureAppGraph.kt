@@ -4,6 +4,7 @@ import android.content.Context
 import com.bg7yoz.ft8cn.data.local.Ft8cnFeatureDatabase
 import com.bg7yoz.ft8cn.data.logbook.QsoLogRepository
 import com.bg7yoz.ft8cn.data.logbook.RoomQsoLogRepository
+import com.bg7yoz.ft8cn.data.logbook.LotwWorkflow
 import com.bg7yoz.ft8cn.data.settings.FeatureSettingsStore
 import com.bg7yoz.ft8cn.satellite.CelesTrakCatalogClient
 import com.bg7yoz.ft8cn.satellite.RoomSatelliteCatalogRepository
@@ -27,6 +28,9 @@ class FeatureAppGraph private constructor(context: Context) {
     }
     val qsoLogRepository: QsoLogRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         RoomQsoLogRepository(database.qsoDao())
+    }
+    val lotwWorkflow: LotwWorkflow by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        LotwWorkflow(applicationContext, qsoLogRepository, database.lotwUploadDao())
     }
     val satelliteCatalogRepository: SatelliteCatalogRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         RoomSatelliteCatalogRepository(

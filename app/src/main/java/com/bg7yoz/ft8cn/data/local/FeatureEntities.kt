@@ -25,6 +25,9 @@ data class QsoEntity(
     val lotwStatus: String = "LOCAL",
     val propagationMode: String?,
     val satelliteName: String?,
+    val satelliteMode: String? = null,
+    val lotwLastError: String? = null,
+    val updatedUtcMillis: Long = endedUtcMillis,
 )
 
 @Entity(tableName = "station_profiles", indices = [Index(value = ["name"], unique = true)])
@@ -72,6 +75,11 @@ data class LotwUploadJobEntity(
     val state: String,
     val attemptCount: Int,
     val lastError: String?,
+    val signedArtifactPath: String? = null,
+    val signedArtifactSha256: String? = null,
+    val qsoStableIds: String = "",
+    val responseMessage: String? = null,
+    val nextAttemptUtcMillis: Long = 0,
 )
 
 @Entity(tableName = "satellites", indices = [Index(value = ["catalogNumber"], unique = true)])

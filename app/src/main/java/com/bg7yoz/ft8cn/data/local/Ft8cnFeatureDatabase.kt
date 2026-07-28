@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TransponderEntity::class,
         SatelliteSourceMetadataEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class Ft8cnFeatureDatabase : RoomDatabase() {
@@ -59,10 +59,29 @@ abstract class Ft8cnFeatureDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE qso_records ADD COLUMN satelliteMode TEXT")
+                database.execSQL("ALTER TABLE qso_records ADD COLUMN lotwLastError TEXT")
+                database.execSQL(
+                    "ALTER TABLE qso_records ADD COLUMN updatedUtcMillis INTEGER NOT NULL DEFAULT 0",
+                )
+                database.execSQL("ALTER TABLE lotw_upload_jobs ADD COLUMN signedArtifactPath TEXT")
+                database.execSQL("ALTER TABLE lotw_upload_jobs ADD COLUMN signedArtifactSha256 TEXT")
+                database.execSQL(
+                    "ALTER TABLE lotw_upload_jobs ADD COLUMN qsoStableIds TEXT NOT NULL DEFAULT ''",
+                )
+                database.execSQL("ALTER TABLE lotw_upload_jobs ADD COLUMN responseMessage TEXT")
+                database.execSQL(
+                    "ALTER TABLE lotw_upload_jobs ADD COLUMN nextAttemptUtcMillis INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
         fun create(context: Context): Ft8cnFeatureDatabase = Room.databaseBuilder(
             context.applicationContext,
             Ft8cnFeatureDatabase::class.java,
             DATABASE_NAME,
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
     }
 }

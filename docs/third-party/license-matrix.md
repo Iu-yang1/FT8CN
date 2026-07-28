@@ -27,7 +27,7 @@
 | CelesTrak GP data | 运行时 `gp.php?GROUP=amateur&FORMAT=TLE` | 提供方数据政策 | TLE 在线刷新；离线缓存 | 否（用户缓存） | 明示来源、ETag/更新时间和 stale 状态；不随 APK 打包目录快照 |
 | SatNOGS DB transmitters | 运行时 DB API | CC BY-SA 4.0（数据） | 转发器在线刷新；离线缓存 | 否（用户缓存） | UI 显示 SatNOGS 归属；不把运行时数据改称 FT8CN 自有数据 |
 | Skyfield | 1.54 + python-sgp4 2.27 | MIT | 阶段 6 独立过境 oracle | 否 | 仅位于 `H:/tools`；wheel SHA 记录于工具链锁，不进入 APK |
-| TQSL/tqsllib | 尚未固定 | 待阶段 7 复核 | LoTW 签名候选 | 否 | 未完成前只允许外部 `.tq8` 工作流，禁止未签名 ADIF 直传 |
+| TQSL/tqsllib | TrustedQSL 2.8.6；归档 `182e5f2a...bdf37` | TrustedQSL 自定义宽松许可，含 ARRL 商标限制 | 仓库外签名参考；不链接 | 否 | 许可证与依赖审查见 `third_party/trustedqsl-reference`；FT8CN 只上传外部 TQSL 已签名 `.tq8`，禁止未签名 ADIF 直传 |
 
 ## 分发边界
 
