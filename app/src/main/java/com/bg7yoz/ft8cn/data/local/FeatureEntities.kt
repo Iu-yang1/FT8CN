@@ -112,3 +112,15 @@ data class TransponderEntity(
     val mode: String,
     val inverted: Boolean,
 )
+
+@Entity(tableName = "satellite_source_metadata")
+data class SatelliteSourceMetadataEntity(
+    @PrimaryKey val sourceKey: String,
+    val etag: String?,
+    val lastModified: String?,
+    val lastAttemptUtcMillis: Long,
+    val lastSuccessUtcMillis: Long,
+    val nextEligibleUtcMillis: Long,
+    val payloadSha256: String?,
+    val lastError: String?,
+)

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -64,4 +65,58 @@ interface SatelliteDao {
 
     @Query("SELECT * FROM satellites ORDER BY favorite DESC, name")
     fun observeSatellites(): Flow<List<SatelliteEntity>>
+
+    @Query("SELECT * FROM satellites WHERE catalogNumber = :catalogNumber LIMIT 1")
+    suspend fun findSatellite(catalogNumber: Int): SatelliteEntity?
+
+    @Query("UPDATE satellites SET favorite = :favorite WHERE catalogNumber = :catalogNumber")
+    suspend fun setFavorite(catalogNumber: Int, favorite: Boolean): Int
+
+    @Query(
+        "SELECT * FROM tle_records WHERE satelliteCatalogNumber = :catalogNumber " +
+            "ORDER BY epochUtcMillis DESC LIMIT 1",
+    )
+    suspend fun latestTle(catalogNumber: Int): TleEntity?
+
+    @Query("SELECT * FROM transponders WHERE satelliteCatalogNumber = :catalogNumber ORDER BY name")
+    suspend fun transponders(catalogNumber: Int): List<TransponderEntity>
+
+    @Query("DELETE FROM transponders WHERE satelliteCatalogNumber = :catalogNumber")
+    suspend fun deleteTransponders(catalogNumber: Int)
+
+    @Query("SELECT * FROM satellite_source_metadata WHERE sourceKey = :sourceKey LIMIT 1")
+    suspend fun sourceMetadata(sourceKey: String): SatelliteSourceMetadataEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSourceMetadata(metadata: SatelliteSourceMetadataEntity)
+
+    /** 目录更新不得用 REPLACE 覆盖用户收藏状态。 */
+    @Transaction
+    suspend fun saveTleCatalog(
+        satellites: List<SatelliteEntity>,
+        tles: List<TleEntity>,
+        metadata: SatelliteSourceMetadataEntity,
+    ) {
+        satellites.forEach { incoming ->
+            val current = findSatellite(incoming.catalogNumber)
+            upsertSatellite(incoming.copy(
+                id = current?.id ?: 0,
+                name = incoming.name.ifBlank { current?.name ?: "NORAD ${incoming.catalogNumber}" },
+                favorite = current?.favorite ?: false,
+            ))
+        }
+        tles.forEach { upsertTle(it) }
+        upsertSourceMetadata(metadata)
+    }
+
+    @Transaction
+    suspend fun replaceTransponders(
+        catalogNumber: Int,
+        transponders: List<TransponderEntity>,
+        metadata: SatelliteSourceMetadataEntity,
+    ) {
+        deleteTransponders(catalogNumber)
+        transponders.forEach { upsertTransponder(it) }
+        upsertSourceMetadata(metadata)
+    }
 }

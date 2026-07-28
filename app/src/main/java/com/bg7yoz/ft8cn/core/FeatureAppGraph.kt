@@ -5,6 +5,11 @@ import com.bg7yoz.ft8cn.data.local.Ft8cnFeatureDatabase
 import com.bg7yoz.ft8cn.data.logbook.QsoLogRepository
 import com.bg7yoz.ft8cn.data.logbook.RoomQsoLogRepository
 import com.bg7yoz.ft8cn.data.settings.FeatureSettingsStore
+import com.bg7yoz.ft8cn.satellite.CelesTrakCatalogClient
+import com.bg7yoz.ft8cn.satellite.RoomSatelliteCatalogRepository
+import com.bg7yoz.ft8cn.satellite.SatelliteCatalogRepository
+import com.bg7yoz.ft8cn.satellite.SatNogsCatalogClient
+import com.bg7yoz.ft8cn.satellite.UrlConnectionSatelliteHttpTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,6 +27,13 @@ class FeatureAppGraph private constructor(context: Context) {
     }
     val qsoLogRepository: QsoLogRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         RoomQsoLogRepository(database.qsoDao())
+    }
+    val satelliteCatalogRepository: SatelliteCatalogRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        RoomSatelliteCatalogRepository(
+            database.satelliteDao(),
+            CelesTrakCatalogClient(UrlConnectionSatelliteHttpTransport()),
+            SatNogsCatalogClient(UrlConnectionSatelliteHttpTransport(maximumResponseBytes = 2 * 1024 * 1024)),
+        )
     }
 
     companion object {

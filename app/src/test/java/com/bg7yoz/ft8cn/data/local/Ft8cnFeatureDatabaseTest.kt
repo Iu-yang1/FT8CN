@@ -109,6 +109,70 @@ class Ft8cnFeatureDatabaseTest {
         }
     }
 
+    @Test
+    fun migrationTwoToThreeAddsSatelliteCacheMetadata() {
+        val versionTwo = helper(version = 2, onCreate = {})
+        versionTwo.writableDatabase.execSQL("CREATE TABLE marker (value INTEGER NOT NULL)")
+        versionTwo.writableDatabase.execSQL("INSERT INTO marker VALUES (7)")
+        versionTwo.close()
+
+        val versionThree = helper(version = 3, onCreate = {}) { database, oldVersion, newVersion ->
+            assertEquals(2, oldVersion)
+            assertEquals(3, newVersion)
+            Ft8cnFeatureDatabase.MIGRATION_2_3.migrate(database)
+        }
+        versionThree.writableDatabase.query("SELECT value FROM marker").use {
+            assertTrue(it.moveToFirst())
+            assertEquals(7, it.getInt(0))
+        }
+        versionThree.writableDatabase.query("PRAGMA table_info(satellite_source_metadata)").use {
+            val columns = mutableSetOf<String>()
+            while (it.moveToNext()) columns += it.getString(1)
+            assertTrue("sourceKey" in columns)
+            assertTrue("payloadSha256" in columns)
+            assertTrue("nextEligibleUtcMillis" in columns)
+        }
+        versionThree.close()
+    }
+
+    @Test
+    fun catalogRefreshPreservesFavoriteFlag() = runBlocking {
+        val database = Room.inMemoryDatabaseBuilder(
+            context,
+            Ft8cnFeatureDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        try {
+            val dao = database.satelliteDao()
+            dao.upsertSatellite(SatelliteEntity(catalogNumber = 5, name = "Old", favorite = true, updatedUtcMillis = 1))
+            dao.saveTleCatalog(
+                satellites = listOf(SatelliteEntity(catalogNumber = 5, name = "New", favorite = false, updatedUtcMillis = 2)),
+                tles = listOf(TleEntity(
+                    satelliteCatalogNumber = 5,
+                    epochUtcMillis = 2,
+                    line1 = "line1",
+                    line2 = "line2",
+                    source = "test",
+                    fetchedUtcMillis = 2,
+                )),
+                metadata = SatelliteSourceMetadataEntity(
+                    sourceKey = "test",
+                    etag = null,
+                    lastModified = null,
+                    lastAttemptUtcMillis = 2,
+                    lastSuccessUtcMillis = 2,
+                    nextEligibleUtcMillis = 3,
+                    payloadSha256 = "abc",
+                    lastError = null,
+                ),
+            )
+            val stored = requireNotNull(dao.findSatellite(5))
+            assertEquals("New", stored.name)
+            assertTrue(stored.favorite)
+        } finally {
+            database.close()
+        }
+    }
+
     private fun helper(
         version: Int,
         onCreate: (SupportSQLiteDatabase) -> Unit,

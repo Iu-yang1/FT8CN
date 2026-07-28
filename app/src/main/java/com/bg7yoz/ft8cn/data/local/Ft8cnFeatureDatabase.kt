@@ -17,8 +17,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SatelliteEntity::class,
         TleEntity::class,
         TransponderEntity::class,
+        SatelliteSourceMetadataEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class Ft8cnFeatureDatabase : RoomDatabase() {
@@ -39,10 +40,29 @@ abstract class Ft8cnFeatureDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS satellite_source_metadata (
+                        sourceKey TEXT NOT NULL PRIMARY KEY,
+                        etag TEXT,
+                        lastModified TEXT,
+                        lastAttemptUtcMillis INTEGER NOT NULL,
+                        lastSuccessUtcMillis INTEGER NOT NULL,
+                        nextEligibleUtcMillis INTEGER NOT NULL,
+                        payloadSha256 TEXT,
+                        lastError TEXT
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun create(context: Context): Ft8cnFeatureDatabase = Room.databaseBuilder(
             context.applicationContext,
             Ft8cnFeatureDatabase::class.java,
             DATABASE_NAME,
-        ).addMigrations(MIGRATION_1_2).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
     }
 }

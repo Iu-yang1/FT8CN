@@ -14,8 +14,8 @@
 | 2 NTP/GNSS 时间纪律和 slot 调度 | 完成 | fake clock、本地 NTP mock、GNSS 转换、slot、DSP/oracle PASS；`BLOCKED_DEVICE` | `fac3c4c0` |
 | 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 完成 | API 28 AArch64 ELF、fake rig/rigctld、PTT 安全、device FT8 PASS；`BLOCKED_HARDWARE_RIG` | `dab521a4` |
 | 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 完成 | oracle、状态机、纯噪声、Debug/Release 真机矩阵 PASS；`BLOCKED_HARDWARE_TX` | `68cf7b29` |
-| 5 Q65-EME 页面和生产流式内存 | 完成 | 300 秒 RX/TX、averaging、内存、host/oracle/Debug/Release 真机回归 PASS；`BLOCKED_SANITIZER` | 本阶段提交 |
-| 6 卫星页面、轨道预测和双向 Doppler | 待开始 | SGP4 golden、pass、fake rig、离线缓存 | 待提交 |
+| 5 Q65-EME 页面和生产流式内存 | 完成 | 300 秒 RX/TX、averaging、内存、host/oracle/Debug/Release 真机回归 PASS；`BLOCKED_SANITIZER` | `16e4a26c` |
+| 6 卫星页面、轨道预测和双向 Doppler | 完成 | SGP4/Skyfield golden、pass、fake rig、离线缓存、Debug/Release/device/DSP PASS；`BLOCKED_HARDWARE_RIG` | 本阶段提交 |
 | 7 本地日志、ADIF 和 LoTW | 待开始 | Room、ADIF、幂等上传、签名安全 | 待提交 |
 | 8 Kotlin/Compose Material 3 UI 和全局优化 | 待开始 | UI/旋转/恢复、泄漏、宏基准、DSP 回归 | 待提交 |
 | 9 集成验收、发布门禁和最终交付 | 待开始 | 全量 verify、device、ELF、SBOM、secret | 待提交 |
@@ -72,3 +72,11 @@
 - Host FT8/FT4/Q65 哈希不变，官方 `jt9` FT8/FT4 严格一致；Debug/Release 真机 12/24/48 kHz 结果一致，Q65 流式 instrumentation 各 7 项通过。
 - 完整门禁状态为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`。高精度月面天文 oracle 与外部 wave transport 流式协议分别记录为 `BLOCKED_EME_EPHEMERIS_ORACLE`、`BLOCKED_Q65_EXTERNAL_STREAMING`，不伪报完成。
 - 详见 `docs/verification/q65-eme-streaming-2026-07-28.md`。
+
+## 阶段 6 记录
+
+- 以 clean-room 边界引入固定版本、Unlicense 的 Java SGP4；Look4Sat 只参考功能范围，未复制 GPL-3.0 源码或资源。
+- 完成严格 TLE、SGP4/TEME、站心观测、过境、地面/极坐标轨迹、上下行 Doppler、反向线性转发器和可回滚 CAT 跟踪；跟踪永不自动 PTT。
+- CelesTrak/SatNOGS 使用 HTTPS、条件请求、响应上限、最短刷新间隔和 Room v3 离线元数据；官方仓库外快照与 Skyfield 1.54 golden PASS。
+- 全量 host/oracle/Gradle/真机门禁 PASS，FT8/FT4/Q65 结果哈希不变，host p95 相对阶段 0 均在 3% 内；sanitizer runtime 仍为 `BLOCKED_SANITIZER`。
+- 详见 `docs/verification/satellite-doppler-2026-07-28.md`。

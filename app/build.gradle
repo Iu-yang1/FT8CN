@@ -84,6 +84,7 @@ android {
     sourceSets {
         main {
             jniLibs.srcDirs = ['libs']
+            java.srcDir "$rootDir/third_party/sgp4/src/main/java"
         }
         test.assets.srcDirs += files("$projectDir/schemas")
         androidTest.assets.srcDirs += files("$projectDir/schemas")

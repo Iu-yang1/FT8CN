@@ -23,6 +23,10 @@
 | Google Play services Maps | 18.1.0 | Google APIs Terms | 地图服务 | 是 | 遵守服务条款、API key 与隐私要求，不表述为开源组件 |
 | FT8AF | `patrickrb/FT8AF@c2f63e8b` | 顶层 MIT；依赖另议 | clean-room 内存/生命周期参考 | 否 | 不复制应用源码，边界见 `third_party/ft8af-reference` |
 | Look4Sat | `rt-bishop/Look4Sat@b17ea2d9` | GPL-3.0 | clean-room 卫星功能参考 | 否 | 阶段 6 只参考功能和公开算法；直接复用前必须切换 GPL 决策 |
+| aholinch SGP4 | `aholinch/sgp4@552cb1489a52c3023ae70cb6c7e239e84c5950fe` | Unlicense | TLE 解析和 SGP4 数值传播，Java 源码编译 | 是 | 保留 LICENSE、来源、原始/修补 SHA 和修改说明；只修复全局时区副作用 |
+| CelesTrak GP data | 运行时 `gp.php?GROUP=amateur&FORMAT=TLE` | 提供方数据政策 | TLE 在线刷新；离线缓存 | 否（用户缓存） | 明示来源、ETag/更新时间和 stale 状态；不随 APK 打包目录快照 |
+| SatNOGS DB transmitters | 运行时 DB API | CC BY-SA 4.0（数据） | 转发器在线刷新；离线缓存 | 否（用户缓存） | UI 显示 SatNOGS 归属；不把运行时数据改称 FT8CN 自有数据 |
+| Skyfield | 1.54 + python-sgp4 2.27 | MIT | 阶段 6 独立过境 oracle | 否 | 仅位于 `H:/tools`；wheel SHA 记录于工具链锁，不进入 APK |
 | TQSL/tqsllib | 尚未固定 | 待阶段 7 复核 | LoTW 签名候选 | 否 | 未完成前只允许外部 `.tq8` 工作流，禁止未签名 ADIF 直传 |
 
 ## 分发边界

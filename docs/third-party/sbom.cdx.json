@@ -106,7 +106,16 @@
     {"type": "library", "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel@2.5.1", "name": "AndroidX Lifecycle", "version": "2.5.1", "licenses": [{"license": {"id": "Apache-2.0"}}]},
     {"type": "library", "bom-ref": "pkg:maven/androidx.navigation/navigation-fragment@2.5.3", "name": "AndroidX Navigation", "version": "2.5.3", "licenses": [{"license": {"id": "Apache-2.0"}}]},
     {"type": "library", "bom-ref": "pkg:maven/com.google.guava/guava@31.1-jre", "name": "Guava", "version": "31.1-jre", "licenses": [{"license": {"id": "Apache-2.0"}}]},
-    {"type": "library", "bom-ref": "pkg:maven/com.google.android.gms/play-services-maps@18.1.0", "name": "Google Play services Maps", "version": "18.1.0", "licenses": [{"license": {"name": "Google APIs Terms of Service"}}]}
+    {"type": "library", "bom-ref": "pkg:maven/com.google.android.gms/play-services-maps@18.1.0", "name": "Google Play services Maps", "version": "18.1.0", "licenses": [{"license": {"name": "Google APIs Terms of Service"}}]},
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/aholinch/sgp4@552cb1489a52c3023ae70cb6c7e239e84c5950fe",
+      "name": "aholinch Java SGP4",
+      "version": "552cb148",
+      "hashes": [{"alg": "SHA-256", "content": "12af6e4fce194d7eb3b48cd0afd2a70edf2fcfd9501d775cef08b5fba451d119"}],
+      "licenses": [{"license": {"id": "Unlicense"}}],
+      "externalReferences": [{"type": "vcs", "url": "https://github.com/aholinch/sgp4/tree/552cb1489a52c3023ae70cb6c7e239e84c5950fe"}]
+    }
   ],
   "dependencies": [
     {
@@ -136,6 +145,7 @@
         "pkg:maven/androidx.navigation/navigation-fragment@2.5.3",
         "pkg:maven/com.google.guava/guava@31.1-jre",
         "pkg:maven/com.google.android.gms/play-services-maps@18.1.0"
+        ,"pkg:github/aholinch/sgp4@552cb1489a52c3023ae70cb6c7e239e84c5950fe"
       ]
     }
   ]
