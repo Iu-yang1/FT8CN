@@ -4,14 +4,18 @@
   "serialNumber": "urn:uuid:7a6a4f78-42f8-4b7c-94e4-0acb223b8f8c",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-26T11:00:00Z",
+    "timestamp": "2026-07-28T18:26:24Z",
     "component": {
       "type": "application",
-      "bom-ref": "pkg:github/Iu-yang1/FT8CN@10b2c62e4c75021eb559825c3da85f77b10a052d",
+      "bom-ref": "pkg:github/Iu-yang1/FT8CN@dae3b4e37db5abd1b3a4c08d7635f60fd8bc4f20",
       "name": "FT8CN",
-      "version": "10b2c62e4c75021eb559825c3da85f77b10a052d",
+      "version": "dae3b4e37db5abd1b3a4c08d7635f60fd8bc4f20",
       "licenses": [{"license": {"id": "MIT"}}]
-    }
+    },
+    "properties": [
+      {"name": "ft8cn:qualification", "value": "stage-0-9-device-release-2026-07-29"},
+      {"name": "ft8cn:native-profile", "value": "Release O2 NDEBUG; PARALLEL_NATIVE disabled"}
+    ]
   },
   "components": [
     {

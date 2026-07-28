@@ -27,7 +27,8 @@ FT4 的同类频率行 OpenMP 实验在真机上慢 21%-29%，因此没有保留
 - averaging 状态属于持久 session，仅在会话创建、显式 reset、目标/模式变化或采样间断时清除。
 - 移动端关闭上游 Q65 结果文件输出；scratch unit 仅用于满足未使用的接口约束。
 - `common/resampler` 已提供固定工作区的有状态分块抽取，并通过 12/24/48 kHz 任意 chunk 边界逐 bit 等价测试。
-- 已知限制：300 秒、24/48 kHz 的生产接收仍会先持有完整源采样数组，本地 Q65 播放仍持有完整波形；分块抽取尚未接入采集回调，TX 也尚未切换到 `AudioTrack.MODE_STREAM`。因此 `BLOCKED_Q65_STREAMING` 仍是发布风险。
+- 生产 RX 已由录音 chunk 直接写入最终 12 kHz slot；300 秒、48 kHz 不再创建完整高采样率源数组。
+- 生产 TX 使用连续相位 JNI 分块合成和 `AudioTrack.MODE_STREAM`，Java/native 工作块均限制为 4096 samples。外部网络/CAT wave transport 尚无等价的有界流协议，因此该组合明确拒绝并记录为 `BLOCKED_Q65_EXTERNAL_STREAMING`。
 
 ## 构建与测试
 

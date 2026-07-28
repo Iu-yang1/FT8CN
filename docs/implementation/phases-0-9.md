@@ -17,8 +17,8 @@
 | 5 Q65-EME 页面和生产流式内存 | 完成 | 300 秒 RX/TX、averaging、内存、host/oracle/Debug/Release 真机回归 PASS；`BLOCKED_SANITIZER` | `16e4a26c` |
 | 6 卫星页面、轨道预测和双向 Doppler | 完成 | SGP4/Skyfield golden、pass、fake rig、离线缓存、Debug/Release/device/DSP PASS；`BLOCKED_HARDWARE_RIG` | `2bd9b82e` |
 | 7 本地日志、ADIF 和 LoTW | 完成 | Room v4、ADIF 3.1.5、签名 TQ8、幂等上传与 mock PASS；`BLOCKED_TQSL_EMBEDDED_SIGNING`、`BLOCKED_LOTW_ACCOUNT` | `11f8d86b` |
-| 8 Kotlin/Compose Material 3 UI 和全局优化 | 部分完成 | DSP/device PASS；`BLOCKED_DEVICE_UI_UNLOCK`、`BLOCKED_COMPLETE_COMPOSE_MIGRATION`、`BLOCKED_BASELINE_PROFILE_GENERATION` | 本阶段提交 |
-| 9 集成验收、发布门禁和最终交付 | 待开始 | 全量 verify、device、ELF、SBOM、secret | 待提交 |
+| 8 Kotlin/Compose Material 3 UI 和全局优化 | 部分完成 | DSP/device PASS；`BLOCKED_DEVICE_UI_UNLOCK`、`BLOCKED_COMPLETE_COMPOSE_MIGRATION`、`BLOCKED_BASELINE_PROFILE_GENERATION` | `dae3b4e3` |
+| 9 集成验收、发布门禁和最终交付 | 本机可执行项完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`；严格 lint/ELF/SBOM/secret PASS；`BLOCKED_SANITIZER` 及外部条件见阻塞报告 | 本阶段提交 |
 
 状态只能在该阶段实现和门禁完成后改为“完成”。外部硬件、账户或平台工具缺失时，记录精确的 `BLOCKED_*`，并保留已完成的 fake、离线或 host 证据。
 
@@ -105,3 +105,13 @@
   操作台，分别记录 `BLOCKED_DEVICE_UI_UNLOCK`、`BLOCKED_COMPLETE_COMPOSE_MIGRATION` 和
   `BLOCKED_BASELINE_PROFILE_GENERATION`，不伪报完成。
 - 详见 `docs/verification/compose-memory-2026-07-29.md`。
+
+## 阶段 9 记录
+
+- 严格 Release `-O2 -DNDEBUG` CTest、FT8/FT4/Q65 固定语料、官方 `jt9` 逐条多重集合、Debug/Release APK、完整 Android 真机矩阵和 Q65 300 秒流式门禁通过；最终状态为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`。
+- Host FT8/FT4/Q65 p50/p95 为 522.124/525.649、260.357/261.714、220.772/227.075 ms；相对阶段 0 的 p95 为 +1.756%、-1.699%、+1.951%，均未超过 3%。完整结果 SHA256 保持不变。
+- 真机为 Android 16、arm64-v8a、8 logical CPU；FT8 sync 使用 2 线程。Debug/Release 在 12/24/48 kHz 的结果数和结果哈希逐 case 一致，Q65 300 秒 RX/TX 均使用 4096-sample 有界块。
+- 扩展信道门禁使用各 200 个 FT8/FT4 纯噪声时隙，CRC-valid 误解码均为 0；OSD 参考/优化实现覆盖 1000 个确定性随机种子和边界矩阵。
+- 完整 Debug/Release lint 通过。仅对默认中文 `strings.xml` 的既有翻译债务和固定上游 SGP4 文件做路径级例外，其他路径仍严格检查。
+- `libft8cn.so` 为 AArch64，动态依赖仅为 `liblog.so`、`libm.so`、`libc++_shared.so`、`libdl.so`、`libc.so`；第三方 15 组件、87 个 WSJT-X build input、CycloneDX 1.5 和仓库卫生检查通过。
+- 详细证据见 `docs/verification/feature-release-2026-07-29.md`、`performance-2026-07-29.md` 与 `blocked-2026-07-29.md`。整体功能仍受报告中的真实外部阻塞约束，未把这些项目冒充为 PASS。

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- 默认中文资源尚未全部翻译；仅豁免这个既有文件，其他资源仍执行翻译检查。 -->
+    <issue id="MissingTranslation">
+        <ignore path="src/main/res/values/strings.xml" />
+    </issue>
+
+    <!-- 固定版本的第三方 SGP4 源码保持原样，避免为了格式告警修改上游算法文件。 -->
+    <issue id="SuspiciousIndentation">
+        <ignore path="../third_party/sgp4/src/main/java/sgp4/TLE.java" />
+    </issue>
+</lint>

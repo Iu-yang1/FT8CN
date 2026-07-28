@@ -9,6 +9,7 @@
 **/build-*/
 **/out-*/
 /app/build/
+/app/src/androidTest/assets/corpus/
 
 # Native toolchain outputs
 *.o
