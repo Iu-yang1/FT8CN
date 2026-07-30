@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -21,13 +20,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.bg7yoz.ft8cn.R
 import com.bg7yoz.ft8cn.core.FeatureAppGraph
 import com.bg7yoz.ft8cn.data.logbook.AdifCodec
 import com.bg7yoz.ft8cn.data.logbook.LotwStatus
+import com.bg7yoz.ft8cn.data.logbook.QsoRecord
+import com.bg7yoz.ft8cn.data.local.LotwUploadJobEntity
+import com.bg7yoz.ft8cn.feature.shell.Ft8cnPageHeader
+import com.bg7yoz.ft8cn.feature.shell.Ft8cnPanel
+import com.bg7yoz.ft8cn.feature.shell.LegacyDestinationHost
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -43,6 +49,8 @@ fun LogbookScreen() {
     val records by graph.qsoLogRepository.observeRecent(250).collectAsState(initial = emptyList())
     val jobs by workflow.observeJobs(50).collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    var showLocalRecords by rememberSaveable { mutableStateOf(true) }
+    var legacyHostGeneration by rememberSaveable { mutableStateOf(0) }
     var statusText by remember { mutableStateOf("本地日志就绪") }
     var pendingExport by remember { mutableStateOf<String?>(null) }
 
@@ -90,92 +98,110 @@ fun LogbookScreen() {
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text("日志与 LoTW", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "ADIF 3.1.5 · 外部 TQSL 数字签名 · 官方 HTTPS 上传",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Column(modifier = Modifier.fillMaxSize()) {
+        Ft8cnPageHeader(
+            title = "通联日志",
+            subtitle = "QSO · 统计 · ADIF · LoTW",
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SectionButton(showLocalRecords, "日志列表 / WebUI", Modifier.weight(1f)) {
+                showLocalRecords = true
+                legacyHostGeneration++
+            }
+            SectionButton(!showLocalRecords, "ADIF / LoTW", Modifier.weight(1f)) { showLocalRecords = false }
+        }
+        if (showLocalRecords) {
+            LegacyDestinationHost(
+                targetDestinationId = R.id.menu_nav_history,
+                instanceKey = legacyHostGeneration,
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 6.dp),
+            )
+        } else {
+            LotwContent(
+                records = records,
+                jobs = jobs,
+                statusText = statusText,
+                importAdif = { importAdif.launch(arrayOf("application/x-adif", "text/plain", "*/*")) },
+                exportAdif = {
+                    scope.launch {
+                        statusText = runCatching {
+                            val candidates = records.filter {
+                                it.lotwStatus == LotwStatus.LOCAL ||
+                                    it.lotwStatus == LotwStatus.REJECTED ||
+                                    it.lotwStatus == LotwStatus.PENDING_SIGN
+                            }
+                            pendingExport = workflow.exportForExternalSigning(candidates.map { it.stableId })
+                            createAdif.launch("FT8CN-${System.currentTimeMillis()}.adi")
+                            "等待选择导出位置"
+                        }.getOrElse { "导出准备失败：${it.message}" }
+                    }
+                },
+                importTq8 = { importTq8.launch(arrayOf("application/octet-stream", "*/*")) },
             )
         }
+    }
+}
+
+@Composable
+private fun LotwContent(
+    records: List<QsoRecord>,
+    jobs: List<LotwUploadJobEntity>,
+    statusText: String,
+    importAdif: () -> Unit,
+    exportAdif: () -> Unit,
+    importTq8: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text("安全工作流", style = MaterialTheme.typography.titleMedium)
-                    Text("FT8CN 不保存呼号证书私钥或密码，也不会把未签名 ADIF 直接上传到 LoTW。")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { importAdif.launch(arrayOf("application/x-adif", "text/plain", "*/*")) }) {
-                            Text("导入 ADIF")
-                        }
-                        Button(
-                            enabled = records.isNotEmpty(),
-                            onClick = {
-                                scope.launch {
-                                    statusText = runCatching {
-                                        val candidates = records.filter {
-                                            it.lotwStatus == LotwStatus.LOCAL ||
-                                                it.lotwStatus == LotwStatus.REJECTED ||
-                                                it.lotwStatus == LotwStatus.PENDING_SIGN
-                                        }
-                                        pendingExport = workflow.exportForExternalSigning(candidates.map { it.stableId })
-                                        createAdif.launch("FT8CN-${System.currentTimeMillis()}.adi")
-                                        "等待选择导出位置"
-                                    }.getOrElse { "导出准备失败：${it.message}" }
-                                }
-                            },
-                        ) { Text("导出并签名") }
+            Ft8cnPanel("安全签名流程") {
+                Text("FT8CN 不保存呼号证书私钥或密码，也不会把未签名 ADIF 直接上传到 LoTW。")
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = importAdif, modifier = Modifier.weight(1f)) { Text("导入 ADIF") }
+                    Button(enabled = records.isNotEmpty(), onClick = exportAdif, modifier = Modifier.weight(1f)) {
+                        Text("导出待签名")
                     }
-                    Button(onClick = { importTq8.launch(arrayOf("application/octet-stream", "*/*")) }) {
-                        Text("选择并上传已签名 .tq8")
-                    }
-                    Text(statusText, style = MaterialTheme.typography.bodySmall)
                 }
+                Button(onClick = importTq8, modifier = Modifier.fillMaxWidth()) { Text("上传已签名 .tq8") }
+                Text(statusText, style = MaterialTheme.typography.bodySmall)
             }
         }
         if (jobs.isNotEmpty()) {
-            item { Text("LoTW 队列", style = MaterialTheme.typography.titleLarge) }
-            items(jobs, key = { it.id }) { job ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("任务 #${job.id} · ${job.state}", style = MaterialTheme.typography.titleSmall)
-                        Text("QSO ${job.qsoStableIds.lineSequence().count { it.isNotBlank() }} · 尝试 ${job.attemptCount}")
-                        if (!job.responseMessage.isNullOrBlank()) Text(job.responseMessage.take(300))
-                        if (!job.lastError.isNullOrBlank()) {
-                            Text(job.lastError.take(300), color = MaterialTheme.colorScheme.error)
-                        }
-                    }
+            items(jobs, key = { "job-${it.id}" }) { job ->
+                Ft8cnPanel("LoTW 任务 #${job.id} · ${job.state}") {
+                    Text("QSO ${job.qsoStableIds.lineSequence().count { it.isNotBlank() }} · 尝试 ${job.attemptCount}")
+                    if (!job.responseMessage.isNullOrBlank()) Text(job.responseMessage.take(300))
+                    if (!job.lastError.isNullOrBlank()) Text(job.lastError.take(300), color = MaterialTheme.colorScheme.error)
                 }
             }
         }
-        item { Text("最近 QSO（${records.size}）", style = MaterialTheme.typography.titleLarge) }
-        items(records, key = { it.stableId }) { record ->
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(record.dxCall, style = MaterialTheme.typography.titleMedium)
-                        Text(record.mode.name)
-                    }
-                    Text(
-                        "${formatUtc(record.startedUtcMillis)} · ${formatFrequency(record.frequencyHz)} · " +
-                            "${record.reportSent}/${record.reportReceived}",
-                    )
-                    Text(
-                        "LoTW ${record.lotwStatus}" +
-                            record.satelliteName?.let { " · SAT $it" }.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        items(records, key = { "qso-${it.stableId}" }) { record ->
+            Ft8cnPanel("${record.dxCall} · ${record.mode.name}") {
+                Text(
+                    "${formatUtc(record.startedUtcMillis)} · ${formatFrequency(record.frequencyHz)} · " +
+                        "${record.reportSent}/${record.reportReceived}",
+                )
+                Text(
+                    "LoTW ${record.lotwStatus}" + record.satelliteName?.let { " · SAT $it" }.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
+}
+
+@Composable
+private fun SectionButton(selected: Boolean, text: String, modifier: Modifier, onClick: () -> Unit) {
+    if (selected) Button(onClick = onClick, modifier = modifier) { Text(text, maxLines = 1) }
+    else OutlinedButton(onClick = onClick, modifier = modifier) { Text(text, maxLines = 1) }
 }
 
 private fun readBoundedAdif(input: java.io.InputStream): String {
@@ -194,4 +220,5 @@ private fun formatUtc(utcMillis: Long): String = DateTimeFormatter.ofPattern("yy
     .withZone(ZoneOffset.UTC)
     .format(Instant.ofEpochMilli(utcMillis))
 
-private fun formatFrequency(hz: Long): String = String.format(java.util.Locale.US, "%.6f MHz", hz / 1_000_000.0)
+private fun formatFrequency(hz: Long): String =
+    String.format(java.util.Locale.US, "%.6f MHz", hz / 1_000_000.0)

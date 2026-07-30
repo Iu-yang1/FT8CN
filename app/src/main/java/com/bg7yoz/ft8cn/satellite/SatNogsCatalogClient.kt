@@ -13,7 +13,8 @@ class SatNogsCatalogClient(private val transport: SatelliteHttpTransport) {
             metadata?.lastModified?.takeIf(String::isNotBlank)?.let { put("If-Modified-Since", it) }
         }
         val response = transport.get(
-            "https://db.satnogs.org/api/transmitters/?satellite__norad_cat_id=$catalogNumber",
+            "https://db.satnogs.org/api/transmitters/" +
+                "?format=json&status=active&satellite__norad_cat_id=$catalogNumber",
             headers,
         )
         return when (response.statusCode) {

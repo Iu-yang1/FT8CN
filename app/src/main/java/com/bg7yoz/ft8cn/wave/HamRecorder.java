@@ -38,7 +38,7 @@ public class HamRecorder {
             new CopyOnWriteArrayList<>();
     private OnVoiceMonitorChanged onVoiceMonitorChanged = null;
 
-    private boolean isMicRecord = true;
+    private volatile boolean isMicRecord = true;
     private final MicRecorder micRecorder = new MicRecorder();
     private int currentInputSampleRate = DEFAULT_SAMPLE_RATE_IN_HZ;
 
@@ -113,6 +113,16 @@ public class HamRecorder {
 
     public boolean isRunning() {
         return isRunning;
+    }
+
+    /** 当前生产输入的可读路由，不包含设备序列号等敏感信息。 */
+    public String getCurrentInputRouteDescription() {
+        return isMicRecord ? micRecorder.getInputRouteDescription() : "电台网络音频";
+    }
+
+    /** Android 并发录音策略可能让 read() 正常返回但数据全为零。 */
+    public boolean isCurrentInputSystemSilenced() {
+        return isMicRecord && micRecorder.isSystemSilenced();
     }
 
     @SuppressLint("MissingPermission")

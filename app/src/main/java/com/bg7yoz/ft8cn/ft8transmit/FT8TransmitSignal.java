@@ -19,6 +19,8 @@ import com.bg7yoz.ft8cn.auto.AutoSessionType;
 import com.bg7yoz.ft8cn.auto.AutoSessionUiPolicy;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
 import com.bg7yoz.ft8cn.core.automation.OperatingAutomationController;
+import com.bg7yoz.ft8cn.core.automation.Q65AutomationController;
+import com.bg7yoz.ft8cn.core.automation.Q65AutomationState;
 import com.bg7yoz.ft8cn.core.time.DisciplinedClockRegistry;
 import com.bg7yoz.ft8cn.cq.CallQueueManager;
 import com.bg7yoz.ft8cn.cq.CqCallEntry;
@@ -36,6 +38,8 @@ import java.util.Comparator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+
+import kotlinx.coroutines.flow.StateFlow;
 
 /**
  * Transmit controller and automatic QSO flow.
@@ -62,6 +66,11 @@ public class FT8TransmitSignal {
     private final Object transmitStateLock = new Object();
     private final OperatingAutomationController automationController =
             new OperatingAutomationController();
+    private final Q65AutomationController q65AutomationController =
+            new Q65AutomationController();
+    private volatile String q65TransmitMessage = "";
+    private long lastQ65AutomationSlot = Long.MIN_VALUE;
+    private volatile boolean q65CurrentTransmitSucceeded = false;
     private Ft8Message lastAutoIncomingMessage = null;
     private long lastAutomationTransmitSlot = Long.MIN_VALUE;
     private int lastAutomationTransmitMode = -1;
@@ -169,6 +178,75 @@ public class FT8TransmitSignal {
 
     public String getLastTransmitStatusSummary() {
         return lastTransmitStatusSummary;
+    }
+
+    public StateFlow<Q65AutomationState> getQ65AutomationState() {
+        return q65AutomationController.getState();
+    }
+
+    /** 切换为 Q65 仅接收时先撤销任何 FT8/FT4 自动发射状态。 */
+    public void prepareQ65ReceiveOnly() {
+        setActivated(false);
+        q65TransmitMessage = "";
+        q65AutomationController.receiveOnly(
+                GeneralVariables.getQ65Submode(),
+                GeneralVariables.getQ65TrPeriodSeconds());
+    }
+
+    /**
+     * 显式建立独立 Q65 T/R 序列；不会进入 FT8/FT4 CQ 队列或自动应答控制器。
+     */
+    public boolean armQ65Sequence(String message, int txSequence, boolean repeat) {
+        if (GeneralVariables.getSignalMode() != FT8Common.Q65_MODE) {
+            Log.w(TAG, "armQ65Sequence rejected: current mode is not Q65");
+            return false;
+        }
+        if (!q65AutomationController.arm(
+                message,
+                txSequence,
+                repeat,
+                GeneralVariables.getQ65Submode(),
+                GeneralVariables.getQ65TrPeriodSeconds())) {
+            return false;
+        }
+
+        Q65AutomationState state = q65AutomationController.getState().getValue();
+        q65TransmitMessage = state.getMessage();
+        int targetSequential = (txSequence + 1) % 2;
+        int i3 = GenerateFT8.checkI3ByCallsign(GeneralVariables.myCallsign);
+        setTransmit(
+                new TransmitCallsign(FT8Common.Q65_MODE, i3, 0, "CQ", targetSequential),
+                6,
+                "");
+        sequential = txSequence;
+        mutableSequential.postValue(sequential);
+        q65CurrentTransmitSucceeded = false;
+        setActivated(true);
+        return true;
+    }
+
+    /**
+     * 根据已解码的 Q65 报文建立回复序列。回复固定使用对方时隙的相反序列，
+     * 不进入 FT8/FT4 的定向 CQ、CQ 队列或 DXpedition 状态机。
+     */
+    public boolean armQ65Reply(Ft8Message decodedMessage, boolean repeat) {
+        if (decodedMessage == null || GeneralVariables.getSignalMode() != FT8Common.Q65_MODE) {
+            return false;
+        }
+        String target = decodedMessage.getCallsignFrom();
+        if (target == null || target.trim().isEmpty() || "<...>".equals(target)) {
+            return false;
+        }
+        String message = target.trim().toUpperCase()
+                + " " + GeneralVariables.myCallsign.trim().toUpperCase()
+                + " " + GeneralVariables.getMyMaidenhead4Grid().trim().toUpperCase();
+        int txSequence = (decodedMessage.getSequence() + 1) % 2;
+        return armQ65Sequence(message, txSequence, repeat);
+    }
+
+    public void stopQ65Sequence(String reason) {
+        setActivated(false);
+        q65AutomationController.stop(reason);
     }
 
     private void updateLastTransmitStatus(String status) {
@@ -604,6 +682,15 @@ public class FT8TransmitSignal {
             }
             lastAutomationTransmitMode = automationMode;
             lastAutomationTransmitSlot = automationSlot;
+        } else if (!manualRequest && automationMode == FT8Common.Q65_MODE) {
+            int currentSequence = UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM());
+            if (!q65AutomationController.tryClaim(automationSlot, currentSequence)) {
+                Log.d(TAG, "doTransmit ignored: Q65 sequence is not armed for slot "
+                        + automationSlot);
+                return;
+            }
+            lastQ65AutomationSlot = automationSlot;
+            q65CurrentTransmitSucceeded = false;
         }
         Log.d(TAG, "doTransmit: start transmit");
         try {
@@ -616,6 +703,14 @@ public class FT8TransmitSignal {
                         automationSlot,
                         functionOrder,
                         false);
+            } else if (!manualRequest
+                    && automationMode == FT8Common.Q65_MODE
+                    && lastQ65AutomationSlot != Long.MIN_VALUE) {
+                q65AutomationController.markTransmitFinished(
+                        lastQ65AutomationSlot,
+                        false,
+                        "Q65 发射任务无法进入执行队列");
+                lastQ65AutomationSlot = Long.MIN_VALUE;
             }
             if (reserveBeforeQueue) {
                 updateTransmittingState(false);
@@ -842,7 +937,7 @@ public class FT8TransmitSignal {
                 resetTargetReport();
                 Ft8Message msg = new Ft8Message(currentMode, 1, 0, "CQ", GeneralVariables.myCallsign
                         , GeneralVariables.getMyMaidenhead4Grid());
-                msg.modifier = GeneralVariables.toModifier;
+                msg.modifier = getRuntimeCqModifier();
                 return msg;
         }
 
@@ -1088,6 +1183,7 @@ public class FT8TransmitSignal {
                 failureReason = "short-generation:" + generated + "/" + stream.getTotalSamples();
             } else {
                 waitForQ65PlaybackDrain(generated, sampleRate);
+                q65CurrentTransmitSucceeded = true;
             }
             double rms = generated > 0L ? Math.sqrt(energy / generated) : 0.0;
             updateLastTransmitStatus(String.format(java.util.Locale.US,
@@ -1120,7 +1216,15 @@ public class FT8TransmitSignal {
 
     private Ft8Message buildTransmitMessage(int order) {
         Ft8Message msg;
-        if (hasPendingDxpeditionMacro()) {
+        if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE
+                && q65TransmitMessage != null
+                && !q65TransmitMessage.trim().isEmpty()) {
+            msg = new Ft8Message(FT8Common.Q65_MODE, "CQ",
+                    GeneralVariables.myCallsign, q65TransmitMessage);
+            msg.setTransmitRawText(q65TransmitMessage);
+            msg.i3 = 0;
+            msg.n3 = 0;
+        } else if (hasPendingDxpeditionMacro()) {
             msg = buildPendingDxpeditionMacroMessage();
         } else if (transmitFreeText) {
             msg = new Ft8Message(GeneralVariables.getSignalMode(), "CQ",
@@ -1131,9 +1235,14 @@ public class FT8TransmitSignal {
         } else {
             msg = getFunctionCommand(order);
         }
-        msg.modifier = GeneralVariables.toModifier;
+        msg.modifier = getRuntimeCqModifier();
         msg.signalFormat = GeneralVariables.getSignalMode();
         return msg;
+    }
+
+    /** 卫星 FT4 暂停定向 CQ，但绝不修改用户持久化的定向 CQ 配置。 */
+    private String getRuntimeCqModifier() {
+        return GeneralVariables.isSatelliteOperatingProfile() ? null : GeneralVariables.toModifier;
     }
 
     private boolean hasPendingDxpeditionMacro() {
@@ -1647,6 +1756,20 @@ public class FT8TransmitSignal {
 
         updateTransmittingState(false);
 
+        if (lastQ65AutomationSlot != Long.MIN_VALUE) {
+            long completedSlot = lastQ65AutomationSlot;
+            lastQ65AutomationSlot = Long.MIN_VALUE;
+            q65AutomationController.markTransmitFinished(
+                    completedSlot,
+                    q65CurrentTransmitSucceeded,
+                    q65CurrentTransmitSucceeded ? null : getLastTransmitStatusSummary());
+            q65CurrentTransmitSucceeded = false;
+            if (!q65AutomationController.getState().getValue().getArmed()) {
+                activated = false;
+                mutableIsActivated.postValue(false);
+            }
+        }
+
         if (isExperimentalManualTxMode() && activated) {
             // Experimental chain uses one-shot manual TX: stop right after each frame.
             // Manual experimental TX is one-shot and stops after each frame.
@@ -2046,7 +2169,9 @@ public class FT8TransmitSignal {
         callQueueManager.configure(
                 GeneralVariables.cqMaxQueueSize,
                 GeneralVariables.cqRankMethod,
-                GeneralVariables.cqDirectedCqPrefixes
+                GeneralVariables.isSatelliteOperatingProfile()
+                        ? ""
+                        : GeneralVariables.cqDirectedCqPrefixes
         );
         publishCqQueue();
     }
@@ -2717,6 +2842,9 @@ public class FT8TransmitSignal {
         } else {
             q65StreamCancelled = true;
             automationController.stopSession("自动通联已停止");
+            if (q65AutomationController.getState().getValue().getArmed()) {
+                q65AutomationController.stop("Q65 自动序列已停止");
+            }
             lastAutomationTransmitSlot = Long.MIN_VALUE;
             lastAutomationTransmitMode = -1;
             clearPendingDxpeditionMacro();
@@ -2822,7 +2950,8 @@ public class FT8TransmitSignal {
     }
 
     private boolean isExperimentalManualTxMode() {
-        return GeneralVariables.isExperimentalCodecEnabled();
+        return GeneralVariables.isExperimentalCodecEnabled()
+                && GeneralVariables.getSignalMode() != FT8Common.Q65_MODE;
     }
 
     private boolean isAutomaticFtxMode(int mode) {

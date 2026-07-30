@@ -51,6 +51,7 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.cq.CqCallEntry;
+import com.bg7yoz.ft8cn.core.automation.Q65AutomationState;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
 import com.bg7yoz.ft8cn.eme.EmeAssistState;
 import com.bg7yoz.ft8cn.eme.EmeRigControlAdapter;
@@ -141,7 +142,8 @@ public class MyCallingFragment extends Fragment {
     }
 
     private boolean isExperimentalManualTxMode() {
-        return GeneralVariables.isExperimentalCodecEnabled();
+        return GeneralVariables.isExperimentalCodecEnabled()
+                && GeneralVariables.getOperatingProfile() == GeneralVariables.OPERATING_PROFILE_NORMAL;
     }
 
     private String getCurrentModeLabel() {
@@ -160,12 +162,59 @@ public class MyCallingFragment extends Fragment {
         if (binding == null) {
             return;
         }
-        binding.rbQ65.setText("Q65");
-        // Q65 在阶段 5 迁移到独立 EME 页面，Call 页面只呈现 FT8/FT4。
-        binding.rbQ65.setVisibility(View.GONE);
-        binding.q65ConfigButton.setVisibility(View.GONE);
+        boolean emeMode = GeneralVariables.isEmeOperatingProfile();
+        binding.rbQ65.setText(emeMode ? getQ65ConfigLabel() : "Q65");
+        binding.rbQ65.setVisibility(emeMode ? View.VISIBLE : View.GONE);
+        binding.q65ConfigButton.setVisibility(emeMode ? View.VISIBLE : View.GONE);
         binding.q65ConfigButton.setEnabled(false);
         binding.q65ConfigButton.setText(getQ65ConfigLabel());
+    }
+
+    private String getDefaultQ65Message() {
+        return "CQ " + GeneralVariables.myCallsign + " " + GeneralVariables.getMyMaidenhead4Grid();
+    }
+
+    /** 在解码、呼叫两页统一显示当前业务模式、T/R 序列和 Doppler 状态。 */
+    private void updateOperatingModeUi() {
+        if (binding == null) {
+            return;
+        }
+        int profile = GeneralVariables.getOperatingProfile();
+        if (profile == GeneralVariables.OPERATING_PROFILE_NORMAL) {
+            binding.operatingModeTextView.setVisibility(View.GONE);
+            return;
+        }
+
+        int mode = profile == GeneralVariables.OPERATING_PROFILE_Q65_EME
+                ? FT8Common.Q65_MODE : FT8Common.FT4_MODE;
+        int currentSequence = UtcTimer.getNowSequential(FT8Common.getSlotTimeM(mode));
+        int txSequence = mainViewModel == null || mainViewModel.ft8TransmitSignal == null
+                ? 0 : mainViewModel.ft8TransmitSignal.sequential;
+        if (mode == FT8Common.Q65_MODE && mainViewModel != null
+                && mainViewModel.ft8TransmitSignal != null) {
+            Q65AutomationState state = mainViewModel.ft8TransmitSignal
+                    .getQ65AutomationState().getValue();
+            if (state != null) {
+                txSequence = state.getTxSequence();
+            }
+        }
+        boolean txSlot = mainViewModel != null && mainViewModel.ft8TransmitSignal != null
+                && mainViewModel.ft8TransmitSignal.isActivated()
+                && currentSequence == txSequence;
+        String tracking = GeneralVariables.getOperatingTrackingStatus();
+        if (tracking == null || tracking.trim().isEmpty()) {
+            tracking = "Doppler 未启用";
+        }
+        String sequenceText = "计划 TX" + (txSequence + 1)
+                + " · 当前 " + (txSlot ? "TX" : "RX") + (currentSequence + 1);
+        if (profile == GeneralVariables.OPERATING_PROFILE_Q65_EME) {
+            binding.operatingModeTextView.setText("Q65 EME · " + getQ65ConfigLabel()
+                    + " · " + sequenceText + " · " + tracking);
+        } else {
+            binding.operatingModeTextView.setText("卫星 · FT4 · " + sequenceText
+                    + " · 定向 CQ 已暂停 · " + tracking);
+        }
+        binding.operatingModeTextView.setVisibility(View.VISIBLE);
     }
 
     private void updateEmeAssistButtonUi() {
@@ -518,9 +567,16 @@ public class MyCallingFragment extends Fragment {
         if (binding == null) {
             return;
         }
+        boolean specialProfile = GeneralVariables.isEmeOperatingProfile()
+                || GeneralVariables.isSatelliteOperatingProfile();
         boolean enabled = !isExperimentalManualTxMode()
                 && !mainViewModel.getTransitIsFreeText()
-                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE;
+                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && !specialProfile;
+        int controlVisibility = specialProfile ? View.GONE : View.VISIBLE;
+        binding.dxpeditionManualCheckBox.setVisibility(controlVisibility);
+        binding.dxpeditionFoxCheckBox.setVisibility(controlVisibility);
+        binding.dxpeditionHelpButton.setVisibility(controlVisibility);
         binding.dxpeditionManualCheckBox.setEnabled(enabled);
         binding.dxpeditionFoxCheckBox.setEnabled(enabled);
         boolean foxSlotsEnabled = enabled && binding.dxpeditionFoxCheckBox.isChecked();
@@ -536,7 +592,8 @@ public class MyCallingFragment extends Fragment {
             }
             binding.dxpeditionTxSlotsButton.setText(slotsText);
         }
-        if (!enabled && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
+        if (!enabled && !specialProfile
+                && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
             applyManualDxpeditionMode(false, false, true);
         }
         binding.dxpeditionManualCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
@@ -1026,6 +1083,14 @@ public class MyCallingFragment extends Fragment {
         if (schedulerSummary == null || schedulerSummary.trim().length() == 0) {
             schedulerSummary = "-";
         }
+        Q65AutomationState state = mainViewModel.ft8TransmitSignal == null
+                ? null : mainViewModel.ft8TransmitSignal.getQ65AutomationState().getValue();
+        String automation = state == null
+                ? "RECEIVE_ONLY"
+                : state.getPhase().name()
+                    + " · TX" + (state.getTxSequence() + 1)
+                    + (state.getRepeat() ? " · 重复" : " · 单次")
+                    + " · 已发 " + state.getTransmitCount();
         return getString(
                 R.string.q65_status_line,
                 GeneralVariables.getActiveModeLabel(),
@@ -1040,7 +1105,8 @@ public class MyCallingFragment extends Fragment {
                 + "\n"
                 + getString(R.string.q65_status_eme_line, buildEmeAssistStatusText())
                 + "\n"
-                + getString(R.string.q65_status_scheduler_line, schedulerSummary);
+                + getString(R.string.q65_status_scheduler_line, schedulerSummary)
+                + "\nAutomation: " + automation;
     }
 
     private String buildEmeAssistStatusText() {
@@ -1104,7 +1170,8 @@ public class MyCallingFragment extends Fragment {
             return;
         }
         int count = entries == null ? 0 : entries.size();
-        boolean visible = GeneralVariables.cqQueueEnabled || count > 0;
+        boolean visible = !GeneralVariables.isEmeOperatingProfile()
+                && (GeneralVariables.cqQueueEnabled || count > 0);
         binding.cqQueuePanelLayout.setVisibility(visible ? View.VISIBLE : View.GONE);
         if (!visible) {
             return;
@@ -1129,6 +1196,19 @@ public class MyCallingFragment extends Fragment {
      */
     private void doCallNow(Ft8Message message) {
         mainViewModel.addFollowCallsign(message.getCallsignFrom());
+        if (GeneralVariables.isEmeOperatingProfile()
+                && GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+            if (!mainViewModel.ft8TransmitSignal.armQ65Reply(message, true)) {
+                ToastMessage.show("无法从该消息建立 Q65 回复序列");
+                return;
+            }
+            if (!GeneralVariables.transmitMessages.contains(message)) {
+                GeneralVariables.transmitMessages.add(message);
+            }
+            updateSignalModeUI();
+            GeneralVariables.resetLaunchSupervision();
+            return;
+        }
         if (!mainViewModel.ft8TransmitSignal.isActivated()) {
             mainViewModel.ft8TransmitSignal.setActivated(true);
             GeneralVariables.transmitMessages.add(message);// keep it in the transmit list for later status display
@@ -1156,6 +1236,10 @@ public class MyCallingFragment extends Fragment {
         switch (item.getItemId()) {
             case 1:// call the target station
                 Log.d(TAG, "call TO: " + ft8Message.getCallsignTo());
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    doCallNow(ft8Message);
+                    break;
+                }
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
                 }
@@ -1170,6 +1254,10 @@ public class MyCallingFragment extends Fragment {
 
             case 4:// auto reply
                 Log.d(TAG, "auto reply " + ft8Message.getCallsignFrom());
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    doCallNow(ft8Message);
+                    break;
+                }
                 mainViewModel.addFollowCallsign(ft8Message.getCallsignFrom());
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
@@ -1225,6 +1313,14 @@ public class MyCallingFragment extends Fragment {
      */
     @SuppressLint("NotifyDataSetChanged")
     private void switchSignalMode(int mode) {
+        if (GeneralVariables.isEmeOperatingProfile()
+                || GeneralVariables.isSatelliteOperatingProfile()) {
+            updateSignalModeUI();
+            ToastMessage.show(GeneralVariables.isEmeOperatingProfile()
+                    ? "请先从 EME 页关闭 Q65 EME 模式"
+                    : "请先从卫星页关闭卫星 FT4 模式");
+            return;
+        }
         if (mode != FT8Common.FT8_MODE && mode != FT8Common.FT4_MODE) {
             Log.w(TAG, "Call page rejected non-FT8/FT4 mode: " + mode);
             mode = FT8Common.FT8_MODE;
@@ -1242,6 +1338,9 @@ public class MyCallingFragment extends Fragment {
     }
 
     private int getSignalModeButtonId(int mode) {
+        if (mode == FT8Common.Q65_MODE) {
+            return R.id.rbQ65;
+        }
         if (mode == FT8Common.FT4_MODE) {
             return R.id.rbFt4;
         }
@@ -1254,6 +1353,8 @@ public class MyCallingFragment extends Fragment {
     @SuppressLint("DefaultLocale")
     private void updateSignalModeUI() {
         int mode = GeneralVariables.getSignalMode();
+        boolean emeProfile = GeneralVariables.isEmeOperatingProfile();
+        boolean satelliteProfile = GeneralVariables.isSatelliteOperatingProfile();
         int targetButtonId = getSignalModeButtonId(mode);
 
         updatingSignalModeUi = true;
@@ -1266,6 +1367,28 @@ public class MyCallingFragment extends Fragment {
         }
         updateQ65ConfigUi();
         updateEmeAssistButtonUi();
+        binding.rbFt8.setVisibility(emeProfile ? View.GONE : View.VISIBLE);
+        binding.rbFt4.setVisibility(emeProfile ? View.GONE : View.VISIBLE);
+        binding.rbFt8.setEnabled(!satelliteProfile);
+        binding.rbFt4.setEnabled(!satelliteProfile);
+        binding.rbQ65.setEnabled(false);
+        binding.q65SequenceControls.setVisibility(emeProfile ? View.VISIBLE : View.GONE);
+        binding.dxpeditionMacroButton.setVisibility(
+                emeProfile || satelliteProfile ? View.GONE : View.VISIBLE);
+        if (emeProfile) {
+            binding.transFreeTextEdit.setHint("Q65 发射报文");
+            Editable current = binding.transFreeTextEdit.getText();
+            if (current == null || current.toString().trim().isEmpty()
+                    || "FREE TEXT".equalsIgnoreCase(current.toString().trim())) {
+                binding.transFreeTextEdit.setText(getDefaultQ65Message());
+                binding.transFreeTextEdit.setSelection(binding.transFreeTextEdit.length());
+            }
+        } else {
+            binding.transFreeTextEdit.setHint(R.string.transmit_freeText);
+        }
+        showFreeTextEdit();
+        updateOperatingModeUi();
+        updateDxpeditionManualUi();
 
         Long currentUtc = mainViewModel == null ? null : mainViewModel.timerSec.getValue();
         if (currentUtc != null) {
@@ -1288,7 +1411,8 @@ public class MyCallingFragment extends Fragment {
         // Refresh the target-callsign label for the active mode.
         if (mainViewModel.ft8TransmitSignal != null && mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() != null) {
             TransmitCallsign transmitCallsign = mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue();
-            if (GeneralVariables.toModifier != null) {
+            if (!GeneralVariables.isSatelliteOperatingProfile()
+                    && GeneralVariables.toModifier != null) {
                 binding.toCallsignTextView.setText(String.format(
                         GeneralVariables.getStringFromResource(R.string.target_callsign),
                         "[" + getCurrentModeLabel() + "] " + transmitCallsign.callsign + " " + GeneralVariables.toModifier));
@@ -1297,6 +1421,9 @@ public class MyCallingFragment extends Fragment {
                         GeneralVariables.getStringFromResource(R.string.target_callsign),
                         "[" + getCurrentModeLabel() + "] " + transmitCallsign.callsign));
             }
+        }
+        if (mainViewModel.ft8TransmitSignal != null) {
+            updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
         }
     }
 
@@ -1326,10 +1453,16 @@ public class MyCallingFragment extends Fragment {
         mainViewModel = MainViewModel.getInstance(this);
         binding = FragmentMyCallingBinding.inflate(inflater, container, false);
 
-        // Q65 使用独立 EME 工作台；进入 Call 时不沿用上一页的 Q65 时序。
-        if (GeneralVariables.getSignalMode() != FT8Common.FT8_MODE
-                && GeneralVariables.getSignalMode() != FT8Common.FT4_MODE) {
-            GeneralVariables.setSignalMode(FT8Common.FT8_MODE);
+        // 页面只修复与全局运行档位不一致的模式，不擅自退出 EME/卫星模式。
+        int expectedMode = GeneralVariables.isEmeOperatingProfile()
+                ? FT8Common.Q65_MODE
+                : GeneralVariables.isSatelliteOperatingProfile()
+                    ? FT8Common.FT4_MODE
+                    : GeneralVariables.getSignalMode() == FT8Common.Q65_MODE
+                        ? FT8Common.FT8_MODE
+                        : GeneralVariables.getSignalMode();
+        if (GeneralVariables.getSignalMode() != expectedMode) {
+            GeneralVariables.setSignalMode(expectedMode);
             restartForModeRuntimeChange();
         }
 
@@ -1364,6 +1497,11 @@ public class MyCallingFragment extends Fragment {
                 return;
             }
             if (checkedId == View.NO_ID) {
+                updateSignalModeUI();
+                return;
+            }
+            if (GeneralVariables.isEmeOperatingProfile()
+                    || GeneralVariables.isSatelliteOperatingProfile()) {
                 updateSignalModeUI();
                 return;
             }
@@ -1439,6 +1577,7 @@ public class MyCallingFragment extends Fragment {
                 }
                 binding.timerTextView.setText("[" + getCurrentModeLabel() + "] "
                         + UtcTimer.getTimeStr(aLong));
+                updateOperatingModeUi();
             }
         });
 
@@ -1478,6 +1617,12 @@ public class MyCallingFragment extends Fragment {
                 updateAutoSessionStatus();
             }
         });
+        GeneralVariables.mutableOperatingProfile.observe(getViewLifecycleOwner(), profile -> {
+            updateSignalModeUI();
+            updateOperatingModeUi();
+        });
+        GeneralVariables.mutableOperatingTrackingStatus.observe(getViewLifecycleOwner(), status ->
+                updateOperatingModeUi());
 
         // Observe transmit-state changes.
         Observer<Boolean> transmittingObserver = new Observer<Boolean>() {
@@ -1515,8 +1660,12 @@ public class MyCallingFragment extends Fragment {
         binding.pauseTransmittingImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    mainViewModel.ft8TransmitSignal.stopQ65Sequence("用户暂停 Q65 序列");
+                }
                 mainViewModel.ft8TransmitSignal.setTransmitting(false);
                 GeneralVariables.resetLaunchSupervision();// reset launch supervision state
+                updateSignalModeUI();
             }
         });
 
@@ -1587,7 +1736,8 @@ public class MyCallingFragment extends Fragment {
                     updateAutoSessionStatus();
                     return;
                 }
-                if (GeneralVariables.toModifier != null) {
+                if (!GeneralVariables.isSatelliteOperatingProfile()
+                        && GeneralVariables.toModifier != null) {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
                             "[" + getCurrentModeLabel() + "] "
@@ -1615,6 +1765,27 @@ public class MyCallingFragment extends Fragment {
         binding.setTransmitImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (GeneralVariables.isEmeOperatingProfile()
+                        && GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+                    if (mainViewModel.ft8TransmitSignal.isActivated()) {
+                        mainViewModel.ft8TransmitSignal.stopQ65Sequence("用户停止 Q65 序列");
+                        mainViewModel.ft8TransmitSignal.setTransmitting(false);
+                    } else {
+                        String message = binding.transFreeTextEdit.getText() == null
+                                ? "" : binding.transFreeTextEdit.getText().toString();
+                        int txSequence = binding.rbQ65Tx2.isChecked() ? 1 : 0;
+                        boolean armed = mainViewModel.ft8TransmitSignal.armQ65Sequence(
+                                message,
+                                txSequence,
+                                binding.q65RepeatCheckBox.isChecked());
+                        if (!armed) {
+                            ToastMessage.show("Q65 报文为空或 TX 序列无效");
+                        }
+                    }
+                    GeneralVariables.resetLaunchSupervision();
+                    updateSignalModeUI();
+                    return;
+                }
                 if (isExperimentalManualTxMode()) {
                     // Experimental TX is intentionally triggered from the CQ button near the text box.
                     return;
@@ -1659,6 +1830,12 @@ public class MyCallingFragment extends Fragment {
         binding.resetToCQImageView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    binding.transFreeTextEdit.setText(getDefaultQ65Message());
+                    binding.transFreeTextEdit.setSelection(binding.transFreeTextEdit.length());
+                    GeneralVariables.resetLaunchSupervision();
+                    return;
+                }
                 if (isExperimentalManualTxMode()) {
                     if (mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() == null) {
                         mainViewModel.ft8TransmitSignal.restTransmitting();
@@ -1698,6 +1875,9 @@ public class MyCallingFragment extends Fragment {
         binding.resetToCQImageView.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    return true;
+                }
                 mainViewModel.setTransmitIsFreeText(!mainViewModel.getTransitIsFreeText());
                 showFreeTextEdit();
                 return true;
@@ -1761,6 +1941,16 @@ public class MyCallingFragment extends Fragment {
     }
 
     private void showFreeTextEdit() {
+        if (GeneralVariables.isEmeOperatingProfile()) {
+            binding.transFreeTextEdit.setVisibility(View.VISIBLE);
+            binding.transFreeTextTypeTextView.setVisibility(View.GONE);
+            binding.q65SequenceControls.setVisibility(View.VISIBLE);
+            binding.functionOrderSpinner.setVisibility(View.GONE);
+            binding.dxpeditionMacroButton.setVisibility(View.GONE);
+            updateAutoSessionStatus();
+            return;
+        }
+        binding.q65SequenceControls.setVisibility(View.GONE);
         if (mainViewModel.getTransitIsFreeText()) {
             binding.transFreeTextEdit.setVisibility(View.VISIBLE);
             binding.transFreeTextTypeTextView.setVisibility(View.VISIBLE);

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 旧 Fragment 导航仍通过此稳定 ID 查找产品入口中的动态容器。 -->
+    <item name="fragmentContainerView" type="id" />
+</resources>

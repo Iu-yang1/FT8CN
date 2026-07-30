@@ -23,10 +23,23 @@ public class SpectrumListener implements HamRecorder.OnCaptureStateChanged {
     public static final class SpectrumFrame {
         public final float[] samples;
         public final int sampleRate;
+        public final float peak;
+        public final float rms;
+        public final String inputRoute;
+        public final boolean systemSilenced;
 
-        public SpectrumFrame(float[] samples, int sampleRate) {
+        public SpectrumFrame(float[] samples,
+                             int sampleRate,
+                             float peak,
+                             float rms,
+                             String inputRoute,
+                             boolean systemSilenced) {
             this.samples = samples;
             this.sampleRate = sampleRate;
+            this.peak = peak;
+            this.rms = rms;
+            this.inputRoute = inputRoute;
+            this.systemSilenced = systemSilenced;
         }
     }
 
@@ -37,8 +50,31 @@ public class SpectrumListener implements HamRecorder.OnCaptureStateChanged {
     private final OnGetVoiceDataDone onGetVoiceDataDone=new OnGetVoiceDataDone() {
         @Override
         public void onGetDone(float[] data) {
-                    dataBuffer = data;
-                    mutableDataBuffer.postValue(new SpectrumFrame(data, hamRecorder.getCurrentSampleRate()));
+            dataBuffer = data;
+            float peak = 0f;
+            double squareSum = 0.0;
+            int validSamples = 0;
+            for (float sample : data) {
+                if (!Float.isFinite(sample)) {
+                    continue;
+                }
+                float absolute = Math.abs(sample);
+                if (absolute > peak) {
+                    peak = absolute;
+                }
+                squareSum += (double) sample * sample;
+                validSamples++;
+            }
+            float rms = validSamples == 0 ? 0f
+                    : (float) Math.sqrt(squareSum / validSamples);
+            mutableDataBuffer.postValue(new SpectrumFrame(
+                    data,
+                    hamRecorder.getCurrentSampleRate(),
+                    peak,
+                    rms,
+                    hamRecorder.getCurrentInputRouteDescription(),
+                    hamRecorder.isCurrentInputSystemSilenced()
+            ));
         }
     };
 

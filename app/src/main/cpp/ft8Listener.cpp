@@ -582,6 +582,36 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetBridgeContextId(JN
 }
 
 extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderResetQ65Averaging(JNIEnv *env,
+                                                                             jobject thiz,
+                                                                             jlong decoderHandle) {
+    (void) env;
+    (void) thiz;
+    return ftx_decoder_reset_q65_averaging((ftx_decoder_t *) decoderHandle) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C"
+JNIEXPORT jintArray JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetQ65AveragingState(JNIEnv *env,
+                                                                                jobject thiz,
+                                                                                jlong decoderHandle) {
+    (void) thiz;
+    int averagedFrameCount = 0;
+    int clearPending = 1;
+    if (ftx_decoder_get_q65_averaging_state(
+            (ftx_decoder_t *) decoderHandle, &averagedFrameCount, &clearPending) != 0) {
+        return nullptr;
+    }
+    const jint values[] = {(jint) averagedFrameCount, (jint) clearPending};
+    jintArray result = env->NewIntArray(2);
+    if (result != nullptr) {
+        env->SetIntArrayRegion(result, 0, 2, values);
+    }
+    return result;
+}
+
+extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *env,
                                                                         jobject thiz,

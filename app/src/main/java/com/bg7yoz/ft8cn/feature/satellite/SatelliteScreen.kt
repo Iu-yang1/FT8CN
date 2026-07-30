@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -17,8 +18,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,9 +36,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.bg7yoz.ft8cn.FT8Common
 import com.bg7yoz.ft8cn.GeneralVariables
+import com.bg7yoz.ft8cn.MainViewModel
 import com.bg7yoz.ft8cn.core.FeatureAppGraph
+import com.bg7yoz.ft8cn.data.settings.FeatureSettings
 import com.bg7yoz.ft8cn.eme.ObserverLocation
+import com.bg7yoz.ft8cn.feature.shell.Ft8cnPageHeader
+import com.bg7yoz.ft8cn.feature.shell.Ft8cnPanel
 import com.bg7yoz.ft8cn.satellite.ObserverPosition
 import com.bg7yoz.ft8cn.satellite.SatelliteCatalogRepository
 import com.bg7yoz.ft8cn.satellite.SatelliteDopplerPlanner
@@ -44,11 +52,16 @@ import com.bg7yoz.ft8cn.satellite.SatelliteObservation
 import com.bg7yoz.ft8cn.satellite.SatellitePass
 import com.bg7yoz.ft8cn.satellite.SatellitePassPredictor
 import com.bg7yoz.ft8cn.satellite.SatelliteRefreshResult
+import com.bg7yoz.ft8cn.satellite.SatelliteRadioTracker
 import com.bg7yoz.ft8cn.satellite.SatelliteTransponder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -58,11 +71,13 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private data class SatelliteDetailState(
+    val name: String,
+    val catalogNumber: Int,
     val observation: SatelliteObservation,
     val passes: List<SatellitePass>,
     val polarTrack: List<SatelliteObservation>,
-    val groundTrack: List<SatelliteObservation>,
     val transponders: List<SatelliteTransponder>,
+    val selectedTransponderKey: String?,
     val frequencyTarget: SatelliteFrequencyTarget?,
     val tleEpochUtcMillis: Long,
 )
@@ -70,13 +85,19 @@ private data class SatelliteDetailState(
 /** 卫星页只保存有界轨迹摘要；SGP4 和 Room 工作均在后台调度器执行。 */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun SatelliteScreen() {
+fun SatelliteScreen(mainViewModel: MainViewModel) {
     val context = LocalContext.current
-    val repository = remember(context) { FeatureAppGraph.from(context).satelliteCatalogRepository }
+    val graph = remember(context) { FeatureAppGraph.from(context) }
+    val repository = graph.satelliteCatalogRepository
+    val settings by graph.settings.state.collectAsStateWithLifecycle(initialValue = FeatureSettings())
+    val radioState by graph.radioController.state.collectAsStateWithLifecycle()
+    val radioTracker = remember(graph.radioController) { SatelliteRadioTracker(graph.radioController) }
+    val cleanupScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     val satellites by repository.observeSatellites().collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = rememberCoroutineScope()
     var search by rememberSaveable { mutableStateOf("") }
     var selectedCatalogNumber by rememberSaveable { mutableStateOf<Int?>(null) }
+    var selectedTransponderKey by rememberSaveable { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf("离线目录已就绪") }
     var manualTle by rememberSaveable { mutableStateOf("") }
     val gridObserver = remember { ObserverLocation.fromGrid(GeneralVariables.getMyMaidenheadGrid()) }
@@ -87,6 +108,15 @@ fun SatelliteScreen() {
         mutableStateOf(String.format(Locale.US, "%.4f", gridObserver?.longitudeDeg ?: 0.0))
     }
     var detail by remember { mutableStateOf<SatelliteDetailState?>(null) }
+    var automaticTracking by rememberSaveable { mutableStateOf(false) }
+    var trackerStarted by remember { mutableStateOf(false) }
+    var trackingStatus by remember { mutableStateOf("自动调频未启用") }
+    var satelliteModeEnabled by rememberSaveable {
+        mutableStateOf(GeneralVariables.isSatelliteOperatingProfile())
+    }
+    var previousFtxMode by rememberSaveable {
+        mutableStateOf(settings.previousFtxMode.coerceIn(FT8Common.FT8_MODE, FT8Common.FT4_MODE))
+    }
     val observer = remember(latitudeText, longitudeText) {
         runCatching {
             ObserverPosition(latitudeText.toDouble(), longitudeText.toDouble())
@@ -100,13 +130,135 @@ fun SatelliteScreen() {
         }.take(MAXIMUM_VISIBLE_SATELLITES)
     }
 
-    LaunchedEffect(selectedCatalogNumber, observer) {
+    LaunchedEffect(filtered, selectedCatalogNumber) {
+        if (selectedCatalogNumber == null) {
+            selectedCatalogNumber = filtered.firstOrNull()?.catalogNumber
+        }
+    }
+
+    LaunchedEffect(selectedCatalogNumber) {
+        selectedTransponderKey = null
+    }
+
+    fun restartOperatingRuntime(mode: Int, profile: Int) {
+        mainViewModel.ft8TransmitSignal?.apply {
+            setActivated(false)
+            stopQ65Sequence("运行模式已切换")
+            setTransmitting(false)
+        }
+        GeneralVariables.setOperatingProfile(profile)
+        GeneralVariables.setSignalMode(mode)
+        mainViewModel.ft8SignalListener?.restartByCurrentMode()
+        mainViewModel.ft8TransmitSignal?.apply {
+            restartByCurrentMode()
+            setActivated(false)
+            setTransmitting(false)
+            resetToCQ()
+        }
+        mainViewModel.clearTransmittingMessage()
+    }
+
+    fun setSatelliteModeEnabled(enabled: Boolean) {
+        if (enabled) {
+            val currentMode = GeneralVariables.getSignalMode()
+            if (currentMode == FT8Common.FT8_MODE || currentMode == FT8Common.FT4_MODE) {
+                previousFtxMode = currentMode
+            }
+            satelliteModeEnabled = true
+            restartOperatingRuntime(
+                FT8Common.FT4_MODE,
+                GeneralVariables.OPERATING_PROFILE_SATELLITE_FT4,
+            )
+            scope.launch { graph.settings.setSatelliteMode(true, previousFtxMode) }
+            return
+        }
+
+        automaticTracking = false
+        satelliteModeEnabled = false
+        val restoreMode = previousFtxMode.coerceIn(FT8Common.FT8_MODE, FT8Common.FT4_MODE)
+        restartOperatingRuntime(restoreMode, GeneralVariables.OPERATING_PROFILE_NORMAL)
+        scope.launch { graph.settings.setSatelliteMode(false, restoreMode) }
+    }
+
+    DisposableEffect(radioTracker) {
+        onDispose {
+            if (GeneralVariables.isSatelliteOperatingProfile()) {
+                GeneralVariables.setOperatingTrackingStatus("自动调频未启用")
+            }
+            cleanupScope.launch {
+                withTimeoutOrNull(3_000L) { radioTracker.stop("离开卫星页面") }
+                cleanupScope.cancel()
+            }
+        }
+    }
+
+    LaunchedEffect(settings.satelliteModeEnabled, settings.previousFtxMode) {
+        previousFtxMode = settings.previousFtxMode.coerceIn(FT8Common.FT8_MODE, FT8Common.FT4_MODE)
+        satelliteModeEnabled = settings.satelliteModeEnabled && !settings.emeModeEnabled
+    }
+
+    LaunchedEffect(selectedCatalogNumber, observer, selectedTransponderKey) {
         val catalogNumber = selectedCatalogNumber ?: return@LaunchedEffect
         val station = observer ?: return@LaunchedEffect
         while (true) {
-            detail = loadDetail(repository, catalogNumber, station, System.currentTimeMillis())
+            val loaded = loadDetail(
+                repository,
+                catalogNumber,
+                station,
+                System.currentTimeMillis(),
+                selectedTransponderKey,
+            )
+            detail = loaded
+            if (loaded?.selectedTransponderKey != selectedTransponderKey) {
+                selectedTransponderKey = loaded?.selectedTransponderKey
+            }
             delay(5_000L)
         }
+    }
+
+    LaunchedEffect(satelliteModeEnabled, automaticTracking, detail?.frequencyTarget?.generatedUtcMillis) {
+        if (!satelliteModeEnabled) {
+            automaticTracking = false
+        }
+        if (!automaticTracking) {
+            if (trackerStarted) {
+                radioTracker.stop("用户停止卫星跟踪")
+                trackerStarted = false
+            }
+            trackingStatus = "自动调频未启用"
+            return@LaunchedEffect
+        }
+        val target = detail?.frequencyTarget
+        if (target == null) {
+            if (trackerStarted) {
+                radioTracker.stop("卫星频率计划不可用")
+                trackerStarted = false
+            }
+            automaticTracking = false
+            trackingStatus = "当前转发器没有可用的上下行频率"
+            return@LaunchedEffect
+        }
+        if (!trackerStarted) {
+            val start = radioTracker.start()
+            if (start.isFailure) {
+                automaticTracking = false
+                trackingStatus = "无法启动：${start.exceptionOrNull()?.message}"
+                return@LaunchedEffect
+            }
+            trackerStarted = true
+        }
+        trackingStatus = radioTracker.apply(target, System.currentTimeMillis()).fold(
+            onSuccess = { applied -> if (applied) "Hamlib 已按 Doppler 更新频率" else "频率变化未达到更新步长" },
+            onFailure = {
+                trackerStarted = false
+                automaticTracking = false
+                "自动调频停止：${it.message}"
+            },
+        )
+    }
+
+    LaunchedEffect(satelliteModeEnabled, trackingStatus) {
+        if (satelliteModeEnabled) GeneralVariables.setOperatingTrackingStatus(trackingStatus)
     }
 
     LazyColumn(
@@ -115,11 +267,49 @@ fun SatelliteScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("卫星工作台", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "离线优先 SGP4 · 过境预测 · 上下行 Doppler · CAT 默认不 armed",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Ft8cnPageHeader(
+                title = "卫星追踪",
+                subtitle = "过境 · 转发器 · Doppler",
             )
+        }
+        item {
+            SatelliteCard("卫星模式") {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            if (satelliteModeEnabled) "卫星 · FT4 已启用" else "普通 FT8/FT4 运行",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (satelliteModeEnabled) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            if (satelliteModeEnabled) {
+                                "固定使用 FT4 并复用 FT4 自动流程；定向 CQ 暂停，配置不会被清除。"
+                            } else {
+                                "启用后安全停止当前自动发射，关闭时恢复先前的 FT8/FT4 模式。"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Switch(
+                        checked = satelliteModeEnabled,
+                        onCheckedChange = ::setSatelliteModeEnabled,
+                    )
+                }
+            }
+        }
+        if (selectedCatalogNumber != null) {
+            item {
+                SatelliteDetail(
+                    detail = detail,
+                    radioConnected = radioState.connected,
+                    satelliteModeEnabled = satelliteModeEnabled,
+                    automaticTracking = automaticTracking,
+                    trackingStatus = trackingStatus,
+                    onAutomaticTrackingChanged = { automaticTracking = it },
+                    onTransponderSelected = { selectedTransponderKey = it },
+                )
+            }
         }
         item {
             SatelliteCard("目录与观察站") {
@@ -201,8 +391,14 @@ fun SatelliteScreen() {
                 label = { Text("搜索名称或 NORAD 编号") },
             )
         }
+        item {
+            Text("选择卫星", style = MaterialTheme.typography.titleLarge)
+        }
         items(filtered, key = { it.catalogNumber }) { satellite ->
-            Card(onClick = { selectedCatalogNumber = satellite.catalogNumber }) {
+            Card(onClick = {
+                selectedCatalogNumber = satellite.catalogNumber
+                selectedTransponderKey = null
+            }) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -217,22 +413,45 @@ fun SatelliteScreen() {
                 }
             }
         }
-        if (selectedCatalogNumber != null) {
-            item {
-                SatelliteDetail(detail)
-            }
-        }
     }
 }
 
 @Composable
-private fun SatelliteDetail(detail: SatelliteDetailState?) {
-    SatelliteCard("实时轨道与频率计划") {
+private fun SatelliteDetail(
+    detail: SatelliteDetailState?,
+    radioConnected: Boolean,
+    satelliteModeEnabled: Boolean,
+    automaticTracking: Boolean,
+    trackingStatus: String,
+    onAutomaticTrackingChanged: (Boolean) -> Unit,
+    onTransponderSelected: (String) -> Unit,
+) {
+    val deviceOrientation by rememberDeviceOrientation()
+    SatelliteCard("当前过境") {
         if (detail == null) {
             Text("正在读取离线 TLE，或当前位置无效。")
             return@SatelliteCard
         }
         val observation = detail.observation
+        Text(
+            "${detail.catalogNumber} · ${detail.name}",
+            style = MaterialTheme.typography.titleLarge,
+        )
+        val pass = detail.passes.firstOrNull()
+        val countdown = pass?.let {
+            val target = if (System.currentTimeMillis() < it.aosUtcMillis) it.aosUtcMillis else it.losUtcMillis
+            formatCountdown(target - System.currentTimeMillis())
+        } ?: "--:--:--"
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column {
+                Text(if (pass != null && System.currentTimeMillis() >= pass.aosUtcMillis) "LOS" else "AOS")
+                Text(countdown, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.secondary)
+            }
+            Column {
+                Text(String.format(Locale.US, "方位 %.1f°", observation.azimuthDegrees))
+                Text(String.format(Locale.US, "仰角 %.1f°", observation.elevationDegrees))
+            }
+        }
         Text(String.format(
             Locale.US,
             "方位 %.1f° · 仰角 %.1f° · 距离 %.0f km · 径向速度 %+.0f m/s",
@@ -253,26 +472,83 @@ private fun SatelliteDetail(detail: SatelliteDetailState?) {
             String.format(Locale.US, "TLE age %.1f 天%s", ageDays, if (ageDays > 14.0) "（过期警告）" else ""),
             color = if (ageDays > 14.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PolarTrack(detail.polarTrack, Modifier.weight(1f).height(180.dp))
-            GroundTrack(detail.groundTrack, Modifier.weight(1f).height(180.dp))
-        }
-        detail.passes.take(3).forEach { pass ->
+        Text(deviceOrientation.summary(), style = MaterialTheme.typography.bodySmall)
+        if (deviceOrientation.available) {
+            val azimuthError = signedAngleDifference(
+                observation.azimuthDegrees,
+                deviceOrientation.azimuthDegrees.toDouble(),
+            )
+            val elevationError = observation.elevationDegrees - deviceOrientation.elevationDegrees
             Text(
-                "${formatUtc(pass.aosUtcMillis)} → ${formatUtc(pass.losUtcMillis)} · " +
-                    "最高 ${pass.maximumElevationDegrees.roundToInt()}°",
+                String.format(
+                    Locale.US,
+                    "指向提示：水平 %+.0f° · 垂直 %+.0f°",
+                    azimuthError,
+                    elevationError,
+                ),
+                color = if (kotlin.math.abs(azimuthError) < 5.0 && kotlin.math.abs(elevationError) < 5.0) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+        PolarTrack(
+            track = detail.polarTrack,
+            current = observation,
+            orientation = deviceOrientation,
+            modifier = Modifier.fillMaxWidth().height(300.dp),
+        )
+        Text(
+            "黄色点为卫星目标，红色准星随手机方位与仰角移动；两者重合即完成指向。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        detail.passes.take(3).forEach { predictedPass ->
+            Text(
+                "${formatUtc(predictedPass.aosUtcMillis)} → ${formatUtc(predictedPass.losUtcMillis)} · " +
+                    "最高 ${predictedPass.maximumElevationDegrees.roundToInt()}°",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
         if (detail.transponders.isEmpty()) {
             Text("无离线转发器记录；可点击“刷新转发器”。")
         } else {
-            detail.transponders.take(4).forEach {
-                Text("${it.name} · ${it.mode}${if (it.inverted) " · 反向" else ""}")
+            Text("转发器", style = MaterialTheme.typography.titleMedium)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                items(detail.transponders, key = { it.stableKey() }) { transponder ->
+                    val selected = detail.selectedTransponderKey == transponder.stableKey()
+                    val label = transponder.name.ifBlank { transponder.mode.ifBlank { "Unknown" } }
+                    if (selected) {
+                        Button(
+                            enabled = transponder.hasCompleteFrequencyPlan(),
+                            onClick = { onTransponderSelected(transponder.stableKey()) },
+                        ) {
+                            Text(label, maxLines = 1)
+                        }
+                    } else {
+                        OutlinedButton(
+                            enabled = transponder.hasCompleteFrequencyPlan(),
+                            onClick = { onTransponderSelected(transponder.stableKey()) },
+                        ) {
+                            Text(label, maxLines = 1)
+                        }
+                    }
+                }
+            }
+            detail.transponders.firstOrNull { it.stableKey() == detail.selectedTransponderKey }?.let {
+                Text("${it.mode.ifBlank { "Mode --" }}${if (it.inverted) " · Inverting" else ""}")
+                Text(
+                    "D ${formatFrequencyRange(it.downlinkLowHz, it.downlinkHighHz)} · " +
+                        "U ${formatFrequencyRange(it.uplinkLowHz, it.uplinkHighHz)}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
         detail.frequencyTarget?.let { target ->
-            Text("RX ${target.rxFrequencyHz} Hz · TX ${target.txFrequencyHz} Hz")
+            Text("频率计划", style = MaterialTheme.typography.titleLarge)
+            Text("下行 ${target.rxFrequencyHz.toMhzText()} MHz")
+            Text("上行 ${target.txFrequencyHz.toMhzText()} MHz")
             Text(
                 String.format(
                     Locale.US,
@@ -282,64 +558,101 @@ private fun SatelliteDetail(detail: SatelliteDetailState?) {
                 ),
             )
         }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Hamlib 自动调频", style = MaterialTheme.typography.titleMedium)
+                Text(trackingStatus, style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(
+                checked = automaticTracking,
+                enabled = satelliteModeEnabled && radioConnected && detail.frequencyTarget != null,
+                onCheckedChange = onAutomaticTrackingChanged,
+            )
+        }
         Text(
-            "CAT 跟踪必须从 Radio 页显式启动；过期目标、读回失败或 LOS 会停止并恢复原频率，永不自动 PTT。",
+            when {
+                !satelliteModeEnabled -> "请先启用卫星模式；自动跟踪不会单独改变 FT8/FT4 运行状态。"
+                radioConnected -> "频率更新具有步长、时效和读回保护；LOS 或失败时恢复原频率，永不自动 PTT。"
+                else -> "请先从底部电台图标连接 Hamlib。"
+            },
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.error,
+            color = if (satelliteModeEnabled && radioConnected) MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.error,
         )
     }
 }
 
 @Composable
-private fun PolarTrack(track: List<SatelliteObservation>, modifier: Modifier) {
+private fun PolarTrack(
+    track: List<SatelliteObservation>,
+    current: SatelliteObservation,
+    orientation: DeviceOrientation,
+    modifier: Modifier,
+) {
     Canvas(modifier) {
-        val radius = minOf(size.width, size.height) * 0.42f
+        val radius = minOf(size.width, size.height) * 0.44f
         val center = Offset(size.width / 2f, size.height / 2f)
-        drawCircle(Color.Gray, radius, center, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
-        drawCircle(Color.Gray, radius / 2f, center, style = androidx.compose.ui.graphics.drawscope.Stroke(1f))
+        val gridColor = Color(0xFF8CA9A3)
+        drawCircle(gridColor, radius, center, style = androidx.compose.ui.graphics.drawscope.Stroke(3f))
+        drawCircle(gridColor, radius * 2f / 3f, center, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+        drawCircle(gridColor, radius / 3f, center, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+        drawLine(gridColor, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 2f)
+        drawLine(gridColor, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius), 2f)
         track.zipWithNext().forEach { (first, second) ->
-            drawLine(Color(0xFF00A896), polarPoint(first, center, radius), polarPoint(second, center, radius), 3f)
+            drawLine(
+                Color(0xFF00A896),
+                polarPoint(first, center, radius),
+                polarPoint(second, center, radius),
+                5f,
+            )
         }
-        track.lastOrNull()?.let { drawCircle(Color(0xFFFFB000), 6f, polarPoint(it, center, radius)) }
+        track.firstOrNull()?.let {
+            drawCircle(Color(0xFFFFB000), 7f, polarPoint(it, center, radius))
+        }
+        track.lastOrNull()?.let {
+            drawCircle(Color(0xFF6C7A89), 9f, polarPoint(it, center, radius))
+        }
+        drawCircle(Color(0xFFFFD166), 12f, polarPoint(current, center, radius))
+        if (orientation.available) {
+            val marker = polarPoint(
+                orientation.azimuthDegrees.toDouble(),
+                orientation.elevationDegrees.toDouble(),
+                center,
+                radius,
+            )
+            val red = Color(0xFFE32020)
+            drawLine(red.copy(alpha = 0.45f), center, marker, 2f)
+            drawCircle(red, 18f, marker, style = androidx.compose.ui.graphics.drawscope.Stroke(4f))
+            drawLine(red, Offset(marker.x - 26f, marker.y), Offset(marker.x + 26f, marker.y), 4f)
+            drawLine(red, Offset(marker.x, marker.y - 26f), Offset(marker.x, marker.y + 26f), 4f)
+            drawCircle(red, 4f, marker)
+        }
     }
 }
 
-@Composable
-private fun GroundTrack(track: List<SatelliteObservation>, modifier: Modifier) {
-    Canvas(modifier) {
-        drawRect(Color.Gray, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
-        drawLine(Color.DarkGray, Offset(0f, size.height / 2f), Offset(size.width, size.height / 2f), 1f)
-        track.zipWithNext().forEach { (first, second) ->
-            val a = Offset(
-                ((first.subpointLongitudeDegrees + 180.0) / 360.0 * size.width).toFloat(),
-                ((90.0 - first.subpointLatitudeDegrees) / 180.0 * size.height).toFloat(),
-            )
-            val b = Offset(
-                ((second.subpointLongitudeDegrees + 180.0) / 360.0 * size.width).toFloat(),
-                ((90.0 - second.subpointLatitudeDegrees) / 180.0 * size.height).toFloat(),
-            )
-            if (kotlin.math.abs(a.x - b.x) < size.width / 2f) drawLine(Color(0xFF3A86FF), a, b, 3f)
-        }
-    }
-}
+private fun polarPoint(
+    observation: SatelliteObservation,
+    center: Offset,
+    radius: Float,
+): Offset = polarPoint(observation.azimuthDegrees, observation.elevationDegrees, center, radius)
 
-private fun polarPoint(observation: SatelliteObservation, center: Offset, radius: Float): Offset {
-    val radial = ((90.0 - observation.elevationDegrees.coerceIn(0.0, 90.0)) / 90.0 * radius).toFloat()
-    val angle = Math.toRadians(observation.azimuthDegrees - 90.0)
+private fun polarPoint(
+    azimuthDegrees: Double,
+    elevationDegrees: Double,
+    center: Offset,
+    radius: Float,
+): Offset {
+    val radial = ((90.0 - elevationDegrees.coerceIn(0.0, 90.0)) / 90.0 * radius).toFloat()
+    val angle = Math.toRadians(azimuthDegrees - 90.0)
     return Offset(center.x + cos(angle).toFloat() * radial, center.y + sin(angle).toFloat() * radial)
 }
 
+private fun signedAngleDifference(targetDegrees: Double, currentDegrees: Double): Double =
+    (targetDegrees - currentDegrees + 540.0) % 360.0 - 180.0
+
 @Composable
 private fun SatelliteCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            content()
-        }
-    }
+    Ft8cnPanel(title = title, content = content)
 }
 
 private suspend fun loadDetail(
@@ -347,6 +660,7 @@ private suspend fun loadDetail(
     catalogNumber: Int,
     observer: ObserverPosition,
     nowUtcMillis: Long,
+    selectedTransponderKey: String?,
 ): SatelliteDetailState? = withContext(Dispatchers.Default) {
     val propagator = repository.latestPropagator(catalogNumber) ?: return@withContext null
     val observation = propagator.observe(observer, nowUtcMillis)
@@ -363,28 +677,23 @@ private suspend fun loadDetail(
         firstPass.losUtcMillis,
         MAXIMUM_POLAR_POINTS,
     )
-    val groundTrack = sampleObservations(
-        propagator,
-        observer,
-        nowUtcMillis,
-        nowUtcMillis + 90L * 60L * 1_000L,
-        MAXIMUM_GROUND_POINTS,
-    )
     val transponders = repository.transponders(catalogNumber).take(MAXIMUM_TRANSPONDERS)
-    val usable = transponders.firstOrNull {
-        it.downlinkLowHz != null && it.downlinkHighHz != null && it.uplinkLowHz != null && it.uplinkHighHz != null
-    }
+    val usableTransponders = transponders.filter(SatelliteTransponder::hasCompleteFrequencyPlan)
+    val usable = usableTransponders.firstOrNull { it.stableKey() == selectedTransponderKey }
+        ?: usableTransponders.firstOrNull()
     val frequencyTarget = usable?.let {
         val downlink = (requireNotNull(it.downlinkLowHz) + requireNotNull(it.downlinkHighHz)) / 2L
         val uplink = SatelliteDopplerPlanner().mapDownlinkToUplink(downlink, it)
         SatelliteDopplerPlanner().plan(nowUtcMillis, observation.rangeRateMetersPerSecond, downlink, uplink)
     }
     SatelliteDetailState(
+        propagator.record.name.ifBlank { "NORAD $catalogNumber" },
+        catalogNumber,
         observation,
         passes,
         polarTrack,
-        groundTrack,
         transponders,
+        usable?.stableKey(),
         frequencyTarget,
         propagator.record.epochUtcMillis,
     )
@@ -419,8 +728,36 @@ private fun formatUtc(utcMillis: Long): String = SimpleDateFormat("MM-dd HH:mm:s
     timeZone = TimeZone.getTimeZone("UTC")
 }.format(Date(utcMillis))
 
+private fun formatCountdown(durationMillis: Long): String {
+    val seconds = (durationMillis.coerceAtLeast(0L) / 1_000L)
+    return String.format(Locale.US, "%02d:%02d:%02d", seconds / 3_600, (seconds / 60) % 60, seconds % 60)
+}
+
+private fun Long.toMhzText(): String = String.format(Locale.US, "%.6f", this / 1_000_000.0)
+
+private fun SatelliteTransponder.stableKey(): String = listOf(
+    name,
+    mode,
+    downlinkLowHz,
+    downlinkHighHz,
+    uplinkLowHz,
+    uplinkHighHz,
+    inverted,
+).joinToString("|")
+
+private fun SatelliteTransponder.hasCompleteFrequencyPlan(): Boolean =
+    downlinkLowHz != null && downlinkHighHz != null && uplinkLowHz != null && uplinkHighHz != null
+
+private fun formatFrequencyRange(lowHz: Long?, highHz: Long?): String {
+    if (lowHz == null || highHz == null) return "--"
+    return if (lowHz == highHz) {
+        "${lowHz.toMhzText()} MHz"
+    } else {
+        "${lowHz.toMhzText()}–${highHz.toMhzText()} MHz"
+    }
+}
+
 private const val MAXIMUM_VISIBLE_SATELLITES = 250
 private const val MAXIMUM_MANUAL_TLE_CHARS = 64 * 1024
 private const val MAXIMUM_POLAR_POINTS = 64
-private const val MAXIMUM_GROUND_POINTS = 96
 private const val MAXIMUM_TRANSPONDERS = 32

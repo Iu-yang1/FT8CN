@@ -20,15 +20,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF006B5E),
+    primary = Color(0xFF0F766E),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFF9EF2DF),
+    primaryContainer = Color(0xFFD7F4ED),
     onPrimaryContainer = Color(0xFF00201B),
     secondary = Color(0xFF805600),
     secondaryContainer = Color(0xFFFFDDA7),
-    background = Color(0xFFF4FAF7),
-    surface = Color(0xFFFAFDFB),
-    surfaceVariant = Color(0xFFDCE5E1),
+    background = Color(0xFFF4F7F6),
+    surface = Color(0xFFF9FCFB),
+    surfaceVariant = Color(0xFFEAF5F2),
     outline = Color(0xFF6F7975),
     error = Color(0xFFBA1A1A),
 )
@@ -48,16 +48,16 @@ private val DarkColors = darkColorScheme(
 
 private val Ft8cnTypography = Typography(
     headlineLarge = TextStyle(
-        fontFamily = FontFamily.Serif,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
         fontSize = 32.sp,
         lineHeight = 38.sp,
     ),
     headlineMedium = TextStyle(
-        fontFamily = FontFamily.Serif,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
-        fontSize = 26.sp,
-        lineHeight = 32.sp,
+        fontSize = 23.sp,
+        lineHeight = 28.sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -72,16 +72,16 @@ private val Ft8cnTypography = Typography(
 )
 
 private val Ft8cnShapes = Shapes(
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(28.dp),
+    small = RoundedCornerShape(9.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(24.dp),
 )
 
 /** 独立主题避免迁移页面继续继承旧紫色默认值。 */
 @Composable
 fun Ft8cnTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current

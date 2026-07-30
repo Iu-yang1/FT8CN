@@ -16,9 +16,9 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 @LargeTest
-class ModernShellComposeBenchmarkTest {
+class Ft8cnShellComposeBenchmarkTest {
     @get:Rule
-    val composeRule = createAndroidComposeRule<ModernShellActivity>()
+    val composeRule = createAndroidComposeRule<Ft8cnActivity>()
 
     @Test
     fun repeatedNavigationHasBoundedTimeAndMemory() {
@@ -54,11 +54,9 @@ class ModernShellComposeBenchmarkTest {
     }
 
     private fun navigateToSettingsAndBack() {
-        composeRule.onNodeWithContentDescription("打开功能导航").performClick()
-        composeRule.onNodeWithTag("nav-settings").performClick()
+        composeRule.onNodeWithTag("bottom-nav-settings").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithContentDescription("打开功能导航").performClick()
-        composeRule.onNodeWithTag("nav-call").performClick()
+        composeRule.onNodeWithTag("bottom-nav-decode").performClick()
         composeRule.waitForIdle()
     }
 

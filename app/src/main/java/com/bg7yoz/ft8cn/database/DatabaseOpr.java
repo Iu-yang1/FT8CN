@@ -2169,6 +2169,26 @@ public class DatabaseOpr extends SQLiteOpenHelper {
                 if (name.equalsIgnoreCase("autoDxpeditionHound")) {
                     GeneralVariables.autoDxpeditionHound = (result.equals("") || result.equals("1"));
                 }
+                if (name.equalsIgnoreCase("pskReporterHost")) {
+                    GeneralVariables.pskReporterHost = result.equals("") ? "report.pskreporter.info" : result;
+                }
+                if (name.equalsIgnoreCase("pskReporterPort")) {
+                    try {
+                        GeneralVariables.pskReporterPort = Math.max(1, Math.min(65535, Integer.parseInt(result)));
+                    } catch (Exception e) {
+                        GeneralVariables.pskReporterPort = 4739;
+                    }
+                }
+                if (name.equalsIgnoreCase("pskReporterAntennaInfo")) {
+                    GeneralVariables.pskReporterAntennaInfo = result == null ? "" : result;
+                }
+                if (name.equalsIgnoreCase("pskReporterFlushIntervalMs")) {
+                    try {
+                        GeneralVariables.pskReporterFlushIntervalMs = Math.max(5000, Math.min(300000, Integer.parseInt(result)));
+                    } catch (Exception e) {
+                        GeneralVariables.pskReporterFlushIntervalMs = 15000;
+                    }
+                }
                 if (name.equalsIgnoreCase("manualDxpeditionHoundMode")) {
                     GeneralVariables.manualDxpeditionHoundMode = result.equals("1");
                 }

@@ -611,6 +611,22 @@ static void bridge_set_input_is_live_locked(int handle, int input_is_live) {
     wsjtx3_bridge_unlock();
 }
 
+static void bridge_reset_q65_averaging_locked(int handle) {
+    wsjtx3_bridge_lock();
+    wsjtx3_bridge_reset_q65_averaging(handle);
+    wsjtx3_bridge_unlock();
+}
+
+static int bridge_get_q65_averaging_state_locked(int handle,
+                                                  int *averaged_frame_count,
+                                                  int *clear_pending) {
+    int ok;
+    wsjtx3_bridge_lock();
+    ok = wsjtx3_bridge_get_q65_averaging_state(handle, averaged_frame_count, clear_pending);
+    wsjtx3_bridge_unlock();
+    return ok;
+}
+
 static void bridge_set_runtime_dirs_locked(const char *temp_dir, const char *data_dir) {
     wsjtx3_bridge_lock();
     wsjtx3_bridge_set_runtime_dirs(temp_dir, data_dir);
@@ -1901,6 +1917,31 @@ void wsjtx3_backend_set_q65_config(decoder_t *decoder, int q65_submode, int q65_
     state->q65_tr_period_seconds = sanitize_q65_tr_period_seconds(q65_tr_period_seconds);
     sync_bridge_options(state);
     callback_slot_lifecycle_trace(state, "configure-q65", state->last_merged_count);
+}
+
+int wsjtx3_backend_reset_q65_averaging(decoder_t *decoder) {
+    wsjtx3_backend_state_t *state = get_state(decoder);
+    if (state == NULL || !is_q65_mode(state->mode) || state->bridge_handle <= 0) {
+        return 0;
+    }
+    bridge_reset_q65_averaging_locked(state->bridge_handle);
+    return 1;
+}
+
+int wsjtx3_backend_get_q65_averaging_state(decoder_t *decoder,
+                                            int *averaged_frame_count,
+                                            int *clear_pending) {
+    wsjtx3_backend_state_t *state = get_state(decoder);
+    if (averaged_frame_count == NULL || clear_pending == NULL) {
+        return 0;
+    }
+    *averaged_frame_count = 0;
+    *clear_pending = 1;
+    if (state == NULL || !is_q65_mode(state->mode) || state->bridge_handle <= 0) {
+        return 0;
+    }
+    return bridge_get_q65_averaging_state_locked(
+            state->bridge_handle, averaged_frame_count, clear_pending);
 }
 
 void wsjtx3_backend_set_input_context(decoder_t *decoder,

@@ -22,6 +22,12 @@ function Assert-ExistingPath([string]$Path, [string]$Label) {
     }
 }
 
+function Copy-DirectoryContents([string]$Source, [string]$Destination) {
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Get-ChildItem -LiteralPath $Source -Force |
+        Copy-Item -Destination $Destination -Recurse -Force
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..\..\..\..')).ProviderPath
 $toolchainCommon = Join-Path $repoRoot 'scripts\toolchain-common.ps1'
@@ -106,20 +112,22 @@ $workspace = Join-Path $BuildDir $fingerprint.Substring(0, 16)
 $sourceWorkspace = Join-Path $workspace 'source'
 $cmakeBuildDir = Join-Path $workspace 'build'
 New-Item -ItemType Directory -Force -Path $OutputDir, $workspace | Out-Null
-if (-not (Test-Path (Join-Path $sourceWorkspace 'runtimes\CMakeLists.txt'))) {
+$workspaceSourcesComplete =
+    (Test-Path (Join-Path $sourceWorkspace 'runtimes\CMakeLists.txt')) -and
+    (Test-Path (Join-Path $sourceWorkspace 'cmake\Modules\CMakePolicy.cmake'))
+if (-not $workspaceSourcesComplete) {
+    # 构建中断后可能留下不完整的指纹工作区；将目录内容复制到明确的目标目录，
+    # 使后续构建能安全补齐文件，而不需要删除工具链源码。
     New-Item -ItemType Directory -Force -Path $sourceWorkspace | Out-Null
-    Copy-Item (Join-Path $LlvmSourceRoot 'cmake') $sourceWorkspace -Recurse
-    Copy-Item (Join-Path $LlvmSourceRoot 'runtimes') $sourceWorkspace -Recurse
-    Copy-Item (Join-Path $LlvmSourceRoot 'flang-rt') $sourceWorkspace -Recurse
-    New-Item -ItemType Directory -Force -Path (Join-Path $sourceWorkspace 'flang') | Out-Null
-    Copy-Item (Join-Path $LlvmSourceRoot 'flang\cmake') (Join-Path $sourceWorkspace 'flang') -Recurse
-    Copy-Item (Join-Path $LlvmSourceRoot 'flang\include') (Join-Path $sourceWorkspace 'flang') -Recurse
-    New-Item -ItemType Directory -Force -Path (Join-Path $sourceWorkspace 'flang\lib') | Out-Null
-    Copy-Item (Join-Path $LlvmSourceRoot 'flang\lib\Decimal') (Join-Path $sourceWorkspace 'flang\lib') -Recurse
-    Copy-Item (Join-Path $LlvmSourceRoot 'flang\module') (Join-Path $sourceWorkspace 'flang') -Recurse
-    New-Item -ItemType Directory -Force -Path (Join-Path $sourceWorkspace 'llvm\utils') | Out-Null
-    Copy-Item (Join-Path $LlvmSourceRoot 'llvm\cmake') (Join-Path $sourceWorkspace 'llvm') -Recurse
-    Copy-Item (Join-Path $LlvmSourceRoot 'llvm\utils\llvm-lit') (Join-Path $sourceWorkspace 'llvm\utils') -Recurse
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'cmake') (Join-Path $sourceWorkspace 'cmake')
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'runtimes') (Join-Path $sourceWorkspace 'runtimes')
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'flang-rt') (Join-Path $sourceWorkspace 'flang-rt')
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'flang\cmake') (Join-Path $sourceWorkspace 'flang\cmake')
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'flang\include') (Join-Path $sourceWorkspace 'flang\include')
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'flang\lib\Decimal') (Join-Path $sourceWorkspace 'flang\lib\Decimal')
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'flang\module') (Join-Path $sourceWorkspace 'flang\module')
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'llvm\cmake') (Join-Path $sourceWorkspace 'llvm\cmake')
+    Copy-DirectoryContents (Join-Path $LlvmSourceRoot 'llvm\utils\llvm-lit') (Join-Path $sourceWorkspace 'llvm\utils\llvm-lit')
     Copy-Item (Join-Path $LlvmSourceRoot 'llvm\utils\merge-json.py') (Join-Path $sourceWorkspace 'llvm\utils\merge-json.py')
 
     # Normalize only the isolated copy, then apply the repository-owned patch.

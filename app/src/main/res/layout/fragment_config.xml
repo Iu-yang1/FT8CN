@@ -76,7 +76,7 @@
                 android:paddingTop="6dp"
                 android:paddingEnd="12dp"
                 android:paddingBottom="12dp"
-                app:layout_constraintBottom_toTopOf="@+id/modernWorkbenchButton"
+                app:layout_constraintBottom_toTopOf="@+id/aboutButton"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/config_fragment_bar">
@@ -2795,21 +2795,6 @@
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:srcCompat="@drawable/config_ic_baseline_keyboard_arrow_down_24" />
-
-        <Button
-                android:id="@+id/modernWorkbenchButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:layout_marginEnd="12dp"
-                android:layout_marginBottom="8dp"
-                android:background="@drawable/imagebutton_style"
-                android:elevation="6dp"
-                android:text="@string/modern_workbench"
-                android:textColor="@color/bar_text_view_color"
-                app:layout_constraintBottom_toTopOf="@+id/aboutButton"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent" />
 
         <Button
                 android:id="@+id/aboutButton"

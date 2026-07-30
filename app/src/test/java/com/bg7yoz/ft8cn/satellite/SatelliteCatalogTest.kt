@@ -61,6 +61,22 @@ class SatelliteCatalogTest {
     }
 
     @Test
+    fun satNogsRequestsLook4SatCompatibleActiveTransmitterSource() = runBlocking {
+        var requestedUrl = ""
+        val transport = SatelliteHttpTransport { url, _ ->
+            requestedUrl = url
+            SatelliteHttpResponse(200, emptyMap(), "[]".toByteArray())
+        }
+
+        SatNogsCatalogClient(transport).fetchTransmitters(5, null)
+
+        assertTrue(requestedUrl.startsWith("https://db.satnogs.org/api/transmitters/"))
+        assertTrue(requestedUrl.contains("format=json"))
+        assertTrue(requestedUrl.contains("status=active"))
+        assertTrue(requestedUrl.contains("satellite__norad_cat_id=5"))
+    }
+
+    @Test
     fun externallyCapturedOfficialCatalogsParseWhenProvided() {
         val tlePath = System.getenv("FT8CN_CELESTRAK_SNAPSHOT").orEmpty()
         val satNogsPath = System.getenv("FT8CN_SATNOGS_SNAPSHOT").orEmpty()

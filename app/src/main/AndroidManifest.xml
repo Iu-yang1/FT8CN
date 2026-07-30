@@ -42,43 +42,21 @@
             android:name=".FAQActivity"
             android:exported="false" />
         <activity
-            android:name=".feature.shell.ModernShellActivity"
-            android:exported="false" />
-        <activity
-            android:name=".diagnostics.DeviceBenchmarkActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:noHistory="true" />
-        <activity
-            android:name=".MainActivity"
+            android:name=".feature.shell.Ft8cnActivity"
             android:exported="true"
             android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
-            <!-- 关联启动文件 -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
-
                 <category android:name="android.intent.category.DEFAULT" />
-
                 <data android:scheme="file" />
                 <data android:scheme="content" />
-                <data android:pathPattern=".*\\.txt" />
-                <data android:pathPattern=".*\\..*\\.txt" />
-                <data android:pathPattern=".*\\..*\\..*\\.txt" />
-                <data android:pathPattern=".*\\..*\\..*\\..*\\.txt" />
-
-                <data android:pathPattern=".*\\.adi" />
-                <data android:pathPattern=".*\\..*\\.adi" />
-                <data android:pathPattern=".*\\..*\\..*\\.adi" />
-                <data android:pathPattern=".*\\..*\\..*\\..*\\.adi" />
-
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="*/*" />
@@ -87,7 +65,11 @@
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/device_filter" />
         </activity>
-
+        <activity
+            android:name=".diagnostics.DeviceBenchmarkActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true" />
         <service android:name=".bluetooth.BluetoothSerialService" />
 
         <service

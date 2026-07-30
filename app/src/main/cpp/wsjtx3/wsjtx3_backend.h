@@ -21,6 +21,10 @@ void wsjtx3_backend_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]);
 int wsjtx3_backend_get_last_bridge_raw_count(decoder_t *decoder);
 int wsjtx3_backend_get_last_merged_count(decoder_t *decoder);
 int wsjtx3_backend_get_bridge_context_id(decoder_t *decoder);
+int wsjtx3_backend_reset_q65_averaging(decoder_t *decoder);
+int wsjtx3_backend_get_q65_averaging_state(decoder_t *decoder,
+                                            int *averaged_frame_count,
+                                            int *clear_pending);
 void wsjtx3_backend_set_ldpc_iterations(decoder_t *decoder, int iterations);
 void wsjtx3_backend_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
 void wsjtx3_backend_set_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);

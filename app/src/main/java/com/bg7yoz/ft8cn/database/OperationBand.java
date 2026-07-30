@@ -9,6 +9,7 @@ import com.bg7yoz.ft8cn.rigs.BaseRigOperation;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 
 /**
@@ -117,13 +118,13 @@ public class OperationBand {
         try {
             byte[] bytes = new byte[inputStream.available()];
             inputStream.read(bytes);
-            return (new String(bytes)).split(deLimited);
+            return (new String(bytes, StandardCharsets.UTF_8)).split(deLimited);
         }catch (IOException e){
             return null;
         }
     }
     public static long getBandFreq(int index){
-        if (index>bandList.size()){
+        if (index < 0 || index >= bandList.size()){
             return 14074000;
         }
         return bandList.get(index).band;

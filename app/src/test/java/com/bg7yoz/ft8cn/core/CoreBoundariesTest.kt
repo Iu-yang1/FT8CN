@@ -1,5 +1,7 @@
 package com.bg7yoz.ft8cn.core
 
+import com.bg7yoz.ft8cn.FT8Common
+import com.bg7yoz.ft8cn.GeneralVariables
 import com.bg7yoz.ft8cn.core.automation.AutomationIntent
 import com.bg7yoz.ft8cn.core.automation.AutomationPhase
 import com.bg7yoz.ft8cn.core.automation.FakeAutomationController
@@ -25,13 +27,41 @@ import org.junit.Test
 
 class CoreBoundariesTest {
     @Test
+    fun protocolModesKeepIndependentSlotGeometry() {
+        val originalSubmode = GeneralVariables.getQ65Submode()
+        val originalPeriod = GeneralVariables.getQ65TrPeriodSeconds()
+        try {
+            assertEquals(15_000, FT8Common.getSlotTimeMillisecond(FT8Common.FT8_MODE))
+            assertEquals(180_000, FT8Common.getSamplesPerSlot(FT8Common.FT8_MODE))
+            assertEquals(12_300, FT8Common.getEarlyDecodeDurationMs(FT8Common.FT8_MODE))
+            assertTrue(FT8Common.supportsEarlyDecodeStage(FT8Common.FT8_MODE))
+
+            assertEquals(7_500, FT8Common.getSlotTimeMillisecond(FT8Common.FT4_MODE))
+            assertEquals(90_000, FT8Common.getSamplesPerSlot(FT8Common.FT4_MODE))
+            assertEquals(6_150, FT8Common.getEarlyDecodeDurationMs(FT8Common.FT4_MODE))
+            assertTrue(FT8Common.supportsEarlyDecodeStage(FT8Common.FT4_MODE))
+
+            GeneralVariables.setQ65Configuration(FT8Common.Q65_SUBMODE_A, 60)
+            assertEquals(60_000, FT8Common.getSlotTimeMillisecond(FT8Common.Q65_MODE))
+            assertEquals(720_000, FT8Common.getSamplesPerSlot(FT8Common.Q65_MODE))
+            assertFalse(FT8Common.supportsEarlyDecodeStage(FT8Common.Q65_MODE))
+
+            GeneralVariables.setQ65Configuration(FT8Common.Q65_SUBMODE_E, 300)
+            assertEquals(300_000, FT8Common.getSlotTimeMillisecond(FT8Common.Q65_MODE))
+            assertEquals(3_600_000, FT8Common.getSamplesPerSlot(FT8Common.Q65_MODE))
+        } finally {
+            GeneralVariables.setQ65Configuration(originalSubmode, originalPeriod)
+        }
+    }
+
+    @Test
     fun featureRoutesAreStableAndUnique() {
-        assertEquals(6, FeatureDestination.values().size)
+        assertEquals(8, FeatureDestination.values().size)
         assertEquals(
             FeatureDestination.values().size,
             FeatureDestination.values().map { it.route }.toSet().size,
         )
-        assertEquals("call", FeatureDestination.CALL.route)
+        assertEquals("decode", FeatureDestination.DECODE.route)
     }
 
     @Test

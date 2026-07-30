@@ -33,6 +33,7 @@ import androidx.lifecycle.ViewModelProvider;
 import androidx.lifecycle.ViewModelStoreOwner;
 
 import com.bg7yoz.ft8cn.callsign.CallsignDatabase;
+import com.bg7yoz.ft8cn.core.FeatureAppGraph;
 import com.bg7yoz.ft8cn.callsign.CallsignInfo;
 import com.bg7yoz.ft8cn.callsign.OnAfterQueryCallsignLocation;
 import com.bg7yoz.ft8cn.connector.BluetoothRigConnector;
@@ -391,7 +392,9 @@ public class MainViewModel extends ViewModel {
                     return;
                 }
 
-                if (GeneralVariables.isExperimentalCodecEnabled()) {
+                if (GeneralVariables.isExperimentalCodecEnabled()
+                        && GeneralVariables.getOperatingProfile()
+                            == GeneralVariables.OPERATING_PROFILE_NORMAL) {
                     // Experimental packets are plain-text debug frames, not FT8/FT4
                     // messages, so we stop before FT-specific auto-flow/logging code.
                     currentDecodeCount = messages.size();
@@ -484,6 +487,12 @@ public class MainViewModel extends ViewModel {
 
             @Override
             public void onPrepareTransmit() {
+                boolean controlledByHamlib = FeatureAppGraph.from(GeneralVariables.getMainContext())
+                        .getRadioTransmitBridge().requestPtt(true);
+                if (controlledByHamlib) {
+                    if (needControlSco()) stopSco();
+                    return;
+                }
                 if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
@@ -507,16 +516,23 @@ public class MainViewModel extends ViewModel {
 
             @Override
             public void onAfterTransmit(Ft8Message message, int functionOder) {
+                boolean controlledByHamlib = FeatureAppGraph.from(GeneralVariables.getMainContext())
+                        .getRadioTransmitBridge().requestPtt(false);
+                if (controlledByHamlib) {
+                    if (needControlSco()) startSco();
+                }
                 if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
-                    if (baseRig != null) {
+                    if (!controlledByHamlib && baseRig != null) {
                         baseRig.setPTT(false);
                         if (needControlSco()) startSco();
                     }
                 }
 
                 if (GeneralVariables.isExperimentalCodecEnabled()
+                        && GeneralVariables.getOperatingProfile()
+                            == GeneralVariables.OPERATING_PROFILE_NORMAL
                         && ft8SignalListener != null
                         && message != null) {
                     // Experimental mode is used as a local modem bring-up path,
@@ -819,6 +835,11 @@ public class MainViewModel extends ViewModel {
      * 设置操作载波频率。如果电台没有连接，就有操作
      */
     public void setOperationBand() {
+        boolean controlledByHamlib = FeatureAppGraph.from(GeneralVariables.getMainContext())
+                .getRadioTransmitBridge().requestFrequency(GeneralVariables.band, GeneralVariables.band);
+        if (controlledByHamlib) {
+            return;
+        }
         if (!isRigConnected()) {
             return;
         }

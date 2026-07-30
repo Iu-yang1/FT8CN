@@ -3,11 +3,14 @@ cmake_minimum_required(VERSION 3.18.1)
 project("ft8cn")
 
 option(FT8CN_ENABLE_WSJTX3_BACKEND "Enable official WSJT-X 3.0 backend bridge" ON)
+option(FT8CN_ENABLE_NATIVE_HAMLIB "Enable the in-process Hamlib radio backend" ON)
 
 set(FT8CN_WSJTX3_NDK_ROOT "${ANDROID_NDK}" CACHE PATH "Android NDK root; empty lets the build script discover it")
 set(FT8CN_WSJTX3_FLANG_PATH "$ENV{FT8CN_FLANG_PATH}" CACHE FILEPATH "Android-capable Flang; empty enables discovery")
 set(FT8CN_WSJTX3_BOOST_HEADERS "$ENV{BOOST_ROOT}" CACHE PATH "Boost headers; empty enables discovery")
 set(FT8CN_WSJTX3_LLVM_SOURCE_ROOT "$ENV{LLVM_SOURCE_ROOT}" CACHE PATH "LLVM source root used for isolated flang-rt build")
+set(FT8CN_HAMLIB_PREBUILT_ROOT "$ENV{FT8CN_HAMLIB_PREBUILT_ROOT}" CACHE PATH
+        "Optional verified Hamlib Android install root; empty builds it reproducibly")
 set(FT8CN_WSJTX3_BUILD_PROFILE "Auto" CACHE STRING "WSJT-X core profile: Auto, Debug, Profile, or Release")
 set_property(CACHE FT8CN_WSJTX3_BUILD_PROFILE PROPERTY STRINGS Auto Debug Profile Release)
 set(FT8CN_WSJTX3_OPTIMIZATION "O2" CACHE STRING "WSJT-X release optimization: O2 or O3")
@@ -64,6 +67,7 @@ add_library(
         ft8Listener.cpp
         ft8Spectrum.cpp
         experimentalCodec.cpp
+        hamlib_jni.cpp
 )
 
 find_library(
@@ -75,6 +79,48 @@ find_library(
         m-lib
         m
 )
+
+set(FT8CN_NATIVE_HAMLIB_ACTIVE 0)
+if (FT8CN_ENABLE_NATIVE_HAMLIB AND ANDROID AND CMAKE_HOST_WIN32 AND ANDROID_ABI STREQUAL "arm64-v8a")
+    if (FT8CN_HAMLIB_PREBUILT_ROOT)
+        set(FT8CN_HAMLIB_OUTPUT_ROOT "${FT8CN_HAMLIB_PREBUILT_ROOT}")
+    else ()
+        set(FT8CN_HAMLIB_OUTPUT_ROOT "${CMAKE_CURRENT_BINARY_DIR}/hamlib_android/install")
+    endif ()
+    set(FT8CN_HAMLIB_LIBRARY "${FT8CN_HAMLIB_OUTPUT_ROOT}/lib/arm64-v8a/libhamlib.so")
+    set(FT8CN_HAMLIB_INCLUDE_ROOT "${FT8CN_HAMLIB_OUTPUT_ROOT}/include")
+
+    if (NOT EXISTS "${FT8CN_HAMLIB_LIBRARY}")
+        add_custom_command(
+                OUTPUT "${FT8CN_HAMLIB_LIBRARY}"
+                COMMAND powershell.exe -ExecutionPolicy Bypass -File
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../../scripts/build-hamlib-android.ps1"
+                -NdkRoot "${ANDROID_NDK}"
+                -OutputRoot "${FT8CN_HAMLIB_OUTPUT_ROOT}"
+                -Abi "${ANDROID_ABI}"
+                -Api 28
+                DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../../scripts/build-hamlib-android.ps1"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../../scripts/toolchain-common.ps1"
+                VERBATIM
+        )
+        add_custom_target(hamlib_android_build DEPENDS "${FT8CN_HAMLIB_LIBRARY}")
+    endif ()
+
+    file(MAKE_DIRECTORY "${FT8CN_HAMLIB_INCLUDE_ROOT}")
+    add_library(ft8cn_hamlib SHARED IMPORTED GLOBAL)
+    set_target_properties(ft8cn_hamlib PROPERTIES IMPORTED_LOCATION "${FT8CN_HAMLIB_LIBRARY}")
+    if (TARGET hamlib_android_build)
+        add_dependencies(ft8cn_hamlib hamlib_android_build)
+        add_dependencies(ft8cn hamlib_android_build)
+    endif ()
+    target_include_directories(ft8cn PRIVATE "${FT8CN_HAMLIB_INCLUDE_ROOT}")
+    target_link_libraries(ft8cn ft8cn_hamlib)
+    set(FT8CN_NATIVE_HAMLIB_ACTIVE 1)
+endif ()
+
+target_compile_definitions(ft8cn PRIVATE
+        FT8CN_NATIVE_HAMLIB_ACTIVE=${FT8CN_NATIVE_HAMLIB_ACTIVE})
 
 target_include_directories(
         ftx_core
@@ -127,7 +173,9 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
 
     if (FT8CN_WSJTX3_BUILD_PROFILE STREQUAL "Auto")
         if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-            set(WSJTX3_EFFECTIVE_BUILD_PROFILE "Debug")
+            # Android Debug 仍保留符号，但官方解码核心必须使用 O2；O0 会让 FT4/Q65
+            # 占满槽位并造成后续请求排队。需要逐指令调试时仍可显式指定 Debug。
+            set(WSJTX3_EFFECTIVE_BUILD_PROFILE "Profile")
         else ()
             set(WSJTX3_EFFECTIVE_BUILD_PROFILE "Release")
         endif ()

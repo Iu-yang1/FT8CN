@@ -4,9 +4,10 @@
     android:id="@+id/linearLayout2"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/select_bluetooth_dialog_style"
+    android:background="@drawable/ft8cn_dialog_surface"
     android:minWidth="300dp"
-    android:minHeight="60dp">
+    android:minHeight="60dp"
+    android:padding="12dp">
 
 
     <TextView
@@ -16,8 +17,9 @@
         android:layout_marginTop="8dp"
         android:gravity="start"
         android:text="@string/volume_percent"
-        android:textColor="#FFFFFF"
-        android:textSize="16sp"
+        android:textColor="@color/text_view_color"
+        android:textSize="17sp"
+        android:textStyle="bold"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.5"
         app:layout_constraintStart_toStartOf="parent"
@@ -27,9 +29,9 @@
         android:id="@+id/volumeProgress"
         android:layout_width="0dp"
         android:layout_height="18dp"
-        android:layout_marginStart="24dp"
+        android:layout_marginStart="16dp"
         android:layout_marginTop="16dp"
-        android:layout_marginEnd="24dp"
+        android:layout_marginEnd="16dp"
         android:layout_marginBottom="16dp"
         app:layout_constraintBottom_toTopOf="@+id/volumeSeekBar"
         app:layout_constraintEnd_toEndOf="parent"

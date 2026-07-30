@@ -336,6 +336,24 @@ int ftx_decoder_get_bridge_context_id(const ftx_decoder_t *decoder) {
     return decoder_get_bridge_context_id(decoder->impl);
 }
 
+int ftx_decoder_reset_q65_averaging(ftx_decoder_t *decoder) {
+    if (decoder == NULL || decoder->mode != FTX_MODE_Q65) {
+        return -1;
+    }
+    return decoder_reset_q65_averaging(decoder->impl) ? 0 : -1;
+}
+
+int ftx_decoder_get_q65_averaging_state(const ftx_decoder_t *decoder,
+                                        int *averaged_frame_count,
+                                        int *clear_pending) {
+    if (decoder == NULL || decoder->mode != FTX_MODE_Q65 ||
+        averaged_frame_count == NULL || clear_pending == NULL) {
+        return -1;
+    }
+    return decoder_get_q65_averaging_state(
+            decoder->impl, averaged_frame_count, clear_pending) ? 0 : -1;
+}
+
 int ftx_decoder_get_result(const ftx_decoder_t *decoder, int index, ftx_decode_result_t *out) {
     if (decoder == NULL || out == NULL) {
         return -1;

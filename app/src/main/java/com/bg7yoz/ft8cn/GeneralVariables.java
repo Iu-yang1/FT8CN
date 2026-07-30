@@ -88,11 +88,21 @@ public class GeneralVariables {
     public static int q65Submode = FT8Common.Q65_SUBMODE_A;
     public static int q65TrPeriodSeconds = FT8Common.Q65_DEFAULT_TR_PERIOD_SECONDS;
 
+    public static final int OPERATING_PROFILE_NORMAL = 0;
+    public static final int OPERATING_PROFILE_Q65_EME = 1;
+    public static final int OPERATING_PROFILE_SATELLITE_FT4 = 2;
+    private static volatile int operatingProfile = OPERATING_PROFILE_NORMAL;
+    private static volatile String operatingTrackingStatus = "";
+
     /**
      * 模式切换 LiveData
      */
     public static MutableLiveData<Integer> mutableSignalMode =
             new MutableLiveData<>(FT8Common.FT8_MODE);
+    public static MutableLiveData<Integer> mutableOperatingProfile =
+            new MutableLiveData<>(OPERATING_PROFILE_NORMAL);
+    public static MutableLiveData<String> mutableOperatingTrackingStatus =
+            new MutableLiveData<>("");
 
     public static boolean audioOutput32Bit = true;
     public static int audioSampleRate = 12000;
@@ -425,6 +435,40 @@ public class GeneralVariables {
 
     public static boolean isQ65Mode() {
         return signalMode == FT8Common.Q65_MODE;
+    }
+
+    public static synchronized void setOperatingProfile(int profile) {
+        if (profile != OPERATING_PROFILE_NORMAL
+                && profile != OPERATING_PROFILE_Q65_EME
+                && profile != OPERATING_PROFILE_SATELLITE_FT4) {
+            return;
+        }
+        operatingProfile = profile;
+        if (profile == OPERATING_PROFILE_NORMAL) {
+            setOperatingTrackingStatus("");
+        }
+        mutableOperatingProfile.postValue(profile);
+    }
+
+    public static int getOperatingProfile() {
+        return operatingProfile;
+    }
+
+    public static boolean isEmeOperatingProfile() {
+        return operatingProfile == OPERATING_PROFILE_Q65_EME;
+    }
+
+    public static boolean isSatelliteOperatingProfile() {
+        return operatingProfile == OPERATING_PROFILE_SATELLITE_FT4;
+    }
+
+    public static void setOperatingTrackingStatus(String status) {
+        operatingTrackingStatus = status == null ? "" : status.trim();
+        mutableOperatingTrackingStatus.postValue(operatingTrackingStatus);
+    }
+
+    public static String getOperatingTrackingStatus() {
+        return operatingTrackingStatus;
     }
 
     public static int getQ65Submode() {

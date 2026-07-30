@@ -591,11 +591,8 @@ public class LogFragment extends Fragment {
      * 显示统计页面
      */
     private void showCountFragment() {
-        //用于Fragment的导航。
-        NavHostFragment navHostFragment = (NavHostFragment) requireActivity()
-                .getSupportFragmentManager().findFragmentById(R.id.fragmentContainerView);
-        assert navHostFragment != null;//断言不为空
-        navHostFragment.getNavController().navigate(R.id.countFragment);
+        // 日志页现在可能嵌入 Compose 的独立 NavHost，必须使用当前 Fragment 所属控制器。
+        NavHostFragment.findNavController(this).navigate(R.id.countFragment);
     }
 
     /**
@@ -604,12 +601,9 @@ public class LogFragment extends Fragment {
      * @param callsign 呼号
      */
     private void showQrzFragment(String callsign) {
-        NavHostFragment navHostFragment = (NavHostFragment) requireActivity()
-                .getSupportFragmentManager().findFragmentById(R.id.fragmentContainerView);
-        assert navHostFragment != null;//断言不为空
         Bundle bundle = new Bundle();
         bundle.putString(QRZ_Fragment.CALLSIGN_PARAM, callsign);
-        navHostFragment.getNavController().navigate(R.id.QRZ_Fragment, bundle);
+        NavHostFragment.findNavController(this).navigate(R.id.QRZ_Fragment, bundle);
     }
 
 

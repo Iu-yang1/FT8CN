@@ -23,7 +23,7 @@ android {
         minSdk 28
         targetSdk 33
         versionCode 1
-        versionName 'ver0.7-WSJT-Lib-b2'
+        versionName 'ver0.7-WSJT-Lib-b4'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
 
         buildFeatures {

@@ -32,10 +32,12 @@ import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
+import com.bg7yoz.ft8cn.core.automation.Q65AutomationState;
 import com.bg7yoz.ft8cn.databinding.FragmentCallingListBinding;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
@@ -48,6 +50,50 @@ public class CallingListFragment extends Fragment {
     private RecyclerView callListRecyclerView;
     private CallingListAdapter callingListAdapter;
     private MainViewModel mainViewModel;
+
+    /** 显示特殊运行档位、当前收发序列和由 EME/卫星页发布的 Doppler 状态。 */
+    private void updateOperatingModeUi() {
+        if (binding == null) {
+            return;
+        }
+        int profile = GeneralVariables.getOperatingProfile();
+        if (profile == GeneralVariables.OPERATING_PROFILE_NORMAL) {
+            binding.operatingModeTextView.setVisibility(View.GONE);
+            return;
+        }
+        int mode = profile == GeneralVariables.OPERATING_PROFILE_Q65_EME
+                ? FT8Common.Q65_MODE : FT8Common.FT4_MODE;
+        int currentSequence = UtcTimer.getNowSequential(FT8Common.getSlotTimeM(mode));
+        int txSequence = mainViewModel == null || mainViewModel.ft8TransmitSignal == null
+                ? 0 : mainViewModel.ft8TransmitSignal.sequential;
+        if (mode == FT8Common.Q65_MODE && mainViewModel != null
+                && mainViewModel.ft8TransmitSignal != null) {
+            Q65AutomationState state = mainViewModel.ft8TransmitSignal
+                    .getQ65AutomationState().getValue();
+            if (state != null) {
+                txSequence = state.getTxSequence();
+            }
+        }
+        boolean txSlot = mainViewModel != null && mainViewModel.ft8TransmitSignal != null
+                && mainViewModel.ft8TransmitSignal.isActivated()
+                && currentSequence == txSequence;
+        String sequenceText = "计划 TX" + (txSequence + 1)
+                + " · 当前 " + (txSlot ? "TX" : "RX") + (currentSequence + 1);
+        String tracking = GeneralVariables.getOperatingTrackingStatus();
+        if (tracking == null || tracking.trim().isEmpty()) {
+            tracking = "Doppler 未启用";
+        }
+        if (profile == GeneralVariables.OPERATING_PROFILE_Q65_EME) {
+            binding.operatingModeTextView.setText("Q65 EME · Q65"
+                    + FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode())
+                    + "/" + GeneralVariables.getQ65TrPeriodSeconds() + "s · "
+                    + sequenceText + " · " + tracking);
+        } else {
+            binding.operatingModeTextView.setText("卫星 · FT4 · " + sequenceText
+                    + " · 定向 CQ 已暂停 · " + tracking);
+        }
+        binding.operatingModeTextView.setVisibility(View.VISIBLE);
+    }
 
 
     @SuppressLint("NotifyDataSetChanged")
@@ -129,8 +175,13 @@ public class CallingListFragment extends Fragment {
             @Override
             public void onChanged(Long aLong) {
                 binding.timerTextView.setText(UtcTimer.getTimeStr(aLong));
+                updateOperatingModeUi();
             }
         });
+        GeneralVariables.mutableOperatingProfile.observe(getViewLifecycleOwner(), profile ->
+                updateOperatingModeUi());
+        GeneralVariables.mutableOperatingTrackingStatus.observe(getViewLifecycleOwner(), status ->
+                updateOperatingModeUi());
 
         //观察时间偏移
         mainViewModel.mutableTimerOffset.observe(getViewLifecycleOwner(), new Observer<Float>() {
@@ -313,6 +364,19 @@ public class CallingListFragment extends Fragment {
     private boolean doCallNow(Ft8Message message) {
 
         mainViewModel.addFollowCallsign(message.getCallsignFrom());
+        if (GeneralVariables.isEmeOperatingProfile()
+                && GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+            if (!mainViewModel.ft8TransmitSignal.armQ65Reply(message, true)) {
+                ToastMessage.show("无法从该消息建立 Q65 回复序列");
+                return false;
+            }
+            if (!GeneralVariables.transmitMessages.contains(message)) {
+                GeneralVariables.transmitMessages.add(message);
+            }
+            GeneralVariables.resetLaunchSupervision();
+            navigateToMyCallFragment();
+            return true;
+        }
         if (!mainViewModel.ft8TransmitSignal.isActivated()) {
             mainViewModel.ft8TransmitSignal.setActivated(true);
             GeneralVariables.transmitMessages.add(message);//把消息添加到关注列表中
@@ -369,6 +433,10 @@ public class CallingListFragment extends Fragment {
                 break;
             case 1://时序与发送者相反！！！
                 Log.d(TAG, "呼叫：" + ft8Message.getCallsignTo());
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    doCallNow(ft8Message);
+                    break;
+                }
                 mainViewModel.addFollowCallsign(ft8Message.getCallsignTo());
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
@@ -394,6 +462,10 @@ public class CallingListFragment extends Fragment {
 
             case 4://回复
                 Log.d(TAG, "回复：" + ft8Message.getCallsignFrom());
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    doCallNow(ft8Message);
+                    break;
+                }
                 mainViewModel.addFollowCallsign(ft8Message.getCallsignFrom());
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);

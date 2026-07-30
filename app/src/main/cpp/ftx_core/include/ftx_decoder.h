@@ -86,6 +86,14 @@ int ftx_decoder_get_bridge_context_id(
         const ftx_decoder_t *decoder
 );
 
+int ftx_decoder_reset_q65_averaging(ftx_decoder_t *decoder);
+
+int ftx_decoder_get_q65_averaging_state(
+        const ftx_decoder_t *decoder,
+        int *averaged_frame_count,
+        int *clear_pending
+);
+
 int ftx_decoder_get_result(
         const ftx_decoder_t *decoder,
         int index,

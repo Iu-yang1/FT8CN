@@ -158,6 +158,20 @@ int decoder_get_bridge_context_id(decoder_t *decoder) {
     return wsjtx3_backend_get_bridge_context_id(decoder);
 }
 
+int decoder_reset_q65_averaging(decoder_t *decoder) {
+    return decoder == NULL ? 0 : wsjtx3_backend_reset_q65_averaging(decoder);
+}
+
+int decoder_get_q65_averaging_state(decoder_t *decoder,
+                                    int *averaged_frame_count,
+                                    int *clear_pending) {
+    if (decoder == NULL || averaged_frame_count == NULL || clear_pending == NULL) {
+        return 0;
+    }
+    return wsjtx3_backend_get_q65_averaging_state(
+            decoder, averaged_frame_count, clear_pending);
+}
+
 void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep) {
     if (decoder == NULL) {
         return;
