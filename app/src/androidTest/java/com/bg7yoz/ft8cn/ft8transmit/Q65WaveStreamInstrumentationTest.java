@@ -4,8 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import android.os.Bundle;
 import android.util.Log;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.bg7yoz.ft8cn.FT8Common;
 import com.bg7yoz.ft8cn.Ft8Message;
@@ -96,7 +98,11 @@ public class Q65WaveStreamInstrumentationTest {
             assertEquals(stream.getTotalSamples(), produced);
         }
         assertTrue(Double.isFinite(checksum));
-        Log.i(TAG, "Q65 TX 300s sampleRate=48000 chunkSamples=4096 totalSamples="
-                + produced + " elapsedMs=" + (System.currentTimeMillis() - startedAt));
+        String evidence = "Q65 TX 300s sampleRate=48000 chunkSamples=4096 totalSamples="
+                + produced + " elapsedMs=" + (System.currentTimeMillis() - startedAt);
+        Log.i(TAG, evidence);
+        Bundle status = new Bundle();
+        status.putString("ft8cn_q65_tx_evidence", evidence);
+        InstrumentationRegistry.getInstrumentation().sendStatus(0, status);
     }
 }

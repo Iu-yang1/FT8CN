@@ -611,7 +611,8 @@ if ($SkipAndroidBuild) {
         $androidPassed = $true
         Add-Gate 'Android build' 'PASS' 'unit tests, debug/release APK and internal test APK completed' `
             ([pscustomobject]$apkEvidence)
-        if ($null -ne $releaseSignature -and $releaseSignature.checked -and $releaseSignature.signed) {
+        if ($null -ne $releaseSignature -and $releaseSignature.checked -and `
+                $releaseSignature.signed -and -not $releaseSignature.debug_certificate) {
             Add-Gate 'Release signing' 'PASS' 'Release APK signature verified' $releaseSignature
         } else {
             $releaseSigningBlocked = $true
@@ -619,6 +620,8 @@ if ($SkipAndroidBuild) {
                 'Release signing status is unavailable'
             } elseif (-not $releaseSignature.checked) {
                 $releaseSignature.detail
+            } elseif ($releaseSignature.debug_certificate) {
+                'Release APK uses an Android debug certificate, which is not accepted for release qualification'
             } else {
                 'Release APK is intentionally unsigned because no external signing credentials were supplied'
             }

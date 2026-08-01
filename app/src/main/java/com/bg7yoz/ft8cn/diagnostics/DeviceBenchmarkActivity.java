@@ -22,6 +22,8 @@ public final class DeviceBenchmarkActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setTurnScreenOn(true);
+        setShowWhenLocked(true);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         TextView status = new TextView(this);

@@ -4,8 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
 import android.os.Debug;
+import android.os.Bundle;
 import android.util.Log;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.bg7yoz.ft8cn.diagnostics.InternalForegroundTestSession;
 
@@ -104,12 +106,16 @@ public class FtxStreamingResamplerInstrumentationTest {
         long javaHeapAfter = Runtime.getRuntime().totalMemory()
                 - Runtime.getRuntime().freeMemory();
         long nativeHeapAfter = Debug.getNativeHeapAllocatedSize();
-        Log.i(TAG, "Q65 RX 300s sourceRate=48000 sourceChunk=4096 outputSamples="
+        String evidence = "Q65 RX 300s sourceRate=48000 sourceChunk=4096 outputSamples="
                 + completed.get().size()
                 + " sourceArraySamples=4096 finalJavaArraySamples=0"
                 + " javaHeapDelta=" + (javaHeapAfter - javaHeapBefore)
                 + " nativeHeapDelta=" + (nativeHeapAfter - nativeHeapBefore)
-                + " elapsedMs=" + (System.currentTimeMillis() - startedAt));
+                + " elapsedMs=" + (System.currentTimeMillis() - startedAt);
+        Log.i(TAG, evidence);
+        Bundle status = new Bundle();
+        status.putString("ft8cn_q65_rx_evidence", evidence);
+        InstrumentationRegistry.getInstrumentation().sendStatus(0, status);
         completed.get().close();
         recorder.release();
     }

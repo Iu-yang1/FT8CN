@@ -75,6 +75,7 @@ function Get-AndroidApkSignatureStatus {
             tool = $null
             exit_code = $null
             certificate_sha256 = $null
+            debug_certificate = $false
             detail = 'apksigner was not discovered'
         }
     }
@@ -89,10 +90,13 @@ function Get-AndroidApkSignatureStatus {
         $ErrorActionPreference = $previousErrorAction
     }
     $certificateSha256 = $null
+    $debugCertificate = $false
     foreach ($line in $output) {
         if ($line -match 'certificate SHA-256 digest:\s*(?<digest>[0-9a-fA-F:]+)') {
             $certificateSha256 = $matches.digest.Replace(':', '').ToLowerInvariant()
-            break
+        }
+        if ($line -match 'certificate DN:.*(?:^|,)\s*CN=Android Debug(?:,|$)') {
+            $debugCertificate = $true
         }
     }
     return [pscustomobject]@{
@@ -101,6 +105,7 @@ function Get-AndroidApkSignatureStatus {
         tool = $apkSigner
         exit_code = $exitCode
         certificate_sha256 = $certificateSha256
+        debug_certificate = $debugCertificate
         detail = ($output -join "`n")
     }
 }

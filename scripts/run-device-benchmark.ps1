@@ -224,20 +224,32 @@ function Invoke-Q65StreamingGate([string]$Variant) {
     if (-not $summary.Success -or [int]$summary.Groups[1].Value -lt 7) {
         throw "Q65 streaming gate $Variant did not report all tests:`n$text"
     }
-    $logcatArguments = @('logcat', '-d', '-s', 'Q65StreamMemoryTest:I', '*:S')
-    $memoryLines = @()
-    $memoryDeadline = [DateTime]::UtcNow.AddSeconds(5)
-    do {
-        $memoryLines = @(Invoke-Adb @logcatArguments |
-            Where-Object { $_ -match 'Q65 (RX|TX) 300s' })
-        if ($memoryLines.Count -ge 2) { break }
-        Start-Sleep -Milliseconds 250
-    } while ([DateTime]::UtcNow -lt $memoryDeadline)
+    $memoryLines = New-Object System.Collections.Generic.List[string]
+    foreach ($statusKey in @('ft8cn_q65_rx_evidence', 'ft8cn_q65_tx_evidence')) {
+        $match = [regex]::Match(
+            $text,
+            "(?m)^INSTRUMENTATION_STATUS: $statusKey=(.+?)\s*$"
+        )
+        if ($match.Success) { $memoryLines.Add($match.Groups[1].Value.Trim()) }
+    }
+    if ($memoryLines.Count -lt 2) {
+        # 旧 test APK 只写 Logcat；保留短暂回退，新的 APK 使用可靠的 status Bundle。
+        $logcatArguments = @('logcat', '-d', '-s', 'Q65StreamMemoryTest:I', '*:S')
+        $memoryDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        do {
+            foreach ($line in @(Invoke-Adb @logcatArguments |
+                    Where-Object { $_ -match 'Q65 (RX|TX) 300s' })) {
+                if (-not $memoryLines.Contains([string]$line)) { $memoryLines.Add([string]$line) }
+            }
+            if ($memoryLines.Count -ge 2) { break }
+            Start-Sleep -Milliseconds 250
+        } while ([DateTime]::UtcNow -lt $memoryDeadline)
+    }
     if ($memoryLines.Count -lt 2) {
         throw "Q65 streaming gate $Variant returned no bounded-memory evidence."
     }
-    $rxEvidence = @($memoryLines | Where-Object { $_ -match 'Q65 RX 300s' })
-    $txEvidence = @($memoryLines | Where-Object { $_ -match 'Q65 TX 300s' })
+    $rxEvidence = @($memoryLines.ToArray() | Where-Object { $_ -match 'Q65 RX 300s' })
+    $txEvidence = @($memoryLines.ToArray() | Where-Object { $_ -match 'Q65 TX 300s' })
     if (
         ($rxEvidence.Count -ne 1) -or
         ($rxEvidence[0] -notmatch 'sourceChunk=4096') -or
@@ -256,7 +268,7 @@ function Invoke-Q65StreamingGate([string]$Variant) {
         source_chunk_samples = 4096
         tx_chunk_samples = 4096
         rx_final_12k_samples = 3600000
-        memory_evidence = $memoryLines
+        memory_evidence = $memoryLines.ToArray()
     }
 }
 
@@ -322,6 +334,9 @@ try {
         }
         if (-not $releaseSignature.signed) {
             throw 'BLOCKED_RELEASE_SIGNING: Release APK is unsigned and cannot be installed.'
+        }
+        if ($releaseSignature.debug_certificate) {
+            throw 'BLOCKED_RELEASE_SIGNING: Android debug certificates are not accepted for Release qualification.'
         }
     }
 
