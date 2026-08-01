@@ -70,4 +70,43 @@ $expected[0].frequency_hz = 1001.0
 $expectedFail = Test-FtxExpectedResults $expected $bridge
 Assert-True (-not $expectedFail.passed) 'manifest frequency mismatch must fail'
 
+$metadataRoot = Join-Path $env:TEMP ('ft8cn-apk-metadata-' + [Guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Force -Path $metadataRoot | Out-Null
+    Set-Content -LiteralPath (Join-Path $metadataRoot 'app-test.apk') -Value 'fixture' -Encoding ASCII
+    @{
+        elements = @(@{ outputFile = 'app-test.apk' })
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath `
+        (Join-Path $metadataRoot 'output-metadata.json') -Encoding UTF8
+    $resolvedApk = Resolve-GradleApkOutput -OutputDirectory $metadataRoot
+    Assert-Equal (Join-Path $metadataRoot 'app-test.apk') $resolvedApk `
+        'Gradle metadata must resolve the declared APK'
+
+    @{
+        elements = @(@{ outputFile = '..\escaped.apk' })
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath `
+        (Join-Path $metadataRoot 'output-metadata.json') -Encoding UTF8
+    $escapeRejected = $false
+    try {
+        $null = Resolve-GradleApkOutput -OutputDirectory $metadataRoot
+    } catch {
+        $escapeRejected = $_.Exception.Message -match 'escapes'
+    }
+    Assert-True $escapeRejected 'Gradle metadata path traversal must be rejected'
+
+    @{
+        elements = @(@{ outputFile = 'one.apk' }, @{ outputFile = 'two.apk' })
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath `
+        (Join-Path $metadataRoot 'output-metadata.json') -Encoding UTF8
+    $multipleRejected = $false
+    try {
+        $null = Resolve-GradleApkOutput -OutputDirectory $metadataRoot
+    } catch {
+        $multipleRejected = $_.Exception.Message -match 'Expected one'
+    }
+    Assert-True $multipleRejected 'ambiguous Gradle APK outputs must be rejected'
+} finally {
+    Remove-Item -LiteralPath $metadataRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host 'verification-common tests: PASS'

@@ -45,6 +45,8 @@ $sanitizerBlocked = $false
 $corpusBlocked = $false
 $q65StreamingBlocked = $true
 $q65StreamingPassed = $false
+$releaseSigningBlocked = $false
+$releaseSignature = $null
 $tools = $null
 $oracleFrequencyToleranceHz = 3.2
 $oracleDtToleranceSec = 0.06
@@ -585,23 +587,43 @@ if ($SkipAndroidBuild) {
         }
         $androidWatch.Stop()
         $apkPaths = [ordered]@{
-            debug = Join-Path $repoRoot 'app\build\outputs\apk\debug\app-debug.apk'
-            release = Join-Path $repoRoot 'app\build\outputs\apk\release\app-release.apk'
-            android_test = Join-Path $repoRoot 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
+            debug = Resolve-GradleApkOutput `
+                (Join-Path $repoRoot 'app\build\outputs\apk\debug')
+            release = Resolve-GradleApkOutput `
+                (Join-Path $repoRoot 'app\build\outputs\apk\release')
+            android_test = Resolve-GradleApkOutput `
+                (Join-Path $repoRoot 'app\build\outputs\apk\androidTest\debug')
         }
         $apkEvidence = [ordered]@{ elapsed_ms = [math]::Round($androidWatch.Elapsed.TotalMilliseconds, 3) }
         foreach ($entry in $apkPaths.GetEnumerator()) {
             if (-not (Test-Path -LiteralPath $entry.Value)) { throw "built APK is missing: $($entry.Value)" }
             $file = Get-Item -LiteralPath $entry.Value
+            $signature = Get-AndroidApkSignatureStatus -ApkPath $entry.Value `
+                -AndroidSdkRoot $tools.AndroidSdkRoot
             $apkEvidence[$entry.Key] = [ordered]@{
                 path = $entry.Value
                 size_bytes = $file.Length
                 sha256 = (Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256).Hash.ToLowerInvariant()
+                signature = $signature
             }
+            if ($entry.Key -eq 'release') { $releaseSignature = $signature }
         }
         $androidPassed = $true
         Add-Gate 'Android build' 'PASS' 'unit tests, debug/release APK and internal test APK completed' `
             ([pscustomobject]$apkEvidence)
+        if ($null -ne $releaseSignature -and $releaseSignature.checked -and $releaseSignature.signed) {
+            Add-Gate 'Release signing' 'PASS' 'Release APK signature verified' $releaseSignature
+        } else {
+            $releaseSigningBlocked = $true
+            $detail = if ($null -eq $releaseSignature) {
+                'Release signing status is unavailable'
+            } elseif (-not $releaseSignature.checked) {
+                $releaseSignature.detail
+            } else {
+                'Release APK is intentionally unsigned because no external signing credentials were supplied'
+            }
+            Add-Gate 'Release signing' 'BLOCKED_RELEASE_SIGNING' $detail $releaseSignature
+        }
     } catch {
         $hasFailure = $true
         Add-Gate 'Android build' 'FAIL' $_.Exception.Message
@@ -629,8 +651,9 @@ if ($SkipDeviceGate) {
     } else {
         try {
             $deviceReport = Join-Path $runRoot 'device-benchmark.json'
+            $deviceVariant = if ($releaseSigningBlocked) { 'DEBUG' } else { 'ALL' }
             & $deviceScript -AdbPath $tools.Adb -JavaHome $tools.JavaHome `
-                -CorpusManifest $corpusPath -OutputJson $deviceReport
+                -CorpusManifest $corpusPath -OutputJson $deviceReport -VariantFilter $deviceVariant
             Assert-LastExitCode 'Android device benchmark'
             $deviceData = Get-Content -LiteralPath $deviceReport -Raw | ConvertFrom-Json
             if (-not $deviceData.passed) { throw 'device benchmark report did not pass' }
@@ -638,10 +661,16 @@ if ($SkipDeviceGate) {
                     -or -not $deviceData.q65_streaming.passed) {
                 throw 'Q65 bounded streaming device gate did not pass'
             }
-            $devicePassed = $true
-            $q65StreamingPassed = $true
-            $q65StreamingBlocked = $false
-            Add-Gate 'Android device benchmark' 'PASS' 'debug/release native device gates passed' $deviceData
+            if ($releaseSigningBlocked) {
+                Add-Gate 'Android device benchmark' 'BLOCKED_RELEASE_SIGNING' `
+                    'Debug device gates passed; unsigned Release APK cannot be installed for the Release device gate' `
+                    $deviceData
+            } else {
+                $devicePassed = $true
+                $q65StreamingPassed = $true
+                $q65StreamingBlocked = $false
+                Add-Gate 'Android device benchmark' 'PASS' 'debug/release native device gates passed' $deviceData
+            }
         } catch {
             $hasFailure = $true
             Add-Gate 'Android device benchmark' 'FAIL' $_.Exception.Message
@@ -664,9 +693,10 @@ if ($deviceBlocked) { $finalStates.Add('BLOCKED_DEVICE') }
 if ($sanitizerBlocked) { $finalStates.Add('BLOCKED_SANITIZER') }
 if ($corpusBlocked) { $finalStates.Add('BLOCKED_CORPUS') }
 if ($q65StreamingBlocked) { $finalStates.Add('BLOCKED_Q65_STREAMING') }
+if ($releaseSigningBlocked) { $finalStates.Add('BLOCKED_RELEASE_SIGNING') }
 if ($hasFailure) { $finalStates.Add('FAIL') }
 if ($hostPassed -and $oraclePassed -and $androidPassed -and $devicePassed `
-        -and -not $q65StreamingBlocked -and -not $hasFailure) {
+        -and -not $q65StreamingBlocked -and -not $releaseSigningBlocked -and -not $hasFailure) {
     $finalStates.Add('DEVICE_RELEASE_PASS')
 }
 if ($finalStates.Count -eq 0) { $finalStates.Add('FAIL'); $hasFailure = $true }

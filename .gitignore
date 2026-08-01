@@ -3,6 +3,9 @@
 /.gradle-local/
 /.idea/
 /local.properties
+/release-signing.properties
+*.jks
+*.keystore
 **/.cxx/
 **/build/
 **/out/

@@ -1,5 +1,6 @@
 import java.text.DateFormat
 import java.text.SimpleDateFormat
+import java.util.Properties
 
 plugins {
     id 'com.android.application'
@@ -7,23 +8,80 @@ plugins {
     id 'org.jetbrains.kotlin.kapt'
 }
 
-def currentTime = getCurrentTime()
+def currentTime = formatBuildDate(resolveBuildEpochSeconds(rootDir))
+def releaseSigningProperties = new Properties()
+def releaseSigningPropertiesFile = rootProject.file('release-signing.properties')
+if (releaseSigningPropertiesFile.isFile()) {
+    releaseSigningPropertiesFile.withInputStream { releaseSigningProperties.load(it) }
+}
+def signingValue = { String propertyName, String environmentName ->
+    System.getenv(environmentName) ?: releaseSigningProperties.getProperty(propertyName, '')
+}
+def releaseStoreFile = signingValue('storeFile', 'FT8CN_RELEASE_STORE_FILE')
+def releaseStorePassword = signingValue('storePassword', 'FT8CN_RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = signingValue('keyAlias', 'FT8CN_RELEASE_KEY_ALIAS')
+def releaseKeyPassword = signingValue('keyPassword', 'FT8CN_RELEASE_KEY_PASSWORD')
+def releaseSigningValues = [
+        releaseStoreFile,
+        releaseStorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword,
+]
+def hasReleaseSigning = releaseSigningValues.every { it != null && !it.toString().isBlank() }
+if (releaseSigningValues.any { it != null && !it.toString().isBlank() } && !hasReleaseSigning) {
+    throw new GradleException('Release signing configuration is incomplete')
+}
+if (hasReleaseSigning && !rootProject.file(releaseStoreFile).isFile()) {
+    throw new GradleException('Release signing store file does not exist')
+}
 
-static def getCurrentTime() {
+static long resolveBuildEpochSeconds(File repositoryRoot) {
+    String configuredEpoch = System.getenv('SOURCE_DATE_EPOCH')
+    if (configuredEpoch != null && configuredEpoch ==~ /\d+/) {
+        return Long.parseLong(configuredEpoch)
+    }
+    try {
+        Process process = new ProcessBuilder(
+                'git', '-C', repositoryRoot.absolutePath, 'show', '-s', '--format=%ct', 'HEAD')
+                .redirectErrorStream(true)
+                .start()
+        String output = process.inputStream.getText('UTF-8').trim()
+        if (process.waitFor() == 0 && output ==~ /\d+/) {
+            return Long.parseLong(output)
+        }
+    } catch (IOException ignored) {
+        // 源码归档没有 Git 元数据时使用固定纪元，避免退回不可复现的当前时间。
+    }
+    return 0L
+}
+
+static def formatBuildDate(long epochSeconds) {
     DateFormat df = new SimpleDateFormat("yyyy-MM-dd")
-    return df.format(Calendar.getInstance(Locale.CHINA).getTime())
+    df.setTimeZone(TimeZone.getTimeZone('UTC'))
+    return df.format(new Date(epochSeconds * 1000L))
 }
 
 android {
     namespace 'com.bg7yoz.ft8cn'
     compileSdk 33
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile rootProject.file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
     defaultConfig {
         applicationId "com.bg7yoz.ft8cn.ft4"
         minSdk 28
         targetSdk 33
-        versionCode 1
-        versionName 'ver0.7-WSJT-Lib-b4'
+        versionCode 5
+        versionName 'ver0.7-WSJT-Lib-b5'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
 
         buildFeatures {
@@ -41,16 +99,18 @@ android {
                 cppFlags ""
             }
         }
-
-        signingConfig signingConfigs.debug
     }
 
     buildTypes {
         debug {
+            signingConfig signingConfigs.debug
             buildConfigField "String", "apkBuildTime", "\"${currentTime}\""
         }
 
         release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             buildConfigField "String", "apkBuildTime", "\"${currentTime}\""

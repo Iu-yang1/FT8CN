@@ -1,5 +1,110 @@
 Set-StrictMode -Version Latest
 
+function Resolve-GradleApkOutput {
+    param([Parameter(Mandatory = $true)][string]$OutputDirectory)
+
+    $resolvedDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
+    $metadataPath = Join-Path $resolvedDirectory 'output-metadata.json'
+    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+        throw "Gradle APK metadata is missing: $metadataPath"
+    }
+
+    $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+    $elements = @($metadata.elements)
+    if ($elements.Count -ne 1) {
+        throw "Expected one Gradle APK output in $metadataPath, found $($elements.Count)"
+    }
+    $outputFile = [string]$elements[0].outputFile
+    if (-not $outputFile -or [System.IO.Path]::IsPathRooted($outputFile)) {
+        throw "Gradle APK outputFile must be a relative file name: $outputFile"
+    }
+
+    $apkPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedDirectory $outputFile))
+    $directoryPrefix = $resolvedDirectory.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $apkPath.StartsWith($directoryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Gradle APK output escapes its output directory: $outputFile"
+    }
+    if (-not (Test-Path -LiteralPath $apkPath -PathType Leaf)) {
+        throw "Gradle APK output is missing: $apkPath"
+    }
+    return $apkPath
+}
+
+function Find-AndroidApkSigner {
+    param([string]$AndroidSdkRoot = '')
+
+    $candidateRoots = @($AndroidSdkRoot, $env:ANDROID_SDK_ROOT, $env:ANDROID_HOME) |
+        Where-Object { $_ } | Select-Object -Unique
+    foreach ($root in $candidateRoots) {
+        $buildToolsRoot = Join-Path $root 'build-tools'
+        if (-not (Test-Path -LiteralPath $buildToolsRoot -PathType Container)) { continue }
+        foreach ($directory in @(Get-ChildItem -LiteralPath $buildToolsRoot -Directory |
+                Sort-Object Name -Descending)) {
+            foreach ($name in @('apksigner.bat', 'apksigner')) {
+                $candidate = Join-Path $directory.FullName $name
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+            }
+        }
+    }
+
+    foreach ($name in @('apksigner.bat', 'apksigner')) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $command -and (Test-Path -LiteralPath $command.Source -PathType Leaf)) {
+            return $command.Source
+        }
+    }
+    return $null
+}
+
+function Get-AndroidApkSignatureStatus {
+    param(
+        [Parameter(Mandatory = $true)][string]$ApkPath,
+        [string]$AndroidSdkRoot = ''
+    )
+
+    if (-not (Test-Path -LiteralPath $ApkPath -PathType Leaf)) {
+        throw "APK is missing: $ApkPath"
+    }
+    $apkSigner = Find-AndroidApkSigner -AndroidSdkRoot $AndroidSdkRoot
+    if (-not $apkSigner) {
+        return [pscustomobject]@{
+            checked = $false
+            signed = $false
+            tool = $null
+            exit_code = $null
+            certificate_sha256 = $null
+            detail = 'apksigner was not discovered'
+        }
+    }
+
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $apkSigner verify --verbose --print-certs $ApkPath 2>&1 |
+            ForEach-Object { "$_" })
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    $certificateSha256 = $null
+    foreach ($line in $output) {
+        if ($line -match 'certificate SHA-256 digest:\s*(?<digest>[0-9a-fA-F:]+)') {
+            $certificateSha256 = $matches.digest.Replace(':', '').ToLowerInvariant()
+            break
+        }
+    }
+    return [pscustomobject]@{
+        checked = $true
+        signed = $exitCode -eq 0
+        tool = $apkSigner
+        exit_code = $exitCode
+        certificate_sha256 = $certificateSha256
+        detail = ($output -join "`n")
+    }
+}
+
 function Normalize-FtxMessage {
     param([AllowNull()][string]$Message)
 

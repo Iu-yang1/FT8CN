@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath
 . (Join-Path $PSScriptRoot 'toolchain-common.ps1')
+. (Join-Path $PSScriptRoot 'verification-common.ps1')
 
 function Assert-LastExitCode([string]$Action) {
     if ($LASTEXITCODE -ne 0) { throw "$Action failed with exit code $LASTEXITCODE" }
@@ -295,14 +296,33 @@ try {
         $env:PATH = $oldPath
     }
 
-    $debugApk = Join-Path $repoRoot 'app\build\outputs\apk\debug\app-debug.apk'
-    $releaseApk = Join-Path $repoRoot 'app\build\outputs\apk\release\app-release.apk'
-    $testApk = Join-Path $repoRoot 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
+    $debugApk = $null
+    $releaseApk = $null
+    if ($VariantFilter -in @('ALL', 'DEBUG')) {
+        $debugApk = Resolve-GradleApkOutput `
+            (Join-Path $repoRoot 'app\build\outputs\apk\debug')
+    }
+    if ($VariantFilter -in @('ALL', 'RELEASE')) {
+        $releaseApk = Resolve-GradleApkOutput `
+            (Join-Path $repoRoot 'app\build\outputs\apk\release')
+    }
+    $testApk = Resolve-GradleApkOutput `
+        (Join-Path $repoRoot 'app\build\outputs\apk\androidTest\debug')
     $requiredApks = @($testApk)
     if ($VariantFilter -in @('ALL', 'DEBUG')) { $requiredApks += $debugApk }
     if ($VariantFilter -in @('ALL', 'RELEASE')) { $requiredApks += $releaseApk }
     foreach ($apk in $requiredApks) {
         if (-not (Test-Path -LiteralPath $apk)) { throw "Built APK is missing: $apk" }
+    }
+    if ($VariantFilter -in @('ALL', 'RELEASE')) {
+        $releaseSignature = Get-AndroidApkSignatureStatus -ApkPath $releaseApk `
+            -AndroidSdkRoot $env:ANDROID_SDK_ROOT
+        if (-not $releaseSignature.checked) {
+            throw "BLOCKED_RELEASE_SIGNING: $($releaseSignature.detail)"
+        }
+        if (-not $releaseSignature.signed) {
+            throw 'BLOCKED_RELEASE_SIGNING: Release APK is unsigned and cannot be installed.'
+        }
     }
 
     $debugReport = $null
