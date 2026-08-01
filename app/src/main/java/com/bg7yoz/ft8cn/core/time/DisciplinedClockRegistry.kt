@@ -1,27 +1,16 @@
 package com.bg7yoz.ft8cn.core.time
 
 import kotlinx.coroutines.flow.StateFlow
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /** Java/JNI 旧路径统一从这里读取应用 UTC，避免各自读取可跳变的 wall clock。 */
 object DisciplinedClockRegistry {
     private val disciplinedClock = SystemDisciplinedClock()
-    private val refresher = Executors.newSingleThreadScheduledExecutor { runnable ->
-        Thread(runnable, "ft8cn-clock-refresh").apply { isDaemon = true }
-    }
-
-    init {
-        refresher.scheduleAtFixedRate(
-            { disciplinedClock.refresh() },
-            1L,
-            1L,
-            TimeUnit.SECONDS,
-        )
-    }
 
     @JvmStatic
-    fun nowMillis(): Long = disciplinedClock.snapshot().utcMillis
+    fun nowMillis(): Long = disciplinedClock.nowMillis()
+
+    @JvmStatic
+    fun refreshState(): ClockSnapshot = disciplinedClock.refresh()
 
     @JvmStatic
     fun snapshot(): ClockSnapshot = disciplinedClock.snapshot()
@@ -33,8 +22,18 @@ object DisciplinedClockRegistry {
     fun submitSample(sample: ClockSample): Boolean = disciplinedClock.submitSample(sample)
 
     @JvmStatic
-    fun isAutomaticTransmitAllowed(): Boolean = disciplinedClock.automaticTransmitAllowed()
+    fun isAutomaticTransmitAllowed(mode: AutomaticTransmitMode): Boolean =
+        disciplinedClock.automaticTransmitAllowed(mode)
 
     @JvmStatic
-    fun automaticTransmitBlockReason(): String = disciplinedClock.automaticTransmitBlockReason()
+    fun isAutomaticTransmitAllowed(): Boolean =
+        disciplinedClock.automaticTransmitAllowed(AutomaticTransmitMode.FT8)
+
+    @JvmStatic
+    fun automaticTransmitBlockReason(mode: AutomaticTransmitMode): String =
+        disciplinedClock.automaticTransmitBlockReason(mode)
+
+    @JvmStatic
+    fun automaticTransmitBlockReason(): String =
+        disciplinedClock.automaticTransmitBlockReason(AutomaticTransmitMode.FT8)
 }

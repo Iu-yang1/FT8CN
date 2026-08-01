@@ -25,8 +25,9 @@ class NtpProtocolException(message: String) : IOException(message)
 
 /**
  * 最小化的 SNTPv4 客户端。它校验响应身份和服务器状态，并使用四时间戳公式计算偏差。
+ * 该实现没有 NTS 认证，因此不使用“安全 NTP”名称。
  */
-class SecureNtpClient(
+class SntpClient(
     private val timeoutMillis: Int = 3_000,
     private val timeSource: MonotonicTimeSource = AndroidMonotonicTimeSource,
 ) {
@@ -93,6 +94,8 @@ class SecureNtpClient(
                 uncertaintyMillis = uncertainty,
                 source = ClockSource.NTP,
                 detail = "NTP $host stratum=$stratum rtt=${max(0.0, delay).toInt()}ms",
+                roundTripDelayMillis = max(0.0, delay),
+                consensusMembers = 1,
             ),
         )
     }
@@ -183,7 +186,7 @@ class SecureNtpClient(
 
 /** 多源采样后按 offset 中位数剔除离群值，保留最低不确定度样本的时刻精度。 */
 class MultiSourceNtpDiscipline(
-    private val client: SecureNtpClient = SecureNtpClient(),
+    private val client: SntpClient = SntpClient(),
 ) {
     @Throws(IOException::class)
     fun synchronize(preferredServer: String? = null): NtpMeasurement {
@@ -244,6 +247,8 @@ class MultiSourceNtpDiscipline(
                     inliers.maxOf { abs(it.offsetMillis - fusedOffset) },
                 ),
                 detail = "NTP ${inliers.size}/${servers.size} sources rtt=${best.roundTripDelayMillis.toInt()}ms",
+                roundTripDelayMillis = best.roundTripDelayMillis,
+                consensusMembers = inliers.size,
             ),
         )
     }

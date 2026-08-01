@@ -10,12 +10,12 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
-class SecureNtpClientTest {
+class SntpClientTest {
     @Test
     fun parsesValidatedFourTimestampResponse() {
         val server = LocalNtpServer(ResponseMode.VALID, serverOffsetMillis = 120.0)
         server.use {
-            val result = SecureNtpClient(1_000, JvmTimeSource).query("127.0.0.1", server.port)
+            val result = SntpClient(1_000, JvmTimeSource).query("127.0.0.1", server.port)
 
             assertTrue(abs(result.offsetMillis - 120.0) < 35.0)
             assertTrue(result.roundTripDelayMillis >= 0.0)
@@ -27,14 +27,14 @@ class SecureNtpClientTest {
     @Test(expected = NtpProtocolException::class)
     fun rejectsOriginateTimestampMismatch() {
         LocalNtpServer(ResponseMode.BAD_ORIGINATE).use { server ->
-            SecureNtpClient(1_000, JvmTimeSource).query("127.0.0.1", server.port)
+            SntpClient(1_000, JvmTimeSource).query("127.0.0.1", server.port)
         }
     }
 
     @Test(expected = NtpProtocolException::class)
     fun rejectsKissOfDeath() {
         LocalNtpServer(ResponseMode.KISS_OF_DEATH).use { server ->
-            SecureNtpClient(1_000, JvmTimeSource).query("127.0.0.1", server.port)
+            SntpClient(1_000, JvmTimeSource).query("127.0.0.1", server.port)
         }
     }
 

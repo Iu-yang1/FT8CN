@@ -23,6 +23,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
@@ -148,6 +149,9 @@ public class MainViewModel extends ViewModel {
     public MutableLiveData<String> mutableNtpServer = new MutableLiveData<>("");
     public MutableLiveData<String> mutableNtpSyncInfo = new MutableLiveData<>("");
     public MutableLiveData<Boolean> mutableNtpSyncSuccess = new MutableLiveData<>(false);
+    private static final long NTP_SYNC_INTERVAL_MS = TimeUnit.MINUTES.toMillis(15);
+    private static final long NTP_RETRY_INTERVAL_MS = TimeUnit.MINUTES.toMillis(1);
+    private volatile long nextNtpSyncElapsedMs = Long.MAX_VALUE;
     private final Observer<Integer> ntpConfigChangedObserver = new Observer<Integer>() {
         @Override
         public void onChanged(Integer integer) {
@@ -374,6 +378,12 @@ public class MainViewModel extends ViewModel {
                 timerSec.postValue(utc);
                 mutableIsRecording.postValue(hamRecorder.isRunning());
                 mutableHamRecordIsRunning.postValue(hamRecorder.isRunning());
+                if (GeneralVariables.ntpEnable
+                        && SystemClock.elapsedRealtime() >= nextNtpSyncElapsedMs) {
+                    // 先推迟下一次触发，避免同步任务尚未入队时被下一秒重复提交。
+                    nextNtpSyncElapsedMs = Long.MAX_VALUE;
+                    syncNtpTime();
+                }
             }
         });
         utcTimer.start();
@@ -722,6 +732,7 @@ public class MainViewModel extends ViewModel {
      */
     public void syncNtpTime() {
         if (!GeneralVariables.ntpEnable) {
+            nextNtpSyncElapsedMs = Long.MAX_VALUE;
             mutableNtpSyncSuccess.postValue(false);
             mutableNtpSyncInfo.postValue("NTP 已关闭");
             return;
@@ -734,6 +745,7 @@ public class MainViewModel extends ViewModel {
      */
     public void syncNtpTime(String server) {
         if (!GeneralVariables.ntpEnable) {
+            nextNtpSyncElapsedMs = Long.MAX_VALUE;
             mutableNtpSyncSuccess.postValue(false);
             mutableNtpSyncInfo.postValue("NTP 已关闭");
             return;
@@ -752,6 +764,7 @@ public class MainViewModel extends ViewModel {
         mutableNtpServer.postValue(targetServer);
         mutableNtpSyncSuccess.postValue(false);
         mutableNtpSyncInfo.postValue("正在同步 " + targetServer + " ...");
+        nextNtpSyncElapsedMs = SystemClock.elapsedRealtime() + NTP_SYNC_INTERVAL_MS;
 
         UtcTimer.syncTime(targetServer, new UtcTimer.AfterSyncTimeDetail() {
             @Override
@@ -770,6 +783,7 @@ public class MainViewModel extends ViewModel {
                 mutableNtpSyncTime.postValue(result.syncTimeMs);
                 mutableNtpServer.postValue(result.server);
                 mutableNtpSyncSuccess.postValue(true);
+                nextNtpSyncElapsedMs = SystemClock.elapsedRealtime() + NTP_SYNC_INTERVAL_MS;
 
                 String info = "NTP同步成功  server=" + result.server
                         + "  offset=" + result.realOffsetMs + "ms"
@@ -782,6 +796,7 @@ public class MainViewModel extends ViewModel {
             @Override
             public void syncFailed(IOException e) {
                 mutableNtpSyncSuccess.postValue(false);
+                nextNtpSyncElapsedMs = SystemClock.elapsedRealtime() + NTP_RETRY_INTERVAL_MS;
                 String info = "NTP同步失败: " + e.getMessage();
                 mutableNtpSyncInfo.postValue(info);
                 GeneralVariables.mutableDebugMessage.postValue(info);

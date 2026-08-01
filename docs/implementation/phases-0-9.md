@@ -11,8 +11,8 @@
 | 加固阶段 | 状态 | 本轮门禁 | 提交 SHA |
 |---|---|---|---|
 | 0 Git 安全、临时文件、工具链与基线 | 完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、第三方/仓库卫生 PASS；`BLOCKED_SANITIZER` | `91ea3f35` |
-| 1 native 生命周期、PTT 与安全 | 完成 | decoder release、PTT rollback、HTTP/Manifest、Gradle、oracle、device PASS；`BLOCKED_SANITIZER` | 本阶段提交 |
-| 2 NTP/GNSS 纪律化 UTC | 待开始 | 待执行 | 待提交 |
+| 1 native 生命周期、PTT 与安全 | 完成 | decoder release、PTT rollback、HTTP/Manifest、Gradle、oracle、device PASS；`BLOCKED_SANITIZER` | `c7172367` |
+| 2 NTP/GNSS 纪律化 UTC | 完成 | 时钟/slot/SNTP/GNSS、Gradle、oracle、Debug/Release device PASS；`BLOCKED_SANITIZER` | 本阶段提交 |
 | 3 Hamlib/Split/Fake It 事务 | 待开始 | 待执行 | 待提交 |
 | 4 Q65 流式内存与 EME | 待开始 | 待执行 | 待提交 |
 | 5 卫星与 Doppler | 待开始 | 待执行 | 待提交 |
@@ -32,6 +32,16 @@
 - 录音订阅、时隙定时器和后台上传均有幂等释放；三个 `UtcTimer` 共享单一 10 ms 调度器，SNTP 同步串行化。
 - 完整门禁：`HOST_RC_PASS`、`DEVICE_RELEASE_PASS`；官方 `jt9` FT8 20/20、FT4 16/16；Q65 4 条固定哈希不变；仅 sanitizer runtime 缺失为 `BLOCKED_SANITIZER`。
 - Host O2 p50/p95：FT8 539.516/552.104 ms，FT4 264.245/267.227 ms，Q65A/60 241.351/249.857 ms；FT8/FT4 均满足历史 p95 3% 门槛。
+
+### 2026-08-01 阶段 2 加固记录
+
+- 高频 slot 读取改为只计算单调 UTC，Clock `StateFlow` 由唯一 `UtcTimer` 心跳每秒刷新，移除独立 clock scheduler 和 10 ms UI 状态推送。
+- 自动 TX 不确定度按模式区分：FT4 250 ms、FT8 500 ms、Q65 1000 ms；模式在发射任务入队时快照，late-decode 等待前后使用同一门禁。
+- SNTP 样本保存 RTT 与多源共识数；单个大偏差样本继续拒绝，连续三次一致的多源/GNSS 样本允许重捕获，向后校准期间 UTC 不回退且自动 TX 保持阻断。
+- NTP 启用后每 15 分钟周期同步，失败 1 分钟后重试；UDP 客户端准确命名为 SNTP，不宣称具备 NTS。
+- Host O2 p50/p95：FT8 530.045/542.151 ms，FT4 264.777/265.058 ms，Q65A/60 227.832/230.470 ms；固定结果哈希与官方 `jt9` 20/20、16/16 均不变。
+- 真机 Debug/Release 12/24/48 kHz 共 18 个 case 通过，结果数和 Debug/Release 哈希一致；Q65 300 秒 RX/TX 均证明使用 4096-sample 有界 chunk。
+- 修复设备门禁在 instrumentation 结束后立即读取 logcat 的竞态，改为最多 5 秒等待内存证据；测试数量与判定条件未放宽。
 
 - 仓库：`H:/iu_yang1/study/FT8CN/ft8cn`
 - 产品分支：`wsjtx-ft8ft4-core-port`

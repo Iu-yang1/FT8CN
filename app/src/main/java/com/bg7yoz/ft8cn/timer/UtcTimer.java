@@ -218,6 +218,7 @@ public class UtcTimer {
         if (destroyed || !heartbeatCallbackPending.compareAndSet(false, true)) {
             return;
         }
+        DisciplinedClockRegistry.refreshState();
         long currentUtc = getSystemTime();
         utc = currentUtc;
         try {

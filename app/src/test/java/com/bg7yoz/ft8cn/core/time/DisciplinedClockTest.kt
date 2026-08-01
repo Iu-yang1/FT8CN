@@ -47,6 +47,80 @@ class DisciplinedClockTest {
     }
 
     @Test
+    fun automaticTransmitThresholdDependsOnMode() {
+        val source = MutableTimeSource(wallMillis = 20_000L)
+        val clock = SystemDisciplinedClock(source)
+        assertTrue(
+            clock.submitSample(
+                sample(source, 20_000.0).copy(uncertaintyMillis = 600.0),
+            ),
+        )
+
+        assertFalse(clock.automaticTransmitAllowed(AutomaticTransmitMode.FT4))
+        assertFalse(clock.automaticTransmitAllowed(AutomaticTransmitMode.FT8))
+        assertTrue(clock.automaticTransmitAllowed(AutomaticTransmitMode.Q65))
+        assertTrue(
+            clock.automaticTransmitBlockReason(AutomaticTransmitMode.FT4).contains("250ms"),
+        )
+    }
+
+    @Test
+    fun sustainedConsensusCanReacquireAfterLargeResidual() {
+        val source = MutableTimeSource(wallMillis = 30_000L)
+        val clock = SystemDisciplinedClock(source)
+        assertTrue(clock.submitSample(sample(source, 30_000.0).copy(consensusMembers = 2)))
+        source.advance(1_000L)
+        val corrected = sample(source, 36_000.0).copy(consensusMembers = 2)
+
+        assertFalse(clock.submitSample(corrected))
+        assertFalse(clock.submitSample(corrected))
+        assertTrue(clock.submitSample(corrected))
+        assertEquals(36_000L, clock.snapshot().utcMillis)
+        assertEquals("", clock.snapshot().lastRejectedReason)
+    }
+
+    @Test
+    fun aSingleSourceCannotForceLargeResidualReacquisition() {
+        val source = MutableTimeSource(wallMillis = 40_000L)
+        val clock = SystemDisciplinedClock(source)
+        assertTrue(clock.submitSample(sample(source, 40_000.0)))
+        source.advance(1_000L)
+        val hostile = sample(source, 51_000.0)
+
+        repeat(4) { assertFalse(clock.submitSample(hostile)) }
+        assertTrue(clock.snapshot().lastRejectedReason.contains("大残差"))
+        assertEquals(41_000L, clock.nowMillis())
+    }
+
+    @Test
+    fun highRateUtcReadsDoNotPublishHighRateUiState() {
+        val source = MutableTimeSource(wallMillis = 50_000L)
+        val clock = SystemDisciplinedClock(source)
+        assertTrue(clock.submitSample(sample(source, 50_000.0)))
+        source.advance(250L)
+
+        assertEquals(50_250L, clock.nowMillis())
+        assertEquals(50_000L, clock.state.value.utcMillis)
+        assertEquals(50_250L, clock.refresh().utcMillis)
+    }
+
+    @Test
+    fun backwardReacquisitionNeverMovesUtcBackwardAndBlocksAutomaticTx() {
+        val source = MutableTimeSource(wallMillis = 100_000L)
+        val clock = SystemDisciplinedClock(source)
+        assertTrue(clock.submitSample(sample(source, 100_000.0).copy(consensusMembers = 2)))
+        source.advance(1_000L)
+        assertEquals(101_000L, clock.nowMillis())
+        val backward = sample(source, 96_000.0).copy(consensusMembers = 2)
+
+        assertFalse(clock.submitSample(backward))
+        assertFalse(clock.submitSample(backward))
+        assertTrue(clock.submitSample(backward))
+        assertEquals(101_000L, clock.nowMillis())
+        assertFalse(clock.automaticTransmitAllowed(AutomaticTransmitMode.Q65))
+    }
+
+    @Test
     fun untrustedSystemClockReanchorsAfterWallClockJump() {
         val source = MutableTimeSource(wallMillis = 1_000L)
         val clock = SystemDisciplinedClock(source)

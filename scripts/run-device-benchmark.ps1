@@ -224,8 +224,14 @@ function Invoke-Q65StreamingGate([string]$Variant) {
         throw "Q65 streaming gate $Variant did not report all tests:`n$text"
     }
     $logcatArguments = @('logcat', '-d', '-s', 'Q65StreamMemoryTest:I', '*:S')
-    $memoryLines = @(Invoke-Adb @logcatArguments |
-        Where-Object { $_ -match 'Q65 (RX|TX) 300s' })
+    $memoryLines = @()
+    $memoryDeadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        $memoryLines = @(Invoke-Adb @logcatArguments |
+            Where-Object { $_ -match 'Q65 (RX|TX) 300s' })
+        if ($memoryLines.Count -ge 2) { break }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $memoryDeadline)
     if ($memoryLines.Count -lt 2) {
         throw "Q65 streaming gate $Variant returned no bounded-memory evidence."
     }
