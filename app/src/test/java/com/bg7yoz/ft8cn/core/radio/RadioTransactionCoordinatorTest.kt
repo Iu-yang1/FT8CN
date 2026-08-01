@@ -129,6 +129,39 @@ class RadioTransactionCoordinatorTest {
         coordinator.close()
     }
 
+    @Test
+    fun idleFrequencyFailureRestoresTheCompleteRadioState() = runBlocking {
+        val radio = connectedRadio()
+        val coordinator = RadioTransactionCoordinator(radio)
+        radio.failNext("frequency")
+
+        val result = coordinator.setIdleFrequency(14_075_000, 14_076_000)
+
+        assertTrue(result.isFailure)
+        assertEquals(14_074_000, radio.state.value.rxFrequencyHz)
+        assertEquals(14_074_000, radio.state.value.txFrequencyHz)
+        assertFalse(radio.state.value.transmitting)
+        coordinator.close()
+    }
+
+    @Test
+    fun idleFrequencyUpdateIsRejectedWhilePttLeaseIsActive() = runBlocking {
+        val radio = connectedRadio()
+        val coordinator = RadioTransactionCoordinator(radio)
+        coordinator.arm()
+        val lease = coordinator.beginTransmit(
+            FrequencyPlan(14_074_000, 14_075_500, SplitStrategy.NONE, 1_500),
+        ).getOrThrow()
+
+        val result = coordinator.setIdleFrequency(14_076_000)
+
+        assertTrue(result.isFailure)
+        assertEquals(14_074_000, radio.state.value.rxFrequencyHz)
+        assertTrue(radio.state.value.transmitting)
+        assertTrue(coordinator.endTransmit(lease).isSuccess)
+        coordinator.close()
+    }
+
     private suspend fun connectedRadio(): FakeRadioController = FakeRadioController().also {
         it.connect(1).getOrThrow()
         it.setFrequency(14_074_000).getOrThrow()

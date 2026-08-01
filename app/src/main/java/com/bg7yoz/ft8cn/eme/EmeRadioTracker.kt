@@ -1,7 +1,7 @@
 package com.bg7yoz.ft8cn.eme
 
 import com.bg7yoz.ft8cn.core.radio.FrequencyUpdateLimiter
-import com.bg7yoz.ft8cn.core.radio.RadioController
+import com.bg7yoz.ft8cn.core.radio.RadioTransactionCoordinator
 import com.bg7yoz.ft8cn.core.radio.RadioState
 import com.bg7yoz.ft8cn.core.radio.TimedFrequencyTarget
 import kotlinx.coroutines.sync.Mutex
@@ -31,7 +31,7 @@ data class EmeRadioTrackingPolicy(
 
 /** 月面 Doppler 只调整频率，不控制 PTT；失败始终回滚，正常停止是否恢复由策略控制。 */
 class EmeRadioTracker(
-    private val controller: RadioController,
+    private val coordinator: RadioTransactionCoordinator,
     private val limiter: FrequencyUpdateLimiter = FrequencyUpdateLimiter(minimumStepHz = 1L),
     private val readbackToleranceHz: Long = 10L,
 ) {
@@ -43,7 +43,7 @@ class EmeRadioTracker(
     suspend fun start(policy: EmeRadioTrackingPolicy = EmeRadioTrackingPolicy()): Result<Unit> = mutex.withLock {
         runCatching {
             check(initialState == null) { "EME 跟踪已经启动" }
-            val state = controller.refreshState().getOrThrow()
+            val state = coordinator.snapshotIdleState().getOrThrow()
             check(state.connected) { "电台未连接" }
             check(policy.allowWhileTransmitting || !state.transmitting) { "PTT 期间禁止启动 EME 跟踪" }
             check(state.rxFrequencyHz > 0 && state.txFrequencyHz > 0) { "电台读回频率无效" }
@@ -69,7 +69,7 @@ class EmeRadioTracker(
             check(abs(receiveCorrectionHz) <= policy.maximumCorrectionHz &&
                 abs(transmitCorrectionHz) <= policy.maximumCorrectionHz
             ) { "Doppler 修正超过安全上限" }
-            check(policy.allowWhileTransmitting || !controller.state.value.transmitting) {
+            check(policy.allowWhileTransmitting || !coordinator.radioState.value.transmitting) {
                 "PTT 期间暂停 EME 调频"
             }
             if (lastAppliedAtUtcMillis != Long.MIN_VALUE &&
@@ -79,8 +79,7 @@ class EmeRadioTracker(
             }
             val timed = TimedFrequencyTarget(target.generatedUtcMillis, target.rxFrequencyHz, target.txFrequencyHz)
             if (!limiter.shouldApply(timed, nowUtcMillis)) return@withLock Result.success(false)
-            controller.setFrequency(target.rxFrequencyHz, target.txFrequencyHz).getOrThrow()
-            val readback = controller.refreshState().getOrThrow()
+            val readback = coordinator.setIdleFrequency(target.rxFrequencyHz, target.txFrequencyHz).getOrThrow()
             check(abs(readback.rxFrequencyHz - target.rxFrequencyHz) <= readbackToleranceHz) {
                 "EME RX 频率读回不一致"
             }
@@ -118,7 +117,7 @@ class EmeRadioTracker(
 
     private suspend fun restoreInitial() {
         val state = initialState ?: return
-        controller.setFrequency(state.rxFrequencyHz, state.txFrequencyHz).getOrThrow()
+        coordinator.setIdleFrequency(state.rxFrequencyHz, state.txFrequencyHz).getOrThrow()
     }
 
     companion object {

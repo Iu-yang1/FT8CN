@@ -9,7 +9,7 @@
 | KISS FFT | `mborgerding/kissfft`，版本见上游登记 | BSD-3-Clause | FFT backend | 是 | 保留版权、条件和免责声明，见 `third_party/kissfft` |
 | LLVM flang-rt/libomp | LLVM 22.1.5 / NDK 17.0.2 | Apache-2.0 WITH LLVM-exception | Fortran/OpenMP runtime | 是 | 许可证、NOTICE 和隔离 patch，见 `third_party/llvm-runtime` |
 | Boost headers | 1.91.0，`boostorg/boost@1a80576d` | BSL-1.0 | WSJT-X 构建头文件 | 可能展开 | 随包保留许可证，见 `third_party/boost` |
-| Hamlib | `Hamlib/Hamlib@c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e` | 库 LGPL-2.1-or-later；工具 GPL-2.0-or-later | rigctld 协议；Android native 构建门禁 | 否 | APK 不含 GPL CLI 或 native 库；来源、构建和替换边界见 `third_party/hamlib` |
+| Hamlib | `Hamlib/Hamlib@c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e` | 库 LGPL-2.1-or-later；工具 GPL-2.0-or-later | 动态 `libhamlib.so` 与 rigctld 协议 | 是 | APK 不含 GPL CLI；固定源码、修改、重链接构建边界见 `third_party/hamlib` |
 | MPAndroidChart | 3.1.0 | Apache-2.0 | 图表 JAR | 是 | 保留 LICENSE/NOTICE 和 artifact SHA |
 | Apache Commons Net | 3.6 | Apache-2.0 | 旧 NTP 支持 | 是 | 保留 LICENSE/NOTICE；新 disciplined clock 不依赖其不安全行为 |
 | NanoHTTPD | 2.2.0 | BSD-3-Clause | 本地 HTTP | 是 | 二进制分发保留条款 |
@@ -33,5 +33,5 @@
 
 - `radio_experimental` 是 FT8CN 自有实验模块，与 WSJT-X core、Hamlib 和卫星实现严格分离。
 - FT2 未集成；旧 FT2 预编译归档不在 source manifest、链接 map 或 APK 中。
-- Hamlib Android ELF 只保存在本机隔离工具目录作为门禁证据；当前 APK 通过 rigctld 协议和既有 transport 工作。
+- arm64 APK 包含动态 `libhamlib.so`；rigctld-only 必须通过 CMake 开关显式构建，不能按宿主系统静默改变能力。
 - LoTW 上传对象必须是 TQSL 数字签名的 `.tq8`，不能把未签名 ADIF 冒充可上传文件。

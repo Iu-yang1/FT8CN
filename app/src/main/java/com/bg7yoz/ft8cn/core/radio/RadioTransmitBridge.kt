@@ -92,11 +92,11 @@ class RadioTransmitBridge(
         )
     }
 
-    /** 非发射调频仍在有界应用作用域执行，失败会给出可见错误。 */
+    /** 非发射调频与 PTT 共用 coordinator 锁，避免 EME/卫星在发射中改频。 */
     fun requestFrequency(rxFrequencyHz: Long, txFrequencyHz: Long = rxFrequencyHz): Boolean {
         if (!controller.state.value.connected || rxFrequencyHz <= 0L || txFrequencyHz <= 0L) return false
         scope.launch(Dispatchers.IO) {
-            controller.setFrequency(rxFrequencyHz, txFrequencyHz).onFailure {
+            coordinator.setIdleFrequency(rxFrequencyHz, txFrequencyHz).onFailure {
                 ToastMessage.show("Hamlib 调频失败：${it.message}")
             }
         }

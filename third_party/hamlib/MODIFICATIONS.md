@@ -7,4 +7,6 @@ FT8CN 不修改 Hamlib 固定上游工作树。构建时只在隔离副本执行
 3. 使用 Android NDK arm64 API 28 编译共享库，与应用 `minSdk=28` 对齐并保持 `-O2`。
 4. 输出库使用 `llvm-strip --strip-unneeded`，不提交二进制产物。
 
-FT8CN 自有的 Kotlin `RigctldRadioController` 仅实现公开 rigctld 协议，不复制 Hamlib GPL 命令行工具源码。现有 CAT adapter 的实现仍属于 FT8CN 自有代码。
+FT8CN 自有的 Kotlin `RigctldRadioController` 仅实现公开 rigctld 协议，不复制 Hamlib GPL 命令行工具源码。现有 CAT adapter 的实现仍属于 FT8CN 自有代码，并只作为统一事务的兼容 fallback。
+
+`libhamlib.so` 以 LGPL 动态库形式进入 arm64 APK；项目保留固定上游源码、补丁边界和可复现构建脚本，不打包 GPL 命令行工具。发布源码包必须同步提供本目录许可证、对应源码和重链接所需构建说明。

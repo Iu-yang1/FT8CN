@@ -3,6 +3,8 @@ package com.bg7yoz.ft8cn.core.radio
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class HamlibBackend {
     NATIVE,
@@ -12,31 +14,47 @@ enum class HamlibBackend {
 /** 在连接时选择进程内 Hamlib 或 rigctld，业务层始终只看到一个 RadioController。 */
 class SelectableHamlibRadioController(
     private val backendProvider: suspend () -> HamlibBackend,
-    private val nativeController: NativeHamlibRadioController,
-    private val rigctldController: RigctldRadioController,
+    private val nativeController: RadioController,
+    private val rigctldController: RadioController,
 ) : RadioController {
+    private val mutex = Mutex()
     private val mutableState = MutableStateFlow(RadioState(transport = RadioTransport.NATIVE_HAMLIB))
     private var active: RadioController? = null
 
     override val state: StateFlow<RadioState> = mutableState.asStateFlow()
 
-    override suspend fun discoverModels(): List<RadioModel> {
-        val native = nativeController.discoverModels()
-        return native + rigctldController.discoverModels()
+    override suspend fun discoverModels(): List<RadioModel> = mutex.withLock {
+        nativeController.discoverModels() + rigctldController.discoverModels()
     }
 
-    override suspend fun connect(profileId: Long): Result<Unit> {
-        active?.disconnect()
+    override suspend fun connect(profileId: Long): Result<Unit> = mutex.withLock {
+        active?.let { previous ->
+            previous.emergencyStop()
+            previous.disconnect()
+        }
+        active = null
         val selected = when (backendProvider()) {
             HamlibBackend.NATIVE -> nativeController
             HamlibBackend.RIGCTLD -> rigctldController
         }
-        active = selected
-        return selected.connect(profileId).also { syncState(selected) }
+        selected.connect(profileId).also { result ->
+            if (result.isSuccess) {
+                active = selected
+                syncState(selected)
+            } else {
+                mutableState.value = RadioState(
+                    transport = selected.state.value.transport,
+                    lastError = result.exceptionOrNull()?.message,
+                )
+            }
+        }
     }
 
-    override suspend fun disconnect() {
-        active?.disconnect()
+    override suspend fun disconnect() = mutex.withLock {
+        active?.let { controller ->
+            controller.emergencyStop()
+            controller.disconnect()
+        }
         active = null
         mutableState.value = RadioState(transport = RadioTransport.NATIVE_HAMLIB)
     }
@@ -56,16 +74,13 @@ class SelectableHamlibRadioController(
 
     override suspend fun setPower(fraction: Float): Result<Unit> = withActive { it.setPower(fraction) }
 
-    override suspend fun refreshState(): Result<RadioState> {
-        val controller = active ?: return Result.failure(IllegalStateException("Hamlib 未连接"))
-        return controller.refreshState().also { syncState(controller) }
-    }
+    override suspend fun refreshState(): Result<RadioState> = withActive { it.refreshState() }
 
     override suspend fun emergencyStop(): Result<Unit> = withActive { it.emergencyStop() }
 
-    private suspend fun <T> withActive(block: suspend (RadioController) -> Result<T>): Result<T> {
-        val controller = active ?: return Result.failure(IllegalStateException("Hamlib 未连接"))
-        return block(controller).also { syncState(controller) }
+    private suspend fun <T> withActive(block: suspend (RadioController) -> Result<T>): Result<T> = mutex.withLock {
+        val controller = active ?: return@withLock Result.failure(IllegalStateException("Hamlib 未连接"))
+        block(controller).also { syncState(controller) }
     }
 
     private fun syncState(controller: RadioController) {

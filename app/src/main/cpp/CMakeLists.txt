@@ -81,16 +81,20 @@ find_library(
 )
 
 set(FT8CN_NATIVE_HAMLIB_ACTIVE 0)
-if (FT8CN_ENABLE_NATIVE_HAMLIB AND ANDROID AND CMAKE_HOST_WIN32 AND ANDROID_ABI STREQUAL "arm64-v8a")
+if (FT8CN_ENABLE_NATIVE_HAMLIB AND ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
     if (FT8CN_HAMLIB_PREBUILT_ROOT)
         set(FT8CN_HAMLIB_OUTPUT_ROOT "${FT8CN_HAMLIB_PREBUILT_ROOT}")
-    else ()
+    elseif (CMAKE_HOST_WIN32)
         set(FT8CN_HAMLIB_OUTPUT_ROOT "${CMAKE_CURRENT_BINARY_DIR}/hamlib_android/install")
+    else ()
+        message(FATAL_ERROR
+                "Native Hamlib is enabled. Pass FT8CN_HAMLIB_PREBUILT_ROOT with a verified Android install, "
+                "or explicitly set FT8CN_ENABLE_NATIVE_HAMLIB=OFF for a rigctld-only build.")
     endif ()
     set(FT8CN_HAMLIB_LIBRARY "${FT8CN_HAMLIB_OUTPUT_ROOT}/lib/arm64-v8a/libhamlib.so")
     set(FT8CN_HAMLIB_INCLUDE_ROOT "${FT8CN_HAMLIB_OUTPUT_ROOT}/include")
 
-    if (NOT EXISTS "${FT8CN_HAMLIB_LIBRARY}")
+    if (NOT EXISTS "${FT8CN_HAMLIB_LIBRARY}" AND CMAKE_HOST_WIN32)
         add_custom_command(
                 OUTPUT "${FT8CN_HAMLIB_LIBRARY}"
                 COMMAND powershell.exe -ExecutionPolicy Bypass -File
@@ -105,6 +109,10 @@ if (FT8CN_ENABLE_NATIVE_HAMLIB AND ANDROID AND CMAKE_HOST_WIN32 AND ANDROID_ABI 
                 VERBATIM
         )
         add_custom_target(hamlib_android_build DEPENDS "${FT8CN_HAMLIB_LIBRARY}")
+    endif ()
+
+    if (NOT EXISTS "${FT8CN_HAMLIB_LIBRARY}" AND NOT TARGET hamlib_android_build)
+        message(FATAL_ERROR "Verified Hamlib library not found: ${FT8CN_HAMLIB_LIBRARY}")
     endif ()
 
     file(MAKE_DIRECTORY "${FT8CN_HAMLIB_INCLUDE_ROOT}")

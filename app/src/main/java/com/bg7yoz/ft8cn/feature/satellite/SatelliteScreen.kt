@@ -91,7 +91,9 @@ fun SatelliteScreen(mainViewModel: MainViewModel) {
     val repository = graph.satelliteCatalogRepository
     val settings by graph.settings.state.collectAsStateWithLifecycle(initialValue = FeatureSettings())
     val radioState by graph.radioController.state.collectAsStateWithLifecycle()
-    val radioTracker = remember(graph.radioController) { SatelliteRadioTracker(graph.radioController) }
+    val radioTracker = remember(graph.radioTransactionCoordinator) {
+        SatelliteRadioTracker(graph.radioTransactionCoordinator)
+    }
     val cleanupScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     val satellites by repository.observeSatellites().collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = rememberCoroutineScope()
@@ -269,7 +271,7 @@ fun SatelliteScreen(mainViewModel: MainViewModel) {
         item {
             Ft8cnPageHeader(
                 title = "卫星追踪",
-                subtitle = "过境 · 转发器 · Doppler",
+                subtitle = "过境 · 转发器 · 多普勒修正",
             )
         }
         item {

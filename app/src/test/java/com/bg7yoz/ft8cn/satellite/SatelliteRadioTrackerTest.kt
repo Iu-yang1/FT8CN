@@ -2,6 +2,7 @@ package com.bg7yoz.ft8cn.satellite
 
 import com.bg7yoz.ft8cn.core.radio.FakeRadioController
 import com.bg7yoz.ft8cn.core.radio.RadioMode
+import com.bg7yoz.ft8cn.core.radio.RadioTransactionCoordinator
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,7 +13,8 @@ class SatelliteRadioTrackerTest {
     @Test
     fun tracksAosToLosAndRestoresOriginalFrequencies() = runBlocking {
         val radio = connectedRadio()
-        val tracker = SatelliteRadioTracker(radio)
+        val coordinator = RadioTransactionCoordinator(radio)
+        val tracker = SatelliteRadioTracker(coordinator)
         assertTrue(tracker.start().isSuccess)
         val target = SatelliteFrequencyTarget(1_000, 145_799_000, 435_010_000, -1_000.0, 10_000.0, 2_000.0)
         assertEquals(true, tracker.apply(target, 1_000).getOrThrow())
@@ -21,12 +23,14 @@ class SatelliteRadioTrackerTest {
         assertEquals(145_800_000, radio.state.value.rxFrequencyHz)
         assertEquals(435_000_000, radio.state.value.txFrequencyHz)
         assertFalse(radio.state.value.transmitting)
+        coordinator.close()
     }
 
     @Test
     fun staleTargetIsIgnoredAndSetFailureRollsBack() = runBlocking {
         val radio = connectedRadio()
-        val tracker = SatelliteRadioTracker(radio)
+        val coordinator = RadioTransactionCoordinator(radio)
+        val tracker = SatelliteRadioTracker(coordinator)
         tracker.start().getOrThrow()
         val stale = SatelliteFrequencyTarget(1_000, 145_799_000, 435_010_000, 0.0, 0.0, 0.0)
         assertFalse(tracker.apply(stale, 5_000).getOrThrow())
@@ -35,6 +39,7 @@ class SatelliteRadioTrackerTest {
         assertTrue(tracker.apply(fresh, 6_000).isFailure)
         assertEquals(145_800_000, radio.state.value.rxFrequencyHz)
         assertEquals(435_000_000, radio.state.value.txFrequencyHz)
+        coordinator.close()
     }
 
     private suspend fun connectedRadio(): FakeRadioController = FakeRadioController().also {

@@ -509,7 +509,7 @@ public class MainViewModel extends ViewModel {
         spectrumListener = new SpectrumListener(hamRecorder);
 
         ft8TransmitSignal = new FT8TransmitSignal(databaseOpr, new OnDoTransmitted() {
-            private volatile boolean currentTransmitControlledByHamlib;
+            private volatile boolean currentTransmitControlledByRadioTransaction;
 
             private boolean needControlSco() {
                 if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
@@ -524,8 +524,14 @@ public class MainViewModel extends ViewModel {
             @Override
             public boolean onPrepareTransmit() {
                 FeatureAppGraph graph = FeatureAppGraph.from(GeneralVariables.getMainContext());
-                boolean hamlibConnected = graph.getRadioController().getState().getValue().getConnected();
-                if (hamlibConnected) {
+                if (!graph.getRadioController().getState().getValue().getConnected()
+                        && (GeneralVariables.controlMode == ControlMode.CAT
+                        || GeneralVariables.controlMode == ControlMode.RTS
+                        || GeneralVariables.controlMode == ControlMode.DTR)) {
+                    graph.attachLegacyRig(baseRig);
+                }
+                boolean radioConnected = graph.getRadioController().getState().getValue().getConnected();
+                if (radioConnected) {
                     FeatureSettings settings = graph.getSettings().snapshotBlocking();
                     SplitStrategy splitStrategy;
                     try {
@@ -538,7 +544,7 @@ public class MainViewModel extends ViewModel {
                             310_000L,
                             Math.max(30_000L,
                                     FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode()) + 5_000L));
-                    currentTransmitControlledByHamlib = graph.getRadioTransmitBridge().beginTransmit(
+                    currentTransmitControlledByRadioTransaction = graph.getRadioTransmitBridge().beginTransmit(
                             new FrequencyPlan(
                                     GeneralVariables.band,
                                     GeneralVariables.band + audioOffsetHz,
@@ -551,21 +557,16 @@ public class MainViewModel extends ViewModel {
                                     RadioVfo.B),
                             watchdogMs,
                             Math.max(GeneralVariables.pttDelay, settings.getHamlibTxDelayMs()));
-                    if (!currentTransmitControlledByHamlib) {
+                    if (!currentTransmitControlledByRadioTransaction) {
                         return false;
                     }
                     if (needControlSco()) stopSco();
                     return true;
                 }
-                currentTransmitControlledByHamlib = false;
+                currentTransmitControlledByRadioTransaction = false;
                 if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
-                    if (baseRig != null) {
-                        if (needControlSco()) stopSco();
-                        baseRig.setPTT(true);
-                        return true;
-                    }
                     return false;
                 }
                 return true;
@@ -573,37 +574,27 @@ public class MainViewModel extends ViewModel {
 
             @Override
             public boolean onAudioReady() {
-                return !currentTransmitControlledByHamlib
+                return !currentTransmitControlledByRadioTransaction
                         || FeatureAppGraph.from(GeneralVariables.getMainContext())
                         .getRadioTransmitBridge().awaitAudioReady();
             }
 
             @Override
             public void onTransmitFinished() {
-                if (currentTransmitControlledByHamlib) {
+                if (currentTransmitControlledByRadioTransaction) {
                     FeatureAppGraph.from(GeneralVariables.getMainContext())
                             .getRadioTransmitBridge().finishTransmit("发射完成");
-                    currentTransmitControlledByHamlib = false;
-                } else if ((GeneralVariables.controlMode == ControlMode.CAT
-                        || GeneralVariables.controlMode == ControlMode.RTS
-                        || GeneralVariables.controlMode == ControlMode.DTR)
-                        && baseRig != null) {
-                    baseRig.setPTT(false);
+                    currentTransmitControlledByRadioTransaction = false;
                 }
                 if (needControlSco()) startSco();
             }
 
             @Override
             public void onTransmitAborted(String reason) {
-                if (currentTransmitControlledByHamlib) {
+                if (currentTransmitControlledByRadioTransaction) {
                     FeatureAppGraph.from(GeneralVariables.getMainContext())
                             .getRadioTransmitBridge().abortTransmit(reason);
-                    currentTransmitControlledByHamlib = false;
-                } else if ((GeneralVariables.controlMode == ControlMode.CAT
-                        || GeneralVariables.controlMode == ControlMode.RTS
-                        || GeneralVariables.controlMode == ControlMode.DTR)
-                        && baseRig != null) {
-                    baseRig.setPTT(false);
+                    currentTransmitControlledByRadioTransaction = false;
                 }
                 if (needControlSco()) startSco();
             }
@@ -942,9 +933,13 @@ public class MainViewModel extends ViewModel {
      * 设置操作载波频率。如果电台没有连接，就有操作
      */
     public void setOperationBand() {
-        boolean controlledByHamlib = FeatureAppGraph.from(GeneralVariables.getMainContext())
-                .getRadioTransmitBridge().requestFrequency(GeneralVariables.band, GeneralVariables.band);
-        if (controlledByHamlib) {
+        FeatureAppGraph graph = FeatureAppGraph.from(GeneralVariables.getMainContext());
+        if (!graph.getRadioController().getState().getValue().getConnected()) {
+            graph.attachLegacyRig(baseRig);
+        }
+        boolean controlledByRadioTransaction = graph.getRadioTransmitBridge()
+                .requestFrequency(GeneralVariables.band, GeneralVariables.band);
+        if (controlledByRadioTransaction) {
             return;
         }
         if (!isRigConnected()) {
@@ -1160,6 +1155,7 @@ public class MainViewModel extends ViewModel {
      * 根据指令集创建不同型号的电台
      */
     private void connectRig() {
+        FeatureAppGraph.from(GeneralVariables.getMainContext()).detachLegacyRig();
         baseRig = null;
         switch (GeneralVariables.instructionSet) {
             case InstructionSet.ICOM:
@@ -1401,9 +1397,8 @@ public class MainViewModel extends ViewModel {
             sendWaveDataThreadPool.execute(new SendWaveDataRunnable(rig, message));
         } catch (RejectedExecutionException rejected) {
             Log.w(TAG, "CAT audio queue is full");
-            if (rig != null) {
-                rig.setPTT(false);
-            }
+            FeatureAppGraph.from(GeneralVariables.getMainContext())
+                    .getRadioTransmitBridge().abortTransmit("CAT 音频队列已满");
         }
     }
 
@@ -1435,6 +1430,7 @@ public class MainViewModel extends ViewModel {
         if (pskReporterSender != null) {
             pskReporterSender.stop();
         }
+        FeatureAppGraph.from(GeneralVariables.getMainContext()).detachLegacyRig();
         stopLogHttpServer();
     }
 

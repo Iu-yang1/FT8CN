@@ -12,8 +12,8 @@
 |---|---|---|---|
 | 0 Git 安全、临时文件、工具链与基线 | 完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、第三方/仓库卫生 PASS；`BLOCKED_SANITIZER` | `91ea3f35` |
 | 1 native 生命周期、PTT 与安全 | 完成 | decoder release、PTT rollback、HTTP/Manifest、Gradle、oracle、device PASS；`BLOCKED_SANITIZER` | `c7172367` |
-| 2 NTP/GNSS 纪律化 UTC | 完成 | 时钟/slot/SNTP/GNSS、Gradle、oracle、Debug/Release device PASS；`BLOCKED_SANITIZER` | 本阶段提交 |
-| 3 Hamlib/Split/Fake It 事务 | 待开始 | 待执行 | 待提交 |
+| 2 NTP/GNSS 纪律化 UTC | 完成 | 时钟/slot/SNTP/GNSS、Gradle、oracle、Debug/Release device PASS；`BLOCKED_SANITIZER` | `13b16f20` |
+| 3 Hamlib/Split/Fake It 事务 | 完成 | 全局事务、backend 互斥、legacy fallback、EME/卫星 lease、APK/ELF、oracle/device PASS；硬件与 sanitizer 阻塞 | 本阶段提交 |
 | 4 Q65 流式内存与 EME | 待开始 | 待执行 | 待提交 |
 | 5 卫星与 Doppler | 待开始 | 待执行 | 待提交 |
 | 6 QSO/LoTW/导入/HTTP | 待开始 | 待执行 | 待提交 |
@@ -42,6 +42,15 @@
 - Host O2 p50/p95：FT8 530.045/542.151 ms，FT4 264.777/265.058 ms，Q65A/60 227.832/230.470 ms；固定结果哈希与官方 `jt9` 20/20、16/16 均不变。
 - 真机 Debug/Release 12/24/48 kHz 共 18 个 case 通过，结果数和 Debug/Release 哈希一致；Q65 300 秒 RX/TX 均证明使用 4096-sample 有界 chunk。
 - 修复设备门禁在 instrumentation 结束后立即读取 logcat 的竞态，改为最多 5 秒等待内存证据；测试数量与判定条件未放宽。
+
+### 2026-08-01 阶段 3 加固记录
+
+- Hamlib backend 选择、连接、断开、轮询和命令使用外层 mutex；切换 backend 前先撤销 PTT。
+- Hamlib 始终优先；旧 BaseRig 仅作为已连接 transport 的兼容 fallback，并和 Hamlib 共用 Application 级 `RadioTransactionCoordinator`。
+- `MainViewModel`、Radio PTT 测试、手动调频、EME 与卫星 Doppler 不再直接操作 PTT/频率，全部具备读回、互斥和失败回滚。
+- Debug/Release APK 均包含动态 LGPL `libhamlib.so`，CMake 支持显式 rigctld-only；非 Windows 构建不再静默改变 native Hamlib 能力。
+- Host O2 p50/p95：FT8 523.449/527.804 ms，FT4 260.707/271.663 ms，Q65A/60 221.370/229.083 ms；固定结果哈希和官方 `jt9` 20/20、16/16 不变。
+- 真机 Debug/Release、12/24/48 kHz 与 Q65 4096-sample 流式门禁通过；实体电台、安全假负载和 sanitizer 分别保持明确阻塞。
 
 - 仓库：`H:/iu_yang1/study/FT8CN/ft8cn`
 - 产品分支：`wsjtx-ft8ft4-core-port`

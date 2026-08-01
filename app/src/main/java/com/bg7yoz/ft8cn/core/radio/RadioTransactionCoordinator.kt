@@ -85,10 +85,52 @@ class RadioTransactionCoordinator(
     private var activeSession: ActiveSession? = null
     private var watchdogFuture: ScheduledFuture<*>? = null
     val safetyState: StateFlow<RadioSafetyState> = mutableSafetyState.asStateFlow()
+    val radioState: StateFlow<RadioState> = controller.state
 
     fun arm() {
         mutableSafetyState.value = mutableSafetyState.value.copy(armed = true, lastStopReason = "")
     }
+
+    /** 在事务锁内取得稳定读回，供 EME、卫星和手动调频建立快照。 */
+    suspend fun snapshotIdleState(): Result<RadioState> = mutex.withLock {
+        runCatching {
+            check(activeSession == null && !mutableSafetyState.value.transmitting) { "发射期间禁止建立调频快照" }
+            controller.refreshState().getOrThrow().also { state ->
+                check(state.connected) { "电台未连接" }
+                check(!state.transmitting) { "PTT 期间禁止调频" }
+            }
+        }
+    }
+
+    /**
+     * 串行执行非发射调频并校验读回；任何部分失败都会恢复事务前状态。
+     * 该入口与 PTT/Fake It 共用 mutex，避免卫星或 EME 在发射中改频。
+     */
+    suspend fun setIdleFrequency(rxFrequencyHz: Long, txFrequencyHz: Long = rxFrequencyHz): Result<RadioState> =
+        mutex.withLock {
+            var before: RadioState? = null
+            try {
+                require(rxFrequencyHz > 0L && txFrequencyHz > 0L) { "频率必须大于 0" }
+                check(activeSession == null && !mutableSafetyState.value.transmitting) { "发射期间禁止调频" }
+                before = controller.refreshState().getOrThrow()
+                check(before.connected) { "电台未连接" }
+                check(!before.transmitting) { "PTT 期间禁止调频" }
+                controller.setFrequency(rxFrequencyHz, txFrequencyHz).getOrThrow()
+                val readback = controller.refreshState().getOrThrow()
+                check(abs(readback.rxFrequencyHz - rxFrequencyHz) <= FREQUENCY_READBACK_TOLERANCE_HZ) {
+                    "RX 频率读回不一致"
+                }
+                check(abs(readback.txFrequencyHz - txFrequencyHz) <= FREQUENCY_READBACK_TOLERANCE_HZ) {
+                    "TX 频率读回不一致"
+                }
+                Result.success(readback)
+            } catch (failure: Throwable) {
+                before?.let { state ->
+                    restoreState(state).exceptionOrNull()?.let(failure::addSuppressed)
+                }
+                Result.failure(failure)
+            }
+        }
 
     suspend fun disarm(reason: String = "用户停止") {
         stopAll(reason)

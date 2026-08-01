@@ -144,7 +144,7 @@ fun RadioScreen(mainViewModel: MainViewModel) {
     ) {
         item {
             Ft8cnPageHeader(
-                title = "Hamlib 电台",
+                title = "电台",
                 subtitle = "Rig · CAT · PTT · Split",
             )
         }
@@ -202,7 +202,7 @@ fun RadioScreen(mainViewModel: MainViewModel) {
                         scope.launch {
                             val rx = rxFrequency.toLongOrNull() ?: 0L
                             val tx = txFrequency.toLongOrNull() ?: rx
-                            status = graph.radioController.setFrequency(rx, tx).fold(
+                            status = graph.radioTransactionCoordinator.setIdleFrequency(rx, tx).fold(
                                 onSuccess = {
                                     GeneralVariables.band = rx
                                     GeneralVariables.bandListIndex = OperationBand.getIndexByFreq(rx)
@@ -505,14 +505,19 @@ fun RadioScreen(mainViewModel: MainViewModel) {
                     enabled = radioState.connected && pttMethod != "VOX",
                     onClick = {
                         scope.launch {
-                            status = graph.radioController.setPtt(true).fold(
-                                onSuccess = {
-                                    kotlinx.coroutines.delay(300)
-                                    graph.radioController.setPtt(false)
-                                    "PTT 测试完成"
-                                },
-                                onFailure = { "PTT 测试失败：${it.message}" },
-                            )
+                            val bridge = graph.radioTransmitBridge
+                            if (!bridge.requestPtt(true)) {
+                                status = "PTT 测试失败：电台事务未能启动"
+                                return@launch
+                            }
+                            try {
+                                kotlinx.coroutines.delay(300)
+                                status = "PTT 测试完成"
+                            } finally {
+                                if (!bridge.abortTransmit("PTT 测试结束")) {
+                                    status = "PTT 测试失败：无法确认 PTT 已关闭"
+                                }
+                            }
                         }
                     },
                 ) { Text("测试 PTT（300 ms）") }

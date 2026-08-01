@@ -72,7 +72,9 @@ fun EmeScreen(mainViewModel: MainViewModel) {
     val graph = remember(context) { FeatureAppGraph.from(context) }
     val radioState by graph.radioController.state.collectAsStateWithLifecycle()
     val settings by graph.settings.state.collectAsStateWithLifecycle(initialValue = FeatureSettings())
-    val radioTracker = remember(graph.radioController) { EmeRadioTracker(graph.radioController) }
+    val radioTracker = remember(graph.radioTransactionCoordinator) {
+        EmeRadioTracker(graph.radioTransactionCoordinator)
+    }
     val cleanupScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val deviceOrientation by rememberDeviceOrientation()
@@ -462,11 +464,11 @@ fun EmeScreen(mainViewModel: MainViewModel) {
                         },
                     ) { Text("Clear Avg") }
                 }
-                Text("Q65F 继续只保留诊断，不出现在正式模式和 TX 中。", style = MaterialTheme.typography.bodySmall)
+                Text("包含Q65A-E/15s-120s模式", style = MaterialTheme.typography.bodySmall)
             }
         }
         item {
-            EmeCard("Doppler 与电台") {
+            EmeCard("多普勒控制") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = localGrid,

@@ -12,6 +12,8 @@ import com.bg7yoz.ft8cn.core.radio.HamlibBackend
 import com.bg7yoz.ft8cn.core.radio.HamlibControlLine
 import com.bg7yoz.ft8cn.core.radio.HamlibHandshake
 import com.bg7yoz.ft8cn.core.radio.HamlibPttMethod
+import com.bg7yoz.ft8cn.core.radio.HamlibFirstRadioController
+import com.bg7yoz.ft8cn.core.radio.LegacyRigRadioController
 import com.bg7yoz.ft8cn.core.radio.NativeHamlibProfile
 import com.bg7yoz.ft8cn.core.radio.NativeHamlibRadioController
 import com.bg7yoz.ft8cn.core.radio.RigctldProfile
@@ -24,15 +26,19 @@ import com.bg7yoz.ft8cn.satellite.RoomSatelliteCatalogRepository
 import com.bg7yoz.ft8cn.satellite.SatelliteCatalogRepository
 import com.bg7yoz.ft8cn.satellite.SatNogsCatalogClient
 import com.bg7yoz.ft8cn.satellite.UrlConnectionSatelliteHttpTransport
+import com.bg7yoz.ft8cn.rigs.BaseRig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import java.util.concurrent.atomic.AtomicReference
 
 /** 应用级手工依赖图，避免页面自行创建数据库或 DataStore 实例。 */
 class FeatureAppGraph private constructor(context: Context) {
     private val applicationContext = context.applicationContext
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val legacyRigReference = AtomicReference<BaseRig?>(null)
 
     val database: Ft8cnFeatureDatabase by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         Ft8cnFeatureDatabase.create(applicationContext)
@@ -53,8 +59,7 @@ class FeatureAppGraph private constructor(context: Context) {
             SatNogsCatalogClient(UrlConnectionSatelliteHttpTransport(maximumResponseBytes = 2 * 1024 * 1024)),
         )
     }
-    /** 机型私有 CAT 已退出产品入口，连接统一由进程内 Hamlib 或 rigctld 执行。 */
-    val radioController: RadioController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+    private val hamlibController: RadioController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         val rigctld = RigctldRadioController(
             profileProvider = { _ ->
                 val profile = settings.state.first()
@@ -101,11 +106,31 @@ class FeatureAppGraph private constructor(context: Context) {
             rigctldController = rigctld,
         )
     }
+    private val legacyRadioController: LegacyRigRadioController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        LegacyRigRadioController(rigProvider = legacyRigReference::get)
+    }
+    private val hamlibFirstController: HamlibFirstRadioController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        HamlibFirstRadioController(hamlibController, legacyRadioController)
+    }
+    val radioController: RadioController
+        get() = hamlibFirstController
     val radioTransactionCoordinator: RadioTransactionCoordinator by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         RadioTransactionCoordinator(radioController)
     }
     val radioTransmitBridge: RadioTransmitBridge by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         RadioTransmitBridge(radioController, radioTransactionCoordinator, applicationScope)
+    }
+
+    /** 旧连接页只负责建立物理 transport，CAT/PTT 随后统一进入 radio coordinator。 */
+    fun attachLegacyRig(rig: BaseRig?): Boolean {
+        if (rig == null || !rig.isConnected) return false
+        legacyRigReference.set(rig)
+        return runBlocking(Dispatchers.IO) { hamlibFirstController.attachLegacy() }.isSuccess
+    }
+
+    fun detachLegacyRig() {
+        runBlocking(Dispatchers.IO) { hamlibFirstController.detachLegacy() }
+        legacyRigReference.set(null)
     }
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String, fallback: T): T =
