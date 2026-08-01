@@ -8,7 +8,22 @@ package com.bg7yoz.ft8cn.ft8transmit;
 import com.bg7yoz.ft8cn.Ft8Message;
 
 public interface OnDoTransmitted {
-    void onPrepareTransmit();
+    /** 只有 CAT 配置和 PTT 读回均确认后才返回 true。 */
+    boolean onPrepareTransmit();
+
+    /** PTT lead time 结束后、播放音频前进行最后一次安全复核。 */
+    default boolean onAudioReady() {
+        return true;
+    }
+
+    /** 每次物理发射只调用一次，不与多消息日志回调混用。 */
+    default void onTransmitFinished() {
+    }
+
+    /** 在尚未完成音频播放时撤销 PTT 和电台事务。 */
+    default void onTransmitAborted(String reason) {
+    }
+
     void onBeforeTransmit(Ft8Message message,int functionOder);
     void onAfterTransmit(Ft8Message message, int functionOder);
     void onTransmitByWifi(Ft8Message message);

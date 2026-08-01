@@ -23,8 +23,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
+        android:name=".Ft8cnApplication"
         android:allowBackup="true"
-        android:usesCleartextTraffic="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:usesCleartextTraffic="false"
         android:icon="@drawable/ft8cn_icon"
         android:label="@string/app_name"
         android:roundIcon="@drawable/ft8cn_icon"
@@ -55,11 +58,10 @@
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="file" />
                 <data android:scheme="content" />
-                <data android:mimeType="text/plain" />
-                <data android:mimeType="application/octet-stream" />
-                <data android:mimeType="*/*" />
+                <data android:mimeType="application/x-adif" />
+                <data android:mimeType="application/adif" />
+                <data android:mimeType="application/vnd.arrl.tq8" />
             </intent-filter>
             <meta-data
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
@@ -70,7 +72,9 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:noHistory="true" />
-        <service android:name=".bluetooth.BluetoothSerialService" />
+        <service
+            android:name=".bluetooth.BluetoothSerialService"
+            android:exported="false" />
 
         <service
             android:name=".diagnostics.DeviceBenchmarkKeepAliveService"

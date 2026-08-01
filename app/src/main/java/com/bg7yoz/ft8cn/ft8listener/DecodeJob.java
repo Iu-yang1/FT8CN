@@ -1,5 +1,7 @@
 package com.bg7yoz.ft8cn.ft8listener;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 final class DecodeJob implements Runnable, Comparable<DecodeJob> {
     final long requestSequence;
     final long triggerSequence;
@@ -14,6 +16,8 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
     final Runnable afterSchedulerRelease;
     private Runnable beforeRun;
     private Runnable afterRun;
+    private final AtomicBoolean started = new AtomicBoolean(false);
+    private final AtomicBoolean completed = new AtomicBoolean(false);
 
     DecodeJob(long requestSequence,
               long triggerSequence,
@@ -49,15 +53,29 @@ final class DecodeJob implements Runnable, Comparable<DecodeJob> {
 
     @Override
     public void run() {
+        if (!started.compareAndSet(false, true)) {
+            return;
+        }
         if (beforeRun != null) {
             beforeRun.run();
         }
         try {
             delegate.run();
         } finally {
-            if (afterRun != null) {
-                afterRun.run();
-            }
+            completeOnce();
+        }
+    }
+
+    /** 关闭调度器时，尚未运行的任务也必须释放 live marker 等外层状态。 */
+    void cancelBeforeRun() {
+        if (started.compareAndSet(false, true)) {
+            completeOnce();
+        }
+    }
+
+    private void completeOnce() {
+        if (completed.compareAndSet(false, true) && afterRun != null) {
+            afterRun.run();
         }
     }
 

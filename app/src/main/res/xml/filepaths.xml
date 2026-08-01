@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <external-path path="." name="files_path" />
+    <cache-path
+        name="log_exports"
+        path="exports/" />
 </paths>
-

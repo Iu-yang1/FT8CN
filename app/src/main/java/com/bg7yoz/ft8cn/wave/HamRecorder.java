@@ -186,6 +186,19 @@ public class HamRecorder {
         notifyCaptureStateChanged();
     }
 
+    /** 终止录音并撤销所有未完成的时隙订阅，避免页面重建后继续持有 PCM 缓冲区。 */
+    public void release() {
+        stopRecord();
+        for (VoiceDataMonitor monitor : voiceDataMonitorList) {
+            if (monitor != null) {
+                monitor.cancel();
+            }
+        }
+        voiceDataMonitorList.clear();
+        captureStateListeners.clear();
+        onVoiceMonitorChanged = null;
+    }
+
     public VoiceDataSubscription getVoiceData(int duration,
                                               boolean afterDoneRemove,
                                               OnGetVoiceDataDone getVoiceDataDone) {

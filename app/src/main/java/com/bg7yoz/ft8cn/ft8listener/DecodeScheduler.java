@@ -1,10 +1,13 @@
 package com.bg7yoz.ft8cn.ft8listener;
 
 import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.List;
 
 final class DecodeScheduler {
     interface Logger {
@@ -20,6 +23,7 @@ final class DecodeScheduler {
     private volatile ThreadPoolExecutor executor;
     private volatile String lastDropReason = "none";
     private volatile String lastExecutedStage = "none";
+    private final AtomicBoolean shutdown = new AtomicBoolean(false);
     private final AtomicIntegerArray activePriorities =
             new AtomicIntegerArray(DecodePriority.values().length);
 
@@ -49,11 +53,19 @@ final class DecodeScheduler {
     }
 
     void setWorkerConfig(DecodeWorkerConfig workerConfig) {
-        if (workerConfig == null || workerConfig.equals(this.workerConfig)) {
+        if (shutdown.get() || workerConfig == null || workerConfig.equals(this.workerConfig)) {
             return;
         }
         synchronized (executorLock) {
+            if (shutdown.get()) {
+                return;
+            }
             ThreadPoolExecutor oldExecutor = this.executor;
+            // 不在活动 decode 中途更换 worker，避免留下无法由 release 等待的旧执行器。
+            if (oldExecutor.getActiveCount() > 0 || !oldExecutor.getQueue().isEmpty()) {
+                lastDropReason = "worker-config-deferred-busy";
+                return;
+            }
             this.workerConfig = workerConfig;
             this.executor = createExecutor(workerConfig.workerCount);
             oldExecutor.shutdownNow();
@@ -62,6 +74,10 @@ final class DecodeScheduler {
 
     boolean enqueue(DecodeJob job) {
         synchronized (executorLock) {
+            if (shutdown.get() || executor.isShutdown()) {
+                lastDropReason = "scheduler-shutdown";
+                return false;
+            }
             String dropReason = getDropReason(job, executor, workerConfig);
             if (dropReason != null) {
                 lastDropReason = dropReason;
@@ -96,8 +112,14 @@ final class DecodeScheduler {
                     }
                 }
             });
-            executor.execute(job);
-            return true;
+            try {
+                executor.execute(job);
+                return true;
+            } catch (RejectedExecutionException rejected) {
+                lastDropReason = "scheduler-rejected";
+                job.cancelBeforeRun();
+                return false;
+            }
         }
     }
 
@@ -127,9 +149,26 @@ final class DecodeScheduler {
     }
 
     void shutdownNow() {
+        List<Runnable> pending;
         synchronized (executorLock) {
-            executor.shutdownNow();
+            if (!shutdown.compareAndSet(false, true)) {
+                return;
+            }
+            pending = executor.shutdownNow();
         }
+        for (Runnable runnable : pending) {
+            if (runnable instanceof DecodeJob) {
+                ((DecodeJob) runnable).cancelBeforeRun();
+            }
+        }
+    }
+
+    boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+        return executor.awaitTermination(timeout, unit);
+    }
+
+    boolean isShutdown() {
+        return shutdown.get();
     }
 
     private ThreadPoolExecutor createExecutor(int workerCount) {

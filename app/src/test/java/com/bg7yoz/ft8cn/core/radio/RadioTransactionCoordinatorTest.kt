@@ -71,6 +71,64 @@ class RadioTransactionCoordinatorTest {
         coordinator.close()
     }
 
+    @Test
+    fun pttReadbackFailureAlwaysDropsPttAndRestoresRadio() = runBlocking {
+        val radio = connectedRadio()
+        val coordinator = RadioTransactionCoordinator(radio)
+        coordinator.arm()
+        radio.failNextPttReadback()
+
+        val result = coordinator.beginTransmit(
+            FrequencyPlan(14_074_000, 14_076_000, SplitStrategy.RIG_SPLIT, 1_500),
+        )
+
+        assertTrue(result.isFailure)
+        assertFalse(radio.state.value.transmitting)
+        assertFalse(radio.state.value.splitEnabled)
+        assertEquals(14_074_000, radio.state.value.rxFrequencyHz)
+        assertEquals(14_074_000, radio.state.value.txFrequencyHz)
+        assertEquals(TransmitPhase.FAILED, coordinator.safetyState.value.phase)
+        coordinator.close()
+    }
+
+    @Test
+    fun audioInitializationFailureAndRepeatedStopAreSafe() = runBlocking {
+        val radio = connectedRadio()
+        val coordinator = RadioTransactionCoordinator(radio)
+        coordinator.arm()
+        coordinator.beginTransmit(
+            FrequencyPlan(14_074_000, 14_075_500, SplitStrategy.FAKE_IT, 2_500),
+        ).getOrThrow()
+
+        assertTrue(coordinator.stopAll("audio initialization failed").isSuccess)
+        assertTrue(coordinator.stopAll("repeated lifecycle stop").isSuccess)
+        assertFalse(radio.state.value.transmitting)
+        assertEquals(14_074_000, radio.state.value.rxFrequencyHz)
+        assertEquals(TransmitPhase.IDLE, coordinator.safetyState.value.phase)
+        coordinator.close()
+    }
+
+    @Test
+    fun rapidSecondTransmitCannotReplaceActiveGeneration() = runBlocking {
+        val radio = connectedRadio()
+        val coordinator = RadioTransactionCoordinator(radio)
+        coordinator.arm()
+        val first = coordinator.beginTransmit(
+            FrequencyPlan(14_074_000, 14_075_500, SplitStrategy.NONE, 1_500),
+        ).getOrThrow()
+
+        val second = coordinator.beginTransmit(
+            FrequencyPlan(14_074_000, 14_076_500, SplitStrategy.NONE, 2_500),
+        )
+
+        assertTrue(second.isFailure)
+        assertEquals(first.generation, coordinator.safetyState.value.generation)
+        assertTrue(radio.state.value.transmitting)
+        assertTrue(coordinator.endTransmit(first).isSuccess)
+        assertFalse(radio.state.value.transmitting)
+        coordinator.close()
+    }
+
     private suspend fun connectedRadio(): FakeRadioController = FakeRadioController().also {
         it.connect(1).getOrThrow()
         it.setFrequency(14_074_000).getOrThrow()

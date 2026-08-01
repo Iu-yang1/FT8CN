@@ -14,7 +14,9 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
 
 data class FeatureSettings(
     val schemaVersion: Int = FeatureSettingsStore.CURRENT_SCHEMA_VERSION,
@@ -101,6 +103,9 @@ class FeatureSettingsStore(private val dataStore: DataStore<Preferences>) {
                 .coerceIn(100_000L, 100_000_000_000L),
         )
     }
+
+    /** 仅供已有 Java 工作线程在建立不可变发射快照时调用，禁止在主线程使用。 */
+    fun snapshotBlocking(): FeatureSettings = runBlocking { state.first() }
 
     suspend fun setSelectedDestination(route: String) {
         require(route.isNotBlank()) { "路由不能为空" }

@@ -1044,9 +1044,9 @@ public class GeneralVariables {
      * @return File结构的文件
      */
     public static File getTempFile(Context context, String prefix, String suffix) {
-        File tempDir = context.getExternalCacheDir();
-        if (tempDir == null) {
-            Log.e(TAG, "创建临时文件出错！无法获取临时目录");
+        File tempDir = new File(context.getCacheDir(), "exports");
+        if ((!tempDir.exists() && !tempDir.mkdirs()) || !tempDir.isDirectory()) {
+            Log.e(TAG, "创建临时文件出错！无法创建导出目录");
             return null;
         }
 

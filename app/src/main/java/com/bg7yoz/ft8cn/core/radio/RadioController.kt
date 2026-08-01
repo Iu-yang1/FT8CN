@@ -101,11 +101,16 @@ class FakeRadioController(initial: RadioState = RadioState()) : RadioController 
     private val mutableState = MutableStateFlow(initial)
     private val failures = ArrayDeque<String>()
     val commandLog = mutableListOf<String>()
+    private var failNextPttReadback = false
 
     override val state: StateFlow<RadioState> = mutableState.asStateFlow()
 
     fun failNext(operation: String) {
         failures.addLast(operation)
+    }
+
+    fun failNextPttReadback() {
+        failNextPttReadback = true
     }
 
     override suspend fun discoverModels(): List<RadioModel> =
@@ -188,6 +193,10 @@ class FakeRadioController(initial: RadioState = RadioState()) : RadioController 
 
     override suspend fun refreshState(): Result<RadioState> {
         commandLog += "refresh"
+        if (failNextPttReadback && mutableState.value.transmitting) {
+            failNextPttReadback = false
+            return Result.failure(IllegalStateException("injected PTT readback failure"))
+        }
         return Result.success(mutableState.value)
     }
 

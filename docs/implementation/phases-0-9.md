@@ -10,8 +10,8 @@
 
 | 加固阶段 | 状态 | 本轮门禁 | 提交 SHA |
 |---|---|---|---|
-| 0 Git 安全、临时文件、工具链与基线 | 完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、第三方/仓库卫生 PASS；`BLOCKED_SANITIZER` | 待本阶段提交 |
-| 1 native 生命周期、PTT 与安全 | 进行中 | 待执行 | 待提交 |
+| 0 Git 安全、临时文件、工具链与基线 | 完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、第三方/仓库卫生 PASS；`BLOCKED_SANITIZER` | `91ea3f35` |
+| 1 native 生命周期、PTT 与安全 | 完成 | decoder release、PTT rollback、HTTP/Manifest、Gradle、oracle、device PASS；`BLOCKED_SANITIZER` | 本阶段提交 |
 | 2 NTP/GNSS 纪律化 UTC | 待开始 | 待执行 | 待提交 |
 | 3 Hamlib/Split/Fake It 事务 | 待开始 | 待执行 | 待提交 |
 | 4 Q65 流式内存与 EME | 待开始 | 待执行 | 待提交 |
@@ -23,6 +23,15 @@
 
 本轮基线证据见 `docs/verification/hardening-baseline-2026-08-01.md`。以下内容保留
 2026-07-26 至 2026-07-29 原始阶段历史，不能用本轮结果改写历史测量。
+
+### 2026-08-01 阶段 1 加固记录
+
+- decoder 关闭顺序固定为停止提交、取消队列、等待 JNI、获取 batch/handle 锁并释放句柄；关闭后不再回调 UI。
+- PTT 事务加入 generation、CAT/PTT 读回、发射延迟、动态 watchdog 与全状态回滚；Q65 watchdog 可覆盖 300 秒时隙。
+- 网页日志默认关闭，仅用户点击后开启；LAN 访问使用随机令牌，修改接口要求 POST/CSRF，导入采用 2 MiB 上限和有界队列。
+- 录音订阅、时隙定时器和后台上传均有幂等释放；三个 `UtcTimer` 共享单一 10 ms 调度器，SNTP 同步串行化。
+- 完整门禁：`HOST_RC_PASS`、`DEVICE_RELEASE_PASS`；官方 `jt9` FT8 20/20、FT4 16/16；Q65 4 条固定哈希不变；仅 sanitizer runtime 缺失为 `BLOCKED_SANITIZER`。
+- Host O2 p50/p95：FT8 539.516/552.104 ms，FT4 264.245/267.227 ms，Q65A/60 241.351/249.857 ms；FT8/FT4 均满足历史 p95 3% 门槛。
 
 - 仓库：`H:/iu_yang1/study/FT8CN/ft8cn`
 - 产品分支：`wsjtx-ft8ft4-core-port`

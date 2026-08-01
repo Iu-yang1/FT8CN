@@ -22,11 +22,14 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.TimeZone;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class UtcTimer {
     /**
@@ -66,10 +69,30 @@ public class UtcTimer {
      */
     public static volatile String lastSyncServer = "";
 
-    private boolean running = false;
+    private volatile boolean running = false;
 
-    private final Timer secTimer = new Timer();
-    private final Timer heartBeatTimer = new Timer();
+    private static final ThreadFactory TIME_THREAD_FACTORY = runnable -> {
+        Thread thread = new Thread(runnable, "ft8cn-time-scheduler");
+        thread.setDaemon(true);
+        return thread;
+    };
+    private static final ScheduledThreadPoolExecutor TIME_SCHEDULER =
+            new ScheduledThreadPoolExecutor(1, TIME_THREAD_FACTORY);
+    private static final ThreadPoolExecutor CALLBACK_EXECUTOR = new ThreadPoolExecutor(
+            2, 2, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(32),
+            runnable -> {
+                Thread thread = new Thread(runnable, "ft8cn-time-callback");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
+    private static final ThreadPoolExecutor NTP_EXECUTOR = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1),
+            runnable -> {
+                Thread thread = new Thread(runnable, "ft8cn-sntp");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
+    private static final AtomicBoolean NTP_SYNC_RUNNING = new AtomicBoolean(false);
 
     /**
      * 实例级时间偏移（毫秒）
@@ -77,22 +100,10 @@ public class UtcTimer {
     private int time_sec = 0;
     private volatile long lastTriggeredSlotIndex = Long.MIN_VALUE;
     private volatile boolean destroyed = false;
-
-    private final ExecutorService cachedThreadPool = Executors.newCachedThreadPool();
-    private final Runnable doSomething = new Runnable() {
-        @Override
-        public void run() {
-            onUtcTimer.doOnSecTimer(utc);
-        }
-    };
-
-    private final ExecutorService heartBeatThreadPool = Executors.newCachedThreadPool();
-    private final Runnable doHeartBeat = new Runnable() {
-        @Override
-        public void run() {
-            onUtcTimer.doHeartBeatTimer(utc);
-        }
-    };
+    private final AtomicBoolean slotCallbackPending = new AtomicBoolean(false);
+    private final AtomicBoolean heartbeatCallbackPending = new AtomicBoolean(false);
+    private final ScheduledFuture<?> slotFuture;
+    private final ScheduledFuture<?> heartbeatFuture;
 
     /**
      * NTP 同步结果
@@ -165,70 +176,68 @@ public class UtcTimer {
         this.doOnce = doOnce;
         this.onUtcTimer = onUtcTimer;
 
-        // 10ms 轮询仅检测边界；UTC 本身来自单调时钟锚点，不受 wall clock 跳变影响。
-        secTimer.schedule(secTask(), 0, 10);
-        // 1秒心跳
-        heartBeatTimer.schedule(heartBeatTask(), 0, 1000);
+        TIME_SCHEDULER.setRemoveOnCancelPolicy(true);
+        slotFuture = TIME_SCHEDULER.scheduleAtFixedRate(this::tickSlot, 0L, 10L, TimeUnit.MILLISECONDS);
+        heartbeatFuture = TIME_SCHEDULER.scheduleAtFixedRate(
+                this::tickHeartbeat, 0L, 1L, TimeUnit.SECONDS);
     }
 
-    private TimerTask heartBeatTask() {
-        return new TimerTask() {
-            @Override
-            public void run() {
-                if (destroyed) {
-                    return;
-                }
-                doHeartBeatEvent(onUtcTimer);
-            }
-        };
-    }
-
-    private TimerTask secTask() {
-        return new TimerTask() {
-            @Override
-            public void run() {
+    private void tickSlot() {
+        if (destroyed) {
+            return;
+        }
+        long currentUtc = getSystemTime();
+        utc = currentUtc;
+        long currentSlotIndex = getSlotIndex(currentUtc);
+        if (!running || currentSlotIndex <= lastTriggeredSlotIndex) {
+            return;
+        }
+        lastTriggeredSlotIndex = currentSlotIndex;
+        if (doOnce) {
+            running = false;
+        }
+        if (!slotCallbackPending.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            CALLBACK_EXECUTOR.execute(() -> {
                 try {
-                    if (destroyed) {
-                        return;
+                    if (!destroyed) {
+                        onUtcTimer.doOnSecTimer(currentUtc);
                     }
-                    utc = getSystemTime();
-                    long currentSlotIndex = getSlotIndex(utc);
-
-                    if (running && currentSlotIndex > lastTriggeredSlotIndex) {
-                        lastTriggeredSlotIndex = currentSlotIndex;
-                        try {
-                            cachedThreadPool.execute(doSomething);
-                        } catch (RejectedExecutionException ignored) {
-                            return;
-                        }
-
-                        if (doOnce) {
-                            running = false;
-                            return;
-                        }
-
-                        Thread.sleep(1);
-                    }
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+                } finally {
+                    slotCallbackPending.set(false);
                 }
-            }
-        };
+            });
+        } catch (RejectedExecutionException rejected) {
+            slotCallbackPending.set(false);
+        }
+    }
+
+    private void tickHeartbeat() {
+        if (destroyed || !heartbeatCallbackPending.compareAndSet(false, true)) {
+            return;
+        }
+        long currentUtc = getSystemTime();
+        utc = currentUtc;
+        try {
+            CALLBACK_EXECUTOR.execute(() -> {
+                try {
+                    if (!destroyed) {
+                        onUtcTimer.doHeartBeatTimer(currentUtc);
+                    }
+                } finally {
+                    heartbeatCallbackPending.set(false);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            heartbeatCallbackPending.set(false);
+        }
     }
 
     /**
      * 心跳动作
      */
-    private void doHeartBeatEvent(OnUtcTimer onUtcTimer) {
-        if (destroyed) {
-            return;
-        }
-        try {
-            heartBeatThreadPool.execute(doHeartBeat);
-        } catch (RejectedExecutionException ignored) {
-        }
-    }
-
     public void stop() {
         running = false;
     }
@@ -255,12 +264,8 @@ public class UtcTimer {
         }
         destroyed = true;
         running = false;
-        secTimer.cancel();
-        secTimer.purge();
-        heartBeatTimer.cancel();
-        heartBeatTimer.purge();
-        cachedThreadPool.shutdownNow();
-        heartBeatThreadPool.shutdownNow();
+        slotFuture.cancel(false);
+        heartbeatFuture.cancel(false);
     }
 
     /**
@@ -390,9 +395,15 @@ public class UtcTimer {
      * 详细同步接口：可返回服务器、真实偏移、对齐偏移、往返延迟、同步时间
      */
     public static void syncTime(String server, AfterSyncTimeDetail afterSyncTimeDetail) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
+        if (!NTP_SYNC_RUNNING.compareAndSet(false, true)) {
+            if (afterSyncTimeDetail != null) {
+                afterSyncTimeDetail.syncFailed(new IOException("SNTP synchronization already in progress"));
+            }
+            return;
+        }
+        try {
+            NTP_EXECUTOR.execute(() -> {
+                try {
                 String targetServer = (server == null || server.trim().length() == 0)
                         ? "pool.ntp.org"
                         : server.trim();
@@ -431,8 +442,17 @@ public class UtcTimer {
                             ? new IOException("NTP synchronization failed")
                             : lastFailure);
                 }
+                } finally {
+                    NTP_SYNC_RUNNING.set(false);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            NTP_SYNC_RUNNING.set(false);
+            if (afterSyncTimeDetail != null) {
+                afterSyncTimeDetail.syncFailed(
+                        new IOException("SNTP synchronization queue is unavailable", rejected));
             }
-        }).start();
+        }
     }
 
     private static NtpSyncResult queryNtpServers(String targetServer) throws IOException {

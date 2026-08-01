@@ -5,9 +5,9 @@ import android.annotation.SuppressLint;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
 
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class ImportTaskList extends HashMap<Integer, ImportTaskList.ImportTask> {
+public class ImportTaskList extends ConcurrentHashMap<Integer, ImportTaskList.ImportTask> {
 
     /**
      * 获取上传的任务，以session为key
@@ -15,12 +15,12 @@ public class ImportTaskList extends HashMap<Integer, ImportTaskList.ImportTask> 
      * @param session session
      * @return 任务的HTML
      */
-    public String getTaskHTML(int session) {
+    public String getTaskHTML(int session, String csrfToken) {
         ImportTask task = this.get(session);
         if (task == null) {
             return GeneralVariables.getStringFromResource(R.string.null_task_html);
         }
-        return task.getHtml();
+        return task.getHtml(csrfToken);
     }
     public void cancelTask(int session){
         ImportTask task = this.get(session);
@@ -71,7 +71,7 @@ public class ImportTaskList extends HashMap<Integer, ImportTaskList.ImportTask> 
         public int count = 0;//解析出总的数据量
         public int importedCount = 0;//导入的数量
         public int readErrorCount = 0;//读取数据错误数量
-        public int processCount = 0;
+        public volatile int processCount = 0;
         public int updateCount = 0;//更新的数量
         public int invalidCount = 0;//无效的QSL
         public int newCount = 0;//新导入的数量
@@ -80,7 +80,7 @@ public class ImportTaskList extends HashMap<Integer, ImportTaskList.ImportTask> 
         String errorMsg = "";
 
         @SuppressLint("DefaultLocale")
-        public String getHtml() {
+        public String getHtml(String csrfToken) {
             String htmlHeader = "<table bgcolor=#a1a1a1 border=\"0\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">\n";
             String htmlEnder = "</table>\n";
             String progress = String.format("<FONT COLOR=\"BLUE\">%s %.1f%%(%d/%d)</FONT>\n", GeneralVariables.getStringFromResource(R.string.import_progress_html)
@@ -88,8 +88,10 @@ public class ImportTaskList extends HashMap<Integer, ImportTaskList.ImportTask> 
             String cell = "<tr><td>%s</td></tr>\n";
             String errorHtml = status == ImportState.FINISHED || status == ImportState.CANCELED ? errorMsg : "";
             String doCancelButton = status == ImportState.FINISHED || status == ImportState.CANCELED ? ""
-                    : String.format("<br><a href=\"cancelTask?session=%d\"><button>%s</button></a><br>"
-                       , session,GeneralVariables.getStringFromResource(R.string.import_cancel_button));
+                    : String.format("<br><form method=\"post\" action=\"cancelTask?session=%d&amp;csrf=%s\">"
+                                    + "<button type=\"submit\">%s</button></form><br>"
+                       , session, csrfToken,
+                            GeneralVariables.getStringFromResource(R.string.import_cancel_button));
             return htmlHeader
                     + String.format(cell, progress)
                     + String.format(cell, String.format(GeneralVariables.getStringFromResource(R.string.import_read_error_count_html), readErrorCount))

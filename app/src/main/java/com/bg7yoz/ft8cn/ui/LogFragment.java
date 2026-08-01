@@ -53,6 +53,7 @@ import com.bg7yoz.ft8cn.log.QSLRecordStr;
 import com.bg7yoz.ft8cn.log.OnShareLogEvents;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 
 
@@ -154,15 +155,23 @@ public class LogFragment extends Fragment {
         binding.exportImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                if (getLocalIp() == null) {
+                String localIp = getLocalIp();
+                if (localIp == null) {
                     new HelpDialog(requireContext(), requireActivity()
                             , GeneralVariables.getStringFromResource(R.string.export_null)
                             , false).show();
                 } else {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , String.format(GeneralVariables.getStringFromResource(R.string.export_info)
-                            , getLocalIp(), LogHttpServer.DEFAULT_PORT)
-                            , false).show();
+                    try {
+                        String token = mainViewModel.startLogHttpServer(true);
+                        String address = String.format("http://%s:%d/?token=%s",
+                                localIp, LogHttpServer.DEFAULT_PORT, token);
+                        new HelpDialog(requireContext(), requireActivity()
+                                , String.format(GeneralVariables.getStringFromResource(R.string.export_info)
+                                , localIp, LogHttpServer.DEFAULT_PORT) + "\n" + address
+                                , false).show();
+                    } catch (IOException exception) {
+                        ToastMessage.show("网页日志服务启动失败: " + exception.getMessage());
+                    }
                 }
 
             }

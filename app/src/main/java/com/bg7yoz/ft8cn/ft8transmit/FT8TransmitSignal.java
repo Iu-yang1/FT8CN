@@ -35,9 +35,13 @@ import com.bg7yoz.ft8cn.ui.ToastMessage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import kotlinx.coroutines.flow.StateFlow;
 
@@ -117,7 +121,20 @@ public class FT8TransmitSignal {
     private final CallQueueManager callQueueManager = new CallQueueManager();
     public MutableLiveData<ArrayList<CqCallEntry>> mutableCqQueue = new MutableLiveData<>();
     private final OnDoTransmitted onDoTransmitted;
-    private final ExecutorService doTransmitThreadPool = Executors.newCachedThreadPool();
+    private final ExecutorService doTransmitThreadPool = new ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(1),
+            runnable -> {
+                Thread thread = new Thread(runnable, "ft8cn-transmit");
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.AbortPolicy());
+    private final AtomicLong transmitGeneration = new AtomicLong(0L);
+    private final AtomicBoolean released = new AtomicBoolean(false);
     private volatile String lastTransmitStatusSummary = "";
     private final Observer<Float> volumePercentObserver = new Observer<Float>() {
         @Override
@@ -562,6 +579,9 @@ public class FT8TransmitSignal {
     }
 
     public void restartByCurrentMode() {
+        if (released.get()) {
+            return;
+        }
         boolean running = utcTimer != null && utcTimer.isRunning();
         if (utcTimer != null) {
             utcTimer.destroy();
@@ -574,6 +594,10 @@ public class FT8TransmitSignal {
     }
 
     public void release() {
+        if (!released.compareAndSet(false, true)) {
+            return;
+        }
+        transmitGeneration.incrementAndGet();
         q65StreamCancelled = true;
         GeneralVariables.mutableVolumePercent.removeObserver(volumePercentObserver);
         if (utcTimer != null) {
@@ -581,6 +605,9 @@ public class FT8TransmitSignal {
         }
         setActivated(false);
         doTransmitThreadPool.shutdownNow();
+        if (onDoTransmitted != null) {
+            onDoTransmitted.onTransmitAborted("发射控制器释放");
+        }
         if (audioTrack != null) {
             audioTrack.release();
             audioTrack = null;
@@ -636,6 +663,9 @@ public class FT8TransmitSignal {
     }
 
     private void doTransmit(boolean manualRequest) {
+        if (released.get()) {
+            return;
+        }
         if (!activated && !isExperimentalManualTxMode()) {
             return;
         }
@@ -654,7 +684,7 @@ public class FT8TransmitSignal {
         if (!checkClockForTransmit(manualRequest, true)) {
             return;
         }
-        boolean reserveBeforeQueue = isExperimentalManualTxMode();
+        boolean reserveBeforeQueue = true;
         synchronized (transmitStateLock) {
             if (isTransmitting) {
                 Log.w(TAG, "doTransmit ignored: transmit already in progress");
@@ -678,6 +708,7 @@ public class FT8TransmitSignal {
                     functionOrder)) {
                 Log.d(TAG, "doTransmit ignored: automatic action already claimed for slot "
                         + automationSlot);
+                updateTransmittingState(false);
                 return;
             }
             lastAutomationTransmitMode = automationMode;
@@ -687,14 +718,16 @@ public class FT8TransmitSignal {
             if (!q65AutomationController.tryClaim(automationSlot, currentSequence)) {
                 Log.d(TAG, "doTransmit ignored: Q65 sequence is not armed for slot "
                         + automationSlot);
+                updateTransmittingState(false);
                 return;
             }
             lastQ65AutomationSlot = automationSlot;
             q65CurrentTransmitSucceeded = false;
         }
         Log.d(TAG, "doTransmit: start transmit");
+        long generation = transmitGeneration.incrementAndGet();
         try {
-            doTransmitThreadPool.execute(new DoTransmitRunnable(this, manualRequest));
+            doTransmitThreadPool.execute(new DoTransmitRunnable(this, manualRequest, generation));
         } catch (RejectedExecutionException e) {
             Log.e(TAG, "doTransmit rejected: " + e.getMessage());
             if (!manualRequest && isAutomaticFtxMode(automationMode)) {
@@ -1720,6 +1753,10 @@ public class FT8TransmitSignal {
      * AudioTrack is released before state updates so the next frame starts cleanly.
      */
     private void afterPlayAudio() {
+        // 先撤销 PTT 并恢复电台，再执行日志和自动化回调，避免数据库工作延长发射。
+        if (onDoTransmitted != null) {
+            onDoTransmitted.onTransmitFinished();
+        }
         int transmittedOrder = lastTransmittedFunctionOrder > 0
                 ? lastTransmittedFunctionOrder
                 : functionOrder;
@@ -2921,6 +2958,46 @@ public class FT8TransmitSignal {
         }
     }
 
+    private void abortTransmitAttempt(String reason) {
+        q65StreamCancelled = true;
+        if (onDoTransmitted != null) {
+            onDoTransmitted.onTransmitAborted(reason);
+        }
+        if (audioTrack != null) {
+            try {
+                audioTrack.pause();
+                audioTrack.flush();
+                audioTrack.release();
+            } catch (RuntimeException error) {
+                Log.w(TAG, "abort audio cleanup failed: " + error.getMessage());
+            } finally {
+                audioTrack = null;
+            }
+        }
+        if (lastAutomationTransmitSlot != Long.MIN_VALUE
+                && isAutomaticFtxMode(lastAutomationTransmitMode)) {
+            automationController.markTransmitFinished(
+                    lastAutomationTransmitMode,
+                    lastAutomationTransmitSlot,
+                    functionOrder,
+                    false);
+            lastAutomationTransmitSlot = Long.MIN_VALUE;
+            lastAutomationTransmitMode = -1;
+        }
+        if (lastQ65AutomationSlot != Long.MIN_VALUE) {
+            q65AutomationController.markTransmitFinished(lastQ65AutomationSlot, false, reason);
+            lastQ65AutomationSlot = Long.MIN_VALUE;
+        }
+        updateLastTransmitStatus("lastTx stage=aborted failureReason=" + reason);
+        updateTransmittingState(false);
+    }
+
+    private boolean isGenerationActive(long generation) {
+        return !released.get()
+                && generation == transmitGeneration.get()
+                && !Thread.currentThread().isInterrupted();
+    }
+
     public void setTimer_sec(int sec) {
         utcTimer.setTime_sec(sec);
     }
@@ -3014,37 +3091,52 @@ public class FT8TransmitSignal {
     private static class DoTransmitRunnable implements Runnable {
         private final FT8TransmitSignal transmitSignal;
         private final boolean manualRequest;
+        private final long generation;
 
-        public DoTransmitRunnable(FT8TransmitSignal transmitSignal, boolean manualRequest) {
+        public DoTransmitRunnable(FT8TransmitSignal transmitSignal,
+                                  boolean manualRequest,
+                                  long generation) {
             this.transmitSignal = transmitSignal;
             this.manualRequest = manualRequest;
+            this.generation = generation;
         }
 
         @SuppressLint("DefaultLocale")
         @Override
         public void run() {
+            if (!transmitSignal.isGenerationActive(generation)) {
+                transmitSignal.abortTransmitAttempt("发射任务已取消");
+                return;
+            }
             if (!transmitSignal.checkClockForTransmit(manualRequest, false)) {
+                transmitSignal.abortTransmitAttempt("时间状态不允许自动发射");
                 return;
             }
             if (transmitSignal.onDoTransmitted != null) {
-                transmitSignal.onDoTransmitted.onPrepareTransmit();
+                if (!transmitSignal.onDoTransmitted.onPrepareTransmit()) {
+                    transmitSignal.abortTransmitAttempt("CAT/PTT 准备失败");
+                    return;
+                }
             }
 
-            if (!transmitSignal.isExperimentalManualTxMode()) {
-                transmitSignal.updateTransmittingState(true);
-            }
             long holdWindowMs = transmitSignal.calculateLateDecodeHoldMs();
             if (holdWindowMs > 0L) {
                 try {
                     Thread.sleep(holdWindowMs);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    transmitSignal.abortTransmitAttempt("late-decode 等待被取消");
+                    return;
                 }
             }
 
+            if (!transmitSignal.isGenerationActive(generation)) {
+                transmitSignal.abortTransmitAttempt("发射 generation 已失效");
+                return;
+            }
             // 等待 late-decode 窗口期间时间源可能失效，真正生成/播放前再做一次自动门禁。
             if (!transmitSignal.checkClockForTransmit(manualRequest, true)) {
-                transmitSignal.afterPlayAudio();
+                transmitSignal.abortTransmitAttempt("等待期间时间状态失效");
                 return;
             }
 
@@ -3060,7 +3152,16 @@ public class FT8TransmitSignal {
                 transmitSignal.postTransmittingMessage(plan);
             } catch (RuntimeException e) {
                 Log.e(TAG, "DoTransmitRunnable: failed to build final transmit message", e);
-                transmitSignal.afterPlayAudio();
+                transmitSignal.abortTransmitAttempt("生成发射消息失败");
+                return;
+            }
+            if (transmitSignal.onDoTransmitted != null
+                    && !transmitSignal.onDoTransmitted.onAudioReady()) {
+                transmitSignal.abortTransmitAttempt("音频启动前 PTT 复核失败");
+                return;
+            }
+            if (!transmitSignal.isGenerationActive(generation)) {
+                transmitSignal.abortTransmitAttempt("音频启动前任务已取消");
                 return;
             }
             transmitSignal.playTransmitPlan(plan);

@@ -86,9 +86,6 @@ public class HtmlContext {
                     +GeneralVariables.getStringFromResource(R.string.html_query_qso_swl)
                 +"</a></td></tr>" +
 
-                "<tr><td class=\"default\" colspan=\"15\"><a href=/config>"
-                        +GeneralVariables.getStringFromResource(R.string.html_query_configuration_information)
-                +"</a></td></tr>" +
                 "<tr><td class=\"default\" colspan=\"15\"><a href=/allTable>"
                         +GeneralVariables.getStringFromResource(R.string.html_query_all_table)+"</a></td></tr>" +
                 "<tr><td class=\"default\" colspan=\"15\"><a href=/followCallsigns>"

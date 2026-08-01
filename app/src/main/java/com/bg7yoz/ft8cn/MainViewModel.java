@@ -31,9 +31,15 @@ import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.lifecycle.ViewModelStoreOwner;
+import androidx.fragment.app.Fragment;
 
 import com.bg7yoz.ft8cn.callsign.CallsignDatabase;
 import com.bg7yoz.ft8cn.core.FeatureAppGraph;
+import com.bg7yoz.ft8cn.core.radio.FrequencyPlan;
+import com.bg7yoz.ft8cn.core.radio.RadioMode;
+import com.bg7yoz.ft8cn.core.radio.RadioVfo;
+import com.bg7yoz.ft8cn.core.radio.SplitStrategy;
+import com.bg7yoz.ft8cn.data.settings.FeatureSettings;
 import com.bg7yoz.ft8cn.callsign.CallsignInfo;
 import com.bg7yoz.ft8cn.callsign.OnAfterQueryCallsignLocation;
 import com.bg7yoz.ft8cn.connector.BluetoothRigConnector;
@@ -99,15 +105,16 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Objects;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class MainViewModel extends ViewModel {
     String TAG = "ft8cn MainViewModel";
     public boolean configIsLoaded = false;
     private boolean resourcesReleased = false;
-
-    private static MainViewModel viewModel = null;
 
     public final ArrayList<Ft8Message> ft8Messages = new ArrayList<>();
     public UtcTimer utcTimer;
@@ -148,8 +155,18 @@ public class MainViewModel extends ViewModel {
         }
     };
 
-    private final ExecutorService getQTHThreadPool = Executors.newCachedThreadPool();
-    private final ExecutorService sendWaveDataThreadPool = Executors.newCachedThreadPool();
+    private final ExecutorService getQTHThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(16),
+            runnable -> new Thread(runnable, "ft8cn-qth"),
+            new ThreadPoolExecutor.DiscardOldestPolicy());
+    private final ExecutorService sendWaveDataThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(4),
+            runnable -> new Thread(runnable, "ft8cn-cat-audio"),
+            new ThreadPoolExecutor.AbortPolicy());
+    private final ExecutorService thirdPartyUploadThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(32),
+            runnable -> new Thread(runnable, "ft8cn-log-upload"),
+            new ThreadPoolExecutor.AbortPolicy());
 
     //用于显示生成共享日志过程的变量
     public MutableLiveData<String> mutableShareInfo = new MutableLiveData<>("");
@@ -219,13 +236,20 @@ public class MainViewModel extends ViewModel {
     //********************************************
 
     //日志管理HTTP SERVER
-    private final LogHttpServer httpServer;
+    private LogHttpServer httpServer;
 
     public static MainViewModel getInstance(ViewModelStoreOwner owner) {
-        if (viewModel == null) {
-            viewModel = new ViewModelProvider(owner).get(MainViewModel.class);
+        Context context = null;
+        if (owner instanceof Context) {
+            context = (Context) owner;
+        } else if (owner instanceof Fragment) {
+            context = ((Fragment) owner).getContext();
         }
-        return viewModel;
+        if (context == null || !(context.getApplicationContext() instanceof Ft8cnApplication)) {
+            throw new IllegalStateException("MainViewModel requires Ft8cnApplication context");
+        }
+        Ft8cnApplication application = (Ft8cnApplication) context.getApplicationContext();
+        return new ViewModelProvider(application).get(MainViewModel.class);
     }
 
     public Ft8Message getFt8Message(int position) {
@@ -475,6 +499,8 @@ public class MainViewModel extends ViewModel {
         spectrumListener = new SpectrumListener(hamRecorder);
 
         ft8TransmitSignal = new FT8TransmitSignal(databaseOpr, new OnDoTransmitted() {
+            private volatile boolean currentTransmitControlledByHamlib;
+
             private boolean needControlSco() {
                 if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
                     return false;
@@ -486,21 +512,90 @@ public class MainViewModel extends ViewModel {
             }
 
             @Override
-            public void onPrepareTransmit() {
-                boolean controlledByHamlib = FeatureAppGraph.from(GeneralVariables.getMainContext())
-                        .getRadioTransmitBridge().requestPtt(true);
-                if (controlledByHamlib) {
+            public boolean onPrepareTransmit() {
+                FeatureAppGraph graph = FeatureAppGraph.from(GeneralVariables.getMainContext());
+                boolean hamlibConnected = graph.getRadioController().getState().getValue().getConnected();
+                if (hamlibConnected) {
+                    FeatureSettings settings = graph.getSettings().snapshotBlocking();
+                    SplitStrategy splitStrategy;
+                    try {
+                        splitStrategy = SplitStrategy.valueOf(settings.getSplitStrategy());
+                    } catch (IllegalArgumentException ignored) {
+                        splitStrategy = SplitStrategy.NONE;
+                    }
+                    int audioOffsetHz = Math.round(GeneralVariables.getTransmitFrequency());
+                    long watchdogMs = Math.min(
+                            310_000L,
+                            Math.max(30_000L,
+                                    FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode()) + 5_000L));
+                    currentTransmitControlledByHamlib = graph.getRadioTransmitBridge().beginTransmit(
+                            new FrequencyPlan(
+                                    GeneralVariables.band,
+                                    GeneralVariables.band + audioOffsetHz,
+                                    splitStrategy,
+                                    audioOffsetHz,
+                                    1_000,
+                                    2_000,
+                                    RadioMode.DATA_USB,
+                                    3_000,
+                                    RadioVfo.B),
+                            watchdogMs,
+                            Math.max(GeneralVariables.pttDelay, settings.getHamlibTxDelayMs()));
+                    if (!currentTransmitControlledByHamlib) {
+                        return false;
+                    }
                     if (needControlSco()) stopSco();
-                    return;
+                    return true;
                 }
+                currentTransmitControlledByHamlib = false;
                 if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
                     if (baseRig != null) {
                         if (needControlSco()) stopSco();
                         baseRig.setPTT(true);
+                        return true;
                     }
+                    return false;
                 }
+                return true;
+            }
+
+            @Override
+            public boolean onAudioReady() {
+                return !currentTransmitControlledByHamlib
+                        || FeatureAppGraph.from(GeneralVariables.getMainContext())
+                        .getRadioTransmitBridge().awaitAudioReady();
+            }
+
+            @Override
+            public void onTransmitFinished() {
+                if (currentTransmitControlledByHamlib) {
+                    FeatureAppGraph.from(GeneralVariables.getMainContext())
+                            .getRadioTransmitBridge().finishTransmit("发射完成");
+                    currentTransmitControlledByHamlib = false;
+                } else if ((GeneralVariables.controlMode == ControlMode.CAT
+                        || GeneralVariables.controlMode == ControlMode.RTS
+                        || GeneralVariables.controlMode == ControlMode.DTR)
+                        && baseRig != null) {
+                    baseRig.setPTT(false);
+                }
+                if (needControlSco()) startSco();
+            }
+
+            @Override
+            public void onTransmitAborted(String reason) {
+                if (currentTransmitControlledByHamlib) {
+                    FeatureAppGraph.from(GeneralVariables.getMainContext())
+                            .getRadioTransmitBridge().abortTransmit(reason);
+                    currentTransmitControlledByHamlib = false;
+                } else if ((GeneralVariables.controlMode == ControlMode.CAT
+                        || GeneralVariables.controlMode == ControlMode.RTS
+                        || GeneralVariables.controlMode == ControlMode.DTR)
+                        && baseRig != null) {
+                    baseRig.setPTT(false);
+                }
+                if (needControlSco()) startSco();
             }
 
             @Override
@@ -516,20 +611,6 @@ public class MainViewModel extends ViewModel {
 
             @Override
             public void onAfterTransmit(Ft8Message message, int functionOder) {
-                boolean controlledByHamlib = FeatureAppGraph.from(GeneralVariables.getMainContext())
-                        .getRadioTransmitBridge().requestPtt(false);
-                if (controlledByHamlib) {
-                    if (needControlSco()) startSco();
-                }
-                if (GeneralVariables.controlMode == ControlMode.CAT
-                        || GeneralVariables.controlMode == ControlMode.RTS
-                        || GeneralVariables.controlMode == ControlMode.DTR) {
-                    if (!controlledByHamlib && baseRig != null) {
-                        baseRig.setPTT(false);
-                        if (needControlSco()) startSco();
-                    }
-                }
-
                 if (GeneralVariables.isExperimentalCodecEnabled()
                         && GeneralVariables.getOperatingProfile()
                             == GeneralVariables.OPERATING_PROFILE_NORMAL
@@ -561,7 +642,7 @@ public class MainViewModel extends ViewModel {
                 if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
                     if (baseRig != null) {
                         if (baseRig.isConnected()) {
-                            sendWaveDataThreadPool.execute(new SendWaveDataRunnable(baseRig, msg));
+                            submitWaveData(baseRig, msg);
                         }
                     }
                 }
@@ -583,7 +664,7 @@ public class MainViewModel extends ViewModel {
                 if (!supportTransmitOverCAT()) {
                     return;
                 }
-                sendWaveDataThreadPool.execute(new SendWaveDataRunnable(baseRig, msg));
+                submitWaveData(baseRig, msg);
             }
 
         }, new OnTransmitSuccess() {
@@ -591,17 +672,18 @@ public class MainViewModel extends ViewModel {
             public void doAfterTransmit(QSLRecord qslRecord) {
                 databaseOpr.addQSL_Callsign(qslRecord);
 
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
+                try {
+                    thirdPartyUploadThreadPool.execute(() -> {
                         if (GeneralVariables.enableCloudlog) {
                             ThirdPartyService.UploadToCloudLog(qslRecord);
                         }
                         if (GeneralVariables.enableQRZ) {
                             ThirdPartyService.UploadToQRZ(qslRecord);
                         }
-                    }
-                }).start();
+                    });
+                } catch (RejectedExecutionException rejected) {
+                    Log.w(TAG, "Third-party log upload queue is full");
+                }
 
                 if (qslRecord.getToCallsign() != null) {
                     GeneralVariables.callsignDatabase.getCallsignInformation(qslRecord.getToCallsign()
@@ -617,11 +699,21 @@ public class MainViewModel extends ViewModel {
             }
         });
 
-        httpServer = new LogHttpServer(this, LogHttpServer.DEFAULT_PORT);
-        try {
-            httpServer.start();
-        } catch (IOException e) {
-            Log.e(TAG, "http server error:" + e.getMessage());
+    }
+
+    /** 用户明确请求网页日志后才开放服务；LAN 模式每次启动都会生成新的访问令牌。 */
+    public synchronized String startLogHttpServer(boolean allowLan) throws IOException {
+        stopLogHttpServer();
+        LogHttpServer server = new LogHttpServer(this, LogHttpServer.DEFAULT_PORT, allowLan);
+        server.start();
+        httpServer = server;
+        return server.getAccessToken();
+    }
+
+    public synchronized void stopLogHttpServer() {
+        if (httpServer != null) {
+            httpServer.stop();
+            httpServer = null;
         }
     }
 
@@ -1289,6 +1381,17 @@ public class MainViewModel extends ViewModel {
         }
     }
 
+    private void submitWaveData(BaseRig rig, Ft8Message message) {
+        try {
+            sendWaveDataThreadPool.execute(new SendWaveDataRunnable(rig, message));
+        } catch (RejectedExecutionException rejected) {
+            Log.w(TAG, "CAT audio queue is full");
+            if (rig != null) {
+                rig.setPTT(false);
+            }
+        }
+    }
+
     public synchronized void releaseResources() {
         if (resourcesReleased) {
             return;
@@ -1297,10 +1400,10 @@ public class MainViewModel extends ViewModel {
         emeAssistController.releaseEmeTracking();
         GeneralVariables.mutableNtpConfigChanged.removeObserver(ntpConfigChangedObserver);
         if (utcTimer != null) {
-            utcTimer.stop();
+            utcTimer.destroy();
         }
         if (hamRecorder != null) {
-            hamRecorder.stopRecord();
+            hamRecorder.release();
         }
         if (spectrumListener != null) {
             spectrumListener.release();
@@ -1313,9 +1416,11 @@ public class MainViewModel extends ViewModel {
         }
         getQTHThreadPool.shutdownNow();
         sendWaveDataThreadPool.shutdownNow();
+        thirdPartyUploadThreadPool.shutdownNow();
         if (pskReporterSender != null) {
             pskReporterSender.stop();
         }
+        stopLogHttpServer();
     }
 
     @Override

@@ -2,62 +2,100 @@ package com.bg7yoz.ft8cn.core.radio
 
 import com.bg7yoz.ft8cn.ui.ToastMessage
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.io.Closeable
+import java.util.concurrent.TimeUnit
 
 /**
- * 将旧发射器的同步回调串行转发到统一 Hamlib 控制器。
- * 音频线程只投递命令，不直接执行 CAT I/O；watchdog 覆盖最长 300 秒 Q65 周期。
+ * 将旧同步发射回调接入统一 radio transaction。
+ * 方法只有在 CAT/PTT 已执行并读回后才返回成功，不再把“命令入队”当作成功。
  */
 class RadioTransmitBridge(
     private val controller: RadioController,
+    private val coordinator: RadioTransactionCoordinator,
     private val scope: CoroutineScope,
-) {
-    private val commands = Channel<Boolean>(Channel.UNLIMITED)
-    private var watchdog: Job? = null
-    @Volatile private var requestedPtt = false
-    @Volatile private var ownsPtt = false
+) : Closeable {
+    private val leaseLock = Any()
+    private var activeLease: TransmitLease? = null
 
-    init {
-        scope.launch {
-            for (enabled in commands) {
-                val result = controller.setPtt(enabled)
-                if (result.isSuccess) {
-                    ownsPtt = enabled
-                } else if (!enabled) {
-                    ownsPtt = false
-                }
-                if (result.isFailure) {
-                    controller.emergencyStop()
-                    ToastMessage.show("Hamlib PTT 失败：${result.exceptionOrNull()?.message}")
-                }
-                updateWatchdog(enabled && result.isSuccess)
+    fun beginTransmit(
+        plan: FrequencyPlan,
+        watchdogMillis: Long,
+        txDelayMillis: Long,
+    ): Boolean = synchronized(leaseLock) {
+        if (activeLease != null || !controller.state.value.connected) return@synchronized false
+        coordinator.arm()
+        val result = runBlocking(Dispatchers.IO) {
+            coordinator.beginTransmit(plan, watchdogMillis, txDelayMillis)
+        }
+        result.onSuccess { activeLease = it }.onFailure {
+            ToastMessage.show("Hamlib 发射准备失败：${it.message}")
+        }
+        result.isSuccess
+    }
+
+    /** 等待 PTT lead time，并在音频启动前再次确认 PTT 与 generation。 */
+    fun awaitAudioReady(): Boolean {
+        val lease = synchronized(leaseLock) { activeLease } ?: return false
+        val elapsedNanos = System.nanoTime() - lease.pttConfirmedAtNanos
+        val remainingNanos = TimeUnit.MILLISECONDS.toNanos(lease.txDelayMillis) - elapsedNanos
+        if (remainingNanos > 0L) {
+            try {
+                TimeUnit.NANOSECONDS.sleep(remainingNanos)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                abortTransmit("等待 PTT lead time 时取消")
+                return false
             }
         }
-    }
-
-    /** 返回 false 表示 Hamlib 未接管本次操作，调用方可以进入旧设备兼容回退。 */
-    fun requestPtt(enabled: Boolean): Boolean {
-        if (enabled) {
-            if (!controller.state.value.connected) return false
-            val accepted = commands.trySend(true).isSuccess
-            if (accepted) requestedPtt = true
-            return accepted
+        val result = runBlocking(Dispatchers.IO) { coordinator.markAudioActive(lease) }
+        if (result.isFailure) {
+            abortTransmit("音频启动前 PTT 复核失败")
+            ToastMessage.show("Hamlib PTT 复核失败：${result.exceptionOrNull()?.message}")
         }
-
-        // 即使 CAT 已断开，也必须由同一桥尝试撤销先前接管的 PTT，不能落入另一套协议。
-        val hadOwnership = requestedPtt || ownsPtt
-        requestedPtt = false
-        if (!hadOwnership && !controller.state.value.connected) return false
-        return commands.trySend(false).isSuccess
+        return result.isSuccess
     }
 
-    /** 浮动频率表和旧操作页统一转发到当前 Hamlib 后端，未连接时由旧电台链路回退。 */
+    fun finishTransmit(reason: String = "发射完成"): Boolean {
+        val lease = synchronized(leaseLock) { activeLease } ?: return false
+        val result = runBlocking(Dispatchers.IO) { coordinator.endTransmit(lease, reason) }
+        synchronized(leaseLock) {
+            if (activeLease?.id == lease.id) activeLease = null
+        }
+        result.onFailure { ToastMessage.show("Hamlib PTT 撤销失败：${it.message}") }
+        return result.isSuccess
+    }
+
+    fun abortTransmit(reason: String): Boolean {
+        val result = runBlocking(Dispatchers.IO) { coordinator.stopAll(reason) }
+        synchronized(leaseLock) { activeLease = null }
+        result.onFailure { ToastMessage.show("Hamlib 紧急停止失败：${it.message}") }
+        return result.isSuccess
+    }
+
+    /** 旧调用兼容入口；新发射代码应使用 begin/awaitAudioReady/finish 三段式事务。 */
+    fun requestPtt(enabled: Boolean): Boolean {
+        if (!enabled) return finishTransmit()
+        val state = controller.state.value
+        if (!state.connected || state.rxFrequencyHz <= 0L) return false
+        return beginTransmit(
+            FrequencyPlan(
+                rxDialFrequencyHz = state.rxFrequencyHz,
+                txRfFrequencyHz = state.rxFrequencyHz,
+                strategy = SplitStrategy.NONE,
+                requestedAudioOffsetHz = 0,
+            ),
+            watchdogMillis = DEFAULT_WATCHDOG_MILLIS,
+            txDelayMillis = 0L,
+        )
+    }
+
+    /** 非发射调频仍在有界应用作用域执行，失败会给出可见错误。 */
     fun requestFrequency(rxFrequencyHz: Long, txFrequencyHz: Long = rxFrequencyHz): Boolean {
         if (!controller.state.value.connected || rxFrequencyHz <= 0L || txFrequencyHz <= 0L) return false
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             controller.setFrequency(rxFrequencyHz, txFrequencyHz).onFailure {
                 ToastMessage.show("Hamlib 调频失败：${it.message}")
             }
@@ -65,26 +103,13 @@ class RadioTransmitBridge(
         return true
     }
 
-    fun emergencyStop() {
-        requestedPtt = false
-        ownsPtt = false
-        watchdog?.cancel()
-        watchdog = null
-        scope.launch { controller.emergencyStop() }
-    }
+    fun emergencyStop(): Boolean = abortTransmit("紧急停止")
 
-    private fun updateWatchdog(enabled: Boolean) {
-        watchdog?.cancel()
-        watchdog = null
-        if (!enabled) return
-        watchdog = scope.launch {
-            delay(MAXIMUM_PTT_MILLIS)
-            controller.emergencyStop()
-            ToastMessage.show("PTT watchdog 已强制停止超时发射")
-        }
+    override fun close() {
+        abortTransmit("发射桥关闭")
     }
 
     private companion object {
-        const val MAXIMUM_PTT_MILLIS = 310_000L
+        const val DEFAULT_WATCHDOG_MILLIS = 30_000L
     }
 }

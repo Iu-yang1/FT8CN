@@ -17,6 +17,7 @@ import com.bg7yoz.ft8cn.core.radio.NativeHamlibRadioController
 import com.bg7yoz.ft8cn.core.radio.RigctldProfile
 import com.bg7yoz.ft8cn.core.radio.RigctldRadioController
 import com.bg7yoz.ft8cn.core.radio.RadioTransmitBridge
+import com.bg7yoz.ft8cn.core.radio.RadioTransactionCoordinator
 import com.bg7yoz.ft8cn.core.radio.SelectableHamlibRadioController
 import com.bg7yoz.ft8cn.satellite.CelesTrakCatalogClient
 import com.bg7yoz.ft8cn.satellite.RoomSatelliteCatalogRepository
@@ -100,8 +101,11 @@ class FeatureAppGraph private constructor(context: Context) {
             rigctldController = rigctld,
         )
     }
+    val radioTransactionCoordinator: RadioTransactionCoordinator by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        RadioTransactionCoordinator(radioController)
+    }
     val radioTransmitBridge: RadioTransmitBridge by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        RadioTransmitBridge(radioController, applicationScope)
+        RadioTransmitBridge(radioController, radioTransactionCoordinator, applicationScope)
     }
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String, fallback: T): T =
