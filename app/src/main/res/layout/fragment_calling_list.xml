@@ -116,6 +116,30 @@
                 tools:text="解码用时1.4秒" />
         </androidx.constraintlayout.widget.ConstraintLayout>
 
+        <TextView
+            android:id="@+id/operatingModeTextView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/editor_layout_style"
+            android:gravity="center_vertical"
+            android:maxLines="2"
+            android:minHeight="32dp"
+            android:paddingStart="10dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="5dp"
+            android:textColor="@color/text_view_color"
+            android:textSize="11sp"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/calling_list_tools_bar"
+            tools:text="Q65 EME · Q65A/60s · 当前 RX1 / TX2 · Doppler 未启用"
+            tools:visibility="visible" />
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/calling_list_recyclerView"
             android:layout_width="0dp"
@@ -139,7 +163,7 @@
             android:background="@drawable/editor_layout_style"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/calling_list_tools_bar">
+            app:layout_constraintTop_toBottomOf="@+id/operatingModeTextView">
 
             <TextView
                 android:id="@+id/decoder_counter_textView"

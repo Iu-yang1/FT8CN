@@ -14,6 +14,7 @@ import com.bg7yoz.ft8cn.callsign.CallsignDatabase;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
+import com.bg7yoz.ft8cn.eme.EmeAssistState;
 import com.bg7yoz.ft8cn.ft8transmit.QslRecordList;
 import com.bg7yoz.ft8cn.html.HtmlContext;
 import com.bg7yoz.ft8cn.rigs.BaseRigOperation;
@@ -69,6 +70,7 @@ public class GeneralVariables {
     public static int wsjtxDecodeSensitivity = WSJTX_SENSITIVITY_NORMAL;
     public static boolean wsjtxEnableEarlyDecode = true;
     public static boolean wsjtxWidebandDxSearch = true;
+    public static boolean enableLiveDecoderInputDump = false;
     // Experimental modem modes for 4FSK/CPFSK bring-up.
     public static final int EXP_CODEC_MODE_OFF = 0;
     public static final int EXP_CODEC_MODE_4FSK = 1;
@@ -83,12 +85,24 @@ public class GeneralVariables {
      * 1 = FT4
      */
     public static int signalMode = FT8Common.FT8_MODE;
+    public static int q65Submode = FT8Common.Q65_SUBMODE_A;
+    public static int q65TrPeriodSeconds = FT8Common.Q65_DEFAULT_TR_PERIOD_SECONDS;
+
+    public static final int OPERATING_PROFILE_NORMAL = 0;
+    public static final int OPERATING_PROFILE_Q65_EME = 1;
+    public static final int OPERATING_PROFILE_SATELLITE_FT4 = 2;
+    private static volatile int operatingProfile = OPERATING_PROFILE_NORMAL;
+    private static volatile String operatingTrackingStatus = "";
 
     /**
      * 模式切换 LiveData
      */
     public static MutableLiveData<Integer> mutableSignalMode =
             new MutableLiveData<>(FT8Common.FT8_MODE);
+    public static MutableLiveData<Integer> mutableOperatingProfile =
+            new MutableLiveData<>(OPERATING_PROFILE_NORMAL);
+    public static MutableLiveData<String> mutableOperatingTrackingStatus =
+            new MutableLiveData<>("");
 
     public static boolean audioOutput32Bit = true;
     public static int audioSampleRate = 12000;
@@ -170,7 +184,7 @@ public class GeneralVariables {
      * 最近一次同步结果
      */
     public static int lastNtpOffset = 0;          // 真实 offset(ms)
-    public static int lastNtpAlignedOffset = 0;   // 内部对齐后 offset(ms)
+    public static int lastNtpAlignedOffset = 0;   // 兼容旧配置；新时间纪律校准后固定为 0
     public static long lastNtpDelay = -1;         // round-trip delay(ms)
     public static long lastNtpSyncTime = 0;       // 本地同步完成时间戳
 
@@ -265,6 +279,8 @@ public class GeneralVariables {
     public static String myCallsign = "";
     public static String toModifier = "";
     private static float baseFrequency = 1000;
+    private static float qsoFrequency = 1000;
+    private static float transmitFrequency = 1000;
 
     public static boolean simpleCallItemMode = false;
 
@@ -324,6 +340,17 @@ public class GeneralVariables {
     public static int dxpeditionFoxSlotStepHz = 60;
     public static boolean dxpeditionFoxAutoSpecialMessage = true;
     public static boolean dxpeditionFoxCqOnFreeSlot = true;
+    public static boolean emeAssistEnabled = false;
+    public static EmeAssistState.Mode emeApplyMode = EmeAssistState.Mode.DISPLAY_ONLY;
+    public static boolean emeUseCurrentRigFrequency = true;
+    public static long emeBaseFrequencyHz = 0L;
+    public static double emeMaxCorrectionHz = 5000.0;
+    public static int emeUpdateIntervalSeconds = 10;
+    public static double emeMinElevationDeg = 0.0;
+    public static boolean emeAllowCorrectionWhileTransmitting = false;
+    public static boolean emeRestoreFrequencyOnDisable = false;
+    public static EmeAssistState.CorrectionDirectionMode emeCorrectionDirectionMode =
+            EmeAssistState.CorrectionDirectionMode.RX_CORRECTION;
     public static String manualDxpeditionMacroCustom1 = "{DXCALL} RR73";
     public static String manualDxpeditionMacroCustom2 = "{DXCALL} {MYCALL} {RPT}";
     public static ArrayList<String> QSL_Callsign_list = new ArrayList<>();
@@ -350,13 +377,34 @@ public class GeneralVariables {
     public static void setBaseFrequency(float baseFrequency) {
         mutableBaseFrequency.postValue(baseFrequency);
         GeneralVariables.baseFrequency = baseFrequency;
+        GeneralVariables.qsoFrequency = baseFrequency;
+        GeneralVariables.transmitFrequency = baseFrequency;
+    }
+
+    /**
+     * 多槽或 split 发射只改变 TX 声频，QSO 跟踪窗口仍保留在接收目标上。
+     */
+    public static void setRuntimeTransmitFrequency(float transmitFrequency) {
+        mutableBaseFrequency.postValue(transmitFrequency);
+        GeneralVariables.baseFrequency = transmitFrequency;
+        GeneralVariables.transmitFrequency = transmitFrequency;
+    }
+
+    public static float getQsoFrequency() {
+        return qsoFrequency;
+    }
+
+    public static float getTransmitFrequency() {
+        return transmitFrequency;
     }
 
     /**
      * 设置当前模式
      */
     public static void setSignalMode(int mode) {
-        if (mode != FT8Common.FT8_MODE && mode != FT8Common.FT4_MODE) {
+        if (mode != FT8Common.FT8_MODE
+                && mode != FT8Common.FT4_MODE
+                && mode != FT8Common.Q65_MODE) {
             return;
         }
         signalMode = mode;
@@ -383,6 +431,67 @@ public class GeneralVariables {
      */
     public static boolean isFt4Mode() {
         return signalMode == FT8Common.FT4_MODE;
+    }
+
+    public static boolean isQ65Mode() {
+        return signalMode == FT8Common.Q65_MODE;
+    }
+
+    public static synchronized void setOperatingProfile(int profile) {
+        if (profile != OPERATING_PROFILE_NORMAL
+                && profile != OPERATING_PROFILE_Q65_EME
+                && profile != OPERATING_PROFILE_SATELLITE_FT4) {
+            return;
+        }
+        operatingProfile = profile;
+        if (profile == OPERATING_PROFILE_NORMAL) {
+            setOperatingTrackingStatus("");
+        }
+        mutableOperatingProfile.postValue(profile);
+    }
+
+    public static int getOperatingProfile() {
+        return operatingProfile;
+    }
+
+    public static boolean isEmeOperatingProfile() {
+        return operatingProfile == OPERATING_PROFILE_Q65_EME;
+    }
+
+    public static boolean isSatelliteOperatingProfile() {
+        return operatingProfile == OPERATING_PROFILE_SATELLITE_FT4;
+    }
+
+    public static void setOperatingTrackingStatus(String status) {
+        operatingTrackingStatus = status == null ? "" : status.trim();
+        mutableOperatingTrackingStatus.postValue(operatingTrackingStatus);
+    }
+
+    public static String getOperatingTrackingStatus() {
+        return operatingTrackingStatus;
+    }
+
+    public static int getQ65Submode() {
+        return FT8Common.normalizeQ65Submode(q65Submode);
+    }
+
+    public static int getQ65TrPeriodSeconds() {
+        return FT8Common.normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds);
+    }
+
+    public static boolean setQ65Configuration(int submode, int trPeriodSeconds) {
+        if (submode < FT8Common.Q65_SUBMODE_A || submode > FT8Common.Q65_SUBMODE_E) {
+            throw new IllegalArgumentException("正式 Q65 子模式仅支持 A-E");
+        }
+        int requiredTrPeriod = FT8Common.requireQ65TrPeriodSeconds(trPeriodSeconds);
+        boolean changed = submode != q65Submode || requiredTrPeriod != q65TrPeriodSeconds;
+        q65Submode = submode;
+        q65TrPeriodSeconds = requiredTrPeriod;
+        if (changed && signalMode == FT8Common.Q65_MODE) {
+            mutableSignalMode.postValue(signalMode);
+            mutableSignalModeChanged.postValue(signalMode);
+        }
+        return changed;
     }
 
     /**
@@ -937,9 +1046,9 @@ public class GeneralVariables {
      * @return File结构的文件
      */
     public static File getTempFile(Context context, String prefix, String suffix) {
-        File tempDir = context.getExternalCacheDir();
-        if (tempDir == null) {
-            Log.e(TAG, "创建临时文件出错！无法获取临时目录");
+        File tempDir = new File(context.getCacheDir(), "exports");
+        if ((!tempDir.exists() && !tempDir.mkdirs()) || !tempDir.isDirectory()) {
+            Log.e(TAG, "创建临时文件出错！无法创建导出目录");
             return null;
         }
 

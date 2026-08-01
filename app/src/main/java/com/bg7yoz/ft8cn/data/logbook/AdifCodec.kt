@@ -1,0 +1,360 @@
+package com.bg7yoz.ft8cn.data.logbook
+
+import com.bg7yoz.ft8cn.core.model.FtxMode
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.security.MessageDigest
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+data class ParsedAdif(
+    val header: Map<String, String>,
+    val records: List<Map<String, String>>,
+    val warnings: List<String>,
+)
+
+data class AdifImportResult(
+    val records: List<QsoRecord>,
+    val rejectedRecords: Int,
+    val warnings: List<String>,
+)
+
+/**
+ * ADIF 3.1.5 的有界 ADI 编解码器。导出始终使用标准模式映射：
+ * FT8 为 MODE=FT8，FT4/Q65 为 MODE=MFSK 加对应 SUBMODE。
+ */
+object AdifCodec {
+    const val ADIF_VERSION = "3.1.5"
+    const val MAX_INPUT_CHARACTERS = 32 * 1024 * 1024
+    const val MAX_RECORDS = 200_000
+    private const val MAX_FIELD_CHARACTERS = 1_048_576
+    private const val MAX_WARNINGS = 100
+
+    private val dateFormatter = DateTimeFormatter.ofPattern("yyyyMMdd", Locale.US)
+    private val timeFormatter = DateTimeFormatter.ofPattern("HHmmss", Locale.US)
+
+    fun parse(text: String): ParsedAdif {
+        require(text.length <= MAX_INPUT_CHARACTERS) { "ADIF 文件超过 32 MiB 字符上限" }
+        val header = linkedMapOf<String, String>()
+        val records = mutableListOf<Map<String, String>>()
+        val warnings = mutableListOf<String>()
+        var current = linkedMapOf<String, String>()
+        var cursor = 0
+        var inHeader = true
+
+        fun warn(message: String) {
+            if (warnings.size < MAX_WARNINGS) warnings += message
+        }
+
+        while (cursor < text.length) {
+            val tagStart = text.indexOf('<', cursor)
+            if (tagStart < 0) break
+            val tagEnd = text.indexOf('>', tagStart + 1)
+            if (tagEnd < 0) {
+                warn("位置 $tagStart 的字段标签未闭合")
+                break
+            }
+            val tag = text.substring(tagStart + 1, tagEnd).trim()
+            val parts = tag.split(':', limit = 3)
+            val name = parts.firstOrNull()?.trim()?.uppercase(Locale.US).orEmpty()
+            cursor = tagEnd + 1
+
+            when (name) {
+                "EOH" -> {
+                    header.putAll(current)
+                    current = linkedMapOf()
+                    inHeader = false
+                    continue
+                }
+                "EOR" -> {
+                    if (current.isNotEmpty()) {
+                        require(records.size < MAX_RECORDS) { "ADIF 记录数超过 $MAX_RECORDS 上限" }
+                        records += current.toMap()
+                    }
+                    current = linkedMapOf()
+                    inHeader = false
+                    continue
+                }
+            }
+
+            if (!name.matches(Regex("[A-Z][A-Z0-9_.]*")) || parts.size < 2) {
+                warn("忽略无效字段标签 <$tag>")
+                continue
+            }
+            val length = parts[1].trim().toIntOrNull()
+            if (length == null || length !in 0..MAX_FIELD_CHARACTERS) {
+                warn("字段 $name 的长度无效")
+                continue
+            }
+            val valueEnd = runCatching { text.offsetByCodePoints(cursor, length) }.getOrNull()
+            if (valueEnd == null || valueEnd > text.length) {
+                warn("字段 $name 的值短于声明长度 $length")
+                break
+            }
+            current[name] = text.substring(cursor, valueEnd)
+            cursor = valueEnd
+        }
+
+        if (current.isNotEmpty()) {
+            if (inHeader && records.isEmpty()) {
+                warn("ADIF 缺少 <EOH>/<EOR>，未将尾部内容当作 QSO")
+            } else {
+                warn("最后一条记录缺少 <EOR>，已按完整字段导入")
+                records += current.toMap()
+            }
+        }
+        return ParsedAdif(header, records, warnings)
+    }
+
+    fun import(text: String): AdifImportResult {
+        val parsed = parse(text)
+        val warnings = parsed.warnings.toMutableList()
+        val imported = mutableListOf<QsoRecord>()
+        var rejected = 0
+        parsed.records.forEachIndexed { index, fields ->
+            val result = runCatching { fieldsToQso(fields) }
+            val record = result.getOrNull()
+            if (record == null) {
+                rejected++
+                if (warnings.size < MAX_WARNINGS) {
+                    warnings += "第 ${index + 1} 条 QSO 被拒绝：${result.exceptionOrNull()?.message ?: "字段不完整"}"
+                }
+            } else {
+                imported += record
+            }
+        }
+        return AdifImportResult(imported, rejected, warnings)
+    }
+
+    fun export(records: Collection<QsoRecord>): String = buildString {
+        writeHeader(this)
+        records.sortedWith(compareBy<QsoRecord> { it.startedUtcMillis }.thenBy { it.stableId }).forEach { record ->
+            writeRecord(this, record)
+        }
+    }
+
+    /** 将固定 ADIF 头写入目标，供大日志分页导出时复用。 */
+    fun writeHeader(output: Appendable) {
+        output.append("Generated by FT8CN\r\n")
+        output.appendField("ADIF_VER", ADIF_VERSION)
+        output.appendField("PROGRAMID", "FT8CN")
+        output.append("<EOH>\r\n")
+    }
+
+    /** 单条写出，不创建完整日志副本；调用方负责按稳定顺序分页。 */
+    fun writeRecord(output: Appendable, record: QsoRecord) {
+        output.appendQso(record)
+        output.append("<EOR>\r\n")
+    }
+
+    fun fieldsToQso(fields: Map<String, String>): QsoRecord {
+        val normalized = fields.mapKeys { it.key.uppercase(Locale.US) }
+        val dxCall = normalized["CALL"].orEmpty().trim().uppercase(Locale.US)
+        require(isValidCallsign(dxCall)) { "CALL 无效" }
+        val stationCall = (normalized["STATION_CALLSIGN"] ?: normalized["OPERATOR"])
+            .orEmpty().trim().uppercase(Locale.US)
+        require(stationCall.isEmpty() || isValidCallsign(stationCall)) { "STATION_CALLSIGN 无效" }
+        val mode = decodeMode(normalized["MODE"], normalized["SUBMODE"])
+        val started = parseUtc(normalized["QSO_DATE"], normalized["TIME_ON"])
+        val ended = runCatching {
+            parseUtc(normalized["QSO_DATE_OFF"] ?: normalized["QSO_DATE"], normalized["TIME_OFF"])
+        }.getOrDefault(started)
+        val frequencyHz = parseFrequencyHz(normalized["FREQ"], normalized["BAND"])
+        val propagation = normalized["PROP_MODE"]?.trim()?.uppercase(Locale.US)?.ifEmpty { null }
+        val satelliteName = normalized["SAT_NAME"]?.trim()?.uppercase(Locale.US)?.ifEmpty { null }
+        require(propagation != "SAT" || satelliteName != null) { "卫星 QSO 缺少 SAT_NAME" }
+        val canonicalSubmode = when (mode) {
+            FtxMode.FT8 -> null
+            FtxMode.FT4 -> "FT4"
+            FtxMode.Q65 -> "Q65"
+        }
+        val stableId = QsoStableId.create(
+            started,
+            mode,
+            stationCall,
+            dxCall,
+            frequencyHz,
+            propagation,
+            satelliteName,
+        )
+        return QsoRecord(
+            stableId = stableId,
+            startedUtcMillis = started,
+            endedUtcMillis = ended.coerceAtLeast(started),
+            mode = mode,
+            stationCall = stationCall,
+            stationGrid = normalized["MY_GRIDSQUARE"].orEmpty().trim().uppercase(Locale.US),
+            dxCall = dxCall,
+            dxGrid = normalized["GRIDSQUARE"].orEmpty().trim().uppercase(Locale.US),
+            frequencyHz = frequencyHz,
+            reportSent = normalized["RST_SENT"].orEmpty().trim(),
+            reportReceived = normalized["RST_RCVD"].orEmpty().trim(),
+            submode = canonicalSubmode,
+            propagationMode = propagation,
+            satelliteName = satelliteName,
+            satelliteMode = normalized["SAT_MODE"]?.trim()?.uppercase(Locale.US)?.ifEmpty { null },
+            lotwStatus = if (normalized["LOTW_QSL_RCVD"]?.equals("Y", ignoreCase = true) == true) {
+                LotwStatus.CONFIRMED
+            } else {
+                LotwStatus.LOCAL
+            },
+            updatedUtcMillis = System.currentTimeMillis(),
+        )
+    }
+
+    private fun Appendable.appendQso(record: QsoRecord) {
+        val started = Instant.ofEpochMilli(record.startedUtcMillis).atOffset(ZoneOffset.UTC)
+        val ended = Instant.ofEpochMilli(record.endedUtcMillis).atOffset(ZoneOffset.UTC)
+        appendField("CALL", record.dxCall.uppercase(Locale.US))
+        appendField("QSO_DATE", dateFormatter.format(started))
+        appendField("TIME_ON", timeFormatter.format(started))
+        appendField("QSO_DATE_OFF", dateFormatter.format(ended))
+        appendField("TIME_OFF", timeFormatter.format(ended))
+        appendField("BAND", BandPlan.bandFor(record.frequencyHz))
+        appendField("FREQ", formatFrequencyMhz(record.frequencyHz))
+        when (record.mode) {
+            FtxMode.FT8 -> appendField("MODE", "FT8")
+            FtxMode.FT4 -> {
+                appendField("MODE", "MFSK")
+                appendField("SUBMODE", "FT4")
+            }
+            FtxMode.Q65 -> {
+                appendField("MODE", "MFSK")
+                appendField("SUBMODE", "Q65")
+            }
+        }
+        appendOptionalField("RST_SENT", record.reportSent)
+        appendOptionalField("RST_RCVD", record.reportReceived)
+        appendOptionalField("STATION_CALLSIGN", record.stationCall.uppercase(Locale.US))
+        appendOptionalField("MY_GRIDSQUARE", record.stationGrid.uppercase(Locale.US))
+        appendOptionalField("GRIDSQUARE", record.dxGrid.uppercase(Locale.US))
+        appendOptionalField("PROP_MODE", record.propagationMode?.uppercase(Locale.US))
+        appendOptionalField("SAT_NAME", record.satelliteName?.uppercase(Locale.US))
+        appendOptionalField("SAT_MODE", record.satelliteMode?.uppercase(Locale.US))
+    }
+
+    private fun Appendable.appendOptionalField(name: String, value: String?) {
+        if (!value.isNullOrBlank()) appendField(name, value)
+    }
+
+    private fun Appendable.appendField(name: String, value: String) {
+        require(value.none { it == '\r' || it == '\n' }) { "$name 不允许包含换行" }
+        require(value.all { it.code in 32..126 }) { "$name 在 ADI 中必须为 ASCII" }
+        append('<').append(name).append(':')
+            .append(value.codePointCount(0, value.length).toString())
+            .append('>')
+        append(value)
+    }
+
+    private fun parseUtc(date: String?, time: String?): Long {
+        val normalizedDate = requireNotNull(date).trim()
+        var normalizedTime = requireNotNull(time).trim()
+        require(normalizedTime.length == 4 || normalizedTime.length == 6) { "TIME_ON 长度无效" }
+        if (normalizedTime.length == 4) normalizedTime += "00"
+        val dateTime = LocalDateTime.parse(normalizedDate + normalizedTime, DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+        return dateTime.toInstant(ZoneOffset.UTC).toEpochMilli()
+    }
+
+    private fun parseFrequencyHz(freq: String?, band: String?): Long {
+        if (!freq.isNullOrBlank()) {
+            val hz = freq.trim().toBigDecimal().multiply(BigDecimal.valueOf(1_000_000L))
+            return hz.setScale(0, RoundingMode.HALF_UP).longValueExact().also { require(it > 0) }
+        }
+        return BandPlan.centerFrequency(requireNotNull(band).trim())
+    }
+
+    private fun decodeMode(mode: String?, submode: String?): FtxMode {
+        val main = requireNotNull(mode).trim().uppercase(Locale.US)
+        val sub = submode?.trim()?.uppercase(Locale.US)
+        return when {
+            main == "FT8" -> FtxMode.FT8
+            main == "MFSK" && sub == "FT4" -> FtxMode.FT4
+            main == "MFSK" && sub == "Q65" -> FtxMode.Q65
+            // 兼容导入旧日志；导出仍严格使用 ADIF 3.1.5 标准模式映射。
+            main == "FT4" -> FtxMode.FT4
+            main == "Q65" -> FtxMode.Q65
+            else -> error("不支持的 MODE/SUBMODE：$main/${sub.orEmpty()}")
+        }
+    }
+
+    private fun formatFrequencyMhz(frequencyHz: Long): String = BigDecimal.valueOf(frequencyHz)
+        .divide(BigDecimal.valueOf(1_000_000L), 6, RoundingMode.HALF_UP)
+        .stripTrailingZeros()
+        .toPlainString()
+
+    private fun isValidCallsign(value: String): Boolean =
+        value.length in 3..20 && value.any(Char::isLetter) && value.any(Char::isDigit) &&
+            value.matches(Regex("[A-Z0-9]+(?:/[A-Z0-9]+)*")) && !value.startsWith('0')
+}
+
+object QsoStableId {
+    fun create(
+        startedUtcMillis: Long,
+        mode: FtxMode,
+        stationCall: String,
+        dxCall: String,
+        frequencyHz: Long,
+        propagationMode: String?,
+        satelliteName: String?,
+    ): String {
+        val canonical = listOf(
+            startedUtcMillis.toString(),
+            mode.name,
+            stationCall.trim().uppercase(Locale.US),
+            dxCall.trim().uppercase(Locale.US),
+            frequencyHz.toString(),
+            propagationMode.orEmpty().trim().uppercase(Locale.US),
+            satelliteName.orEmpty().trim().uppercase(Locale.US),
+        ).joinToString("|")
+        return MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
+    }
+}
+
+private object BandPlan {
+    private data class Band(val name: String, val lowHz: Long, val highHz: Long, val centerHz: Long)
+
+    private val bands = listOf(
+        Band("2190m", 135_700, 137_800, 136_750),
+        Band("630m", 472_000, 479_000, 475_500),
+        Band("560m", 501_000, 504_000, 502_500),
+        Band("160m", 1_800_000, 2_000_000, 1_900_000),
+        Band("80m", 3_500_000, 4_000_000, 3_750_000),
+        Band("60m", 5_060_000, 5_450_000, 5_357_000),
+        Band("40m", 7_000_000, 7_300_000, 7_150_000),
+        Band("30m", 10_100_000, 10_150_000, 10_125_000),
+        Band("20m", 14_000_000, 14_350_000, 14_175_000),
+        Band("17m", 18_068_000, 18_168_000, 18_118_000),
+        Band("15m", 21_000_000, 21_450_000, 21_225_000),
+        Band("12m", 24_890_000, 24_990_000, 24_940_000),
+        Band("10m", 28_000_000, 29_700_000, 28_850_000),
+        Band("8m", 40_000_000, 45_000_000, 42_500_000),
+        Band("6m", 50_000_000, 54_000_000, 52_000_000),
+        Band("5m", 54_000_000, 69_900_000, 60_000_000),
+        Band("4m", 70_000_000, 71_000_000, 70_500_000),
+        Band("2m", 144_000_000, 148_000_000, 146_000_000),
+        Band("1.25m", 222_000_000, 225_000_000, 223_500_000),
+        Band("70cm", 420_000_000, 450_000_000, 435_000_000),
+        Band("33cm", 902_000_000, 928_000_000, 915_000_000),
+        Band("23cm", 1_240_000_000, 1_300_000_000, 1_270_000_000),
+        Band("13cm", 2_300_000_000, 2_450_000_000, 2_400_000_000),
+        Band("9cm", 3_300_000_000, 3_500_000_000, 3_400_000_000),
+        Band("6cm", 5_650_000_000, 5_925_000_000, 5_760_000_000),
+        Band("3cm", 10_000_000_000, 10_500_000_000, 10_368_000_000),
+        Band("1.25cm", 24_000_000_000, 24_250_000_000, 24_048_000_000),
+        Band("6mm", 47_000_000_000, 47_200_000_000, 47_088_000_000),
+        Band("4mm", 75_500_000_000, 81_500_000_000, 76_032_000_000),
+        Band("2.5mm", 122_250_000_000, 123_000_000_000, 122_400_000_000),
+        Band("2mm", 134_000_000_000, 141_000_000_000, 134_930_000_000),
+        Band("1mm", 241_000_000_000, 250_000_000_000, 241_920_000_000),
+    )
+
+    fun bandFor(frequencyHz: Long): String = bands.firstOrNull { frequencyHz in it.lowHz..it.highHz }?.name
+        ?: error("频率 $frequencyHz Hz 不在 ADIF 业余频段表内")
+
+    fun centerFrequency(name: String): Long = bands.firstOrNull { it.name.equals(name, ignoreCase = true) }?.centerHz
+        ?: error("不支持的 ADIF BAND：$name")
+}

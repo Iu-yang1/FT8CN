@@ -444,7 +444,6 @@ public class ConfigFragment extends Fragment {
                 startActivity(intent);
             }
         });
-
         //梅登海德网格
         binding.inputMyGridEdit.removeTextChangedListener(onGridEditorChanged);
         binding.inputMyGridEdit.setText(GeneralVariables.getMyMaidenheadGrid());

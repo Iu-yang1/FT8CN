@@ -5,7 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FT8_SMOKE_MAX_SAMPLES 200000
+#define FT8_SMOKE_MAX_SAMPLES 3600000
+#define WSJTX3_MODE_FT8 0
+#define WSJTX3_MODE_FT4 1
+#define WSJTX3_MODE_Q65 2
 
 static int read_env_int(const char *name, int fallback) {
     const char *value = getenv(name);
@@ -44,7 +47,7 @@ static long long hhmmss_to_utc_millis(int hhmmss) {
 
 static int run_sample(const char *label,
                       const char *wav_path,
-                      int is_ft8,
+                      int mode,
                       int hhmmss,
                       const char *my_call,
                       const char *his_call,
@@ -77,7 +80,7 @@ static int run_sample(const char *label,
 
     fprintf(stderr, "%s: loaded rate=%d samples=%d path=%s\n", label, sample_rate, sample_count, wav_path);
 
-    handle = wsjtx3_bridge_create(is_ft8,
+    handle = wsjtx3_bridge_create(mode,
                                   sample_rate,
                                   sample_count,
                                   hhmmss_to_utc_millis(hhmmss));
@@ -146,22 +149,26 @@ int main(void) {
     int ldpc_iterations = read_env_int("FT8CN_SMOKE_LDPC", 20);
     int run_ft8 = read_env_int("FT8CN_SMOKE_RUN_FT8", 1);
     int run_ft4 = read_env_int("FT8CN_SMOKE_RUN_FT4", 1);
+    int run_q65 = read_env_int("FT8CN_SMOKE_RUN_Q65", 0);
     int ft8_hhmmss = read_env_int("FT8CN_SMOKE_FT8_HHMMSS", 133430);
     int ft4_hhmmss = read_env_int("FT8CN_SMOKE_FT4_HHMMSS", 2);
+    int q65_hhmmss = read_env_int("FT8CN_SMOKE_Q65_HHMMSS", 1621);
     const char *my_call = read_env_string("FT8CN_SMOKE_MY_CALL", "BG5JSU");
     const char *his_call = read_env_string("FT8CN_SMOKE_HIS_CALL", "");
     const char *his_grid = read_env_string("FT8CN_SMOKE_HIS_GRID", "");
     const char *ft8_sample_path = read_env_string("FT8CN_SMOKE_FT8_PATH",
-                                                  "H:/iu_yang1/study/FT8CN/ft8cn/.tmp_wsjtx/samples/FT8/210703_133430.wav");
+                                                  ".tmp_wsjtx/samples/FT8/210703_133430.wav");
     const char *ft4_sample_path = read_env_string("FT8CN_SMOKE_FT4_PATH",
-                                                  "H:/iu_yang1/study/FT8CN/ft8cn/.tmp_wsjtx/samples/FT4/000000_000002.wav");
+                                                  ".tmp_wsjtx/samples/FT4/000000_000002.wav");
+    const char *q65_sample_path = read_env_string("FT8CN_SMOKE_Q65_PATH",
+                                                  ".tmp_wsjtx/samples/Q65/60A_EME_6m/210106_1621.wav");
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
 
     if (run_ft8) {
         if (run_sample("FT8",
                        ft8_sample_path,
-                       1,
+                       WSJTX3_MODE_FT8,
                        ft8_hhmmss,
                        my_call,
                        his_call,
@@ -180,8 +187,27 @@ int main(void) {
     if (run_ft4) {
         if (run_sample("FT4",
                        ft4_sample_path,
-                       0,
+                       WSJTX3_MODE_FT4,
                        ft4_hhmmss,
+                       my_call,
+                       his_call,
+                       his_grid,
+                       decode_pass_count,
+                       multi_decode_round_count,
+                       decode_sensitivity,
+                       qso_sensitivity,
+                       enable_early_decode,
+                       enable_wideband_dx_search,
+                       ldpc_iterations) != 0) {
+            status = 1;
+        }
+    }
+
+    if (run_q65) {
+        if (run_sample("Q65",
+                       q65_sample_path,
+                       WSJTX3_MODE_Q65,
+                       q65_hhmmss,
                        my_call,
                        his_call,
                        his_grid,

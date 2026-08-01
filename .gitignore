@@ -1,5 +1,60 @@
+# Gradle / Android Studio
+/.gradle/
+/.gradle-local/
+/.idea/
+/local.properties
+/release-signing.properties
+*.jks
+*.keystore
+**/.cxx/
+**/build/
+**/out/
+**/build-*/
+**/out-*/
+/app/build/
+/app/src/androidTest/assets/corpus/
 
-ft8CN/app/.gitignore 2
-ft8CN/.gitignore 2
-.FT8CN软件设计初衷及使用说明0.88版.pdf.icloud
-ft8CN/app/src/main/assets/.nightUSGS4Layer.sqlite.icloud
+# Native toolchain outputs
+*.o
+*.obj
+*.mod
+*.smod
+*.a
+*.so
+*.dll
+*.exe
+*.apk
+*.aab
+*.map
+*.profraw
+*.profdata
+
+# Logs, probes and local diagnostics
+*.log
+*.tmp
+*.trace
+/.tmp_*/
+/tmp_*/
+/.tmp_*
+/avemsg.txt
+/red.dat
+/@*
+
+# Codex and upstream inspection workspaces
+**/.tmp_wsjtx_lib_inspect/
+**/.tmp_ft8cn_*/
+**/.codex-tmp/
+**/.upstream-inspect/
+**/.apk-inspect/
+**/.elf-inspect/
+
+# Local analysis output
+**/.sanitizer-output/
+**/.benchmark-raw/
+**/.python-env/
+
+# IDE / OS metadata
+*.icloud
+.DS_Store
+Thumbs.db
+desktop.ini

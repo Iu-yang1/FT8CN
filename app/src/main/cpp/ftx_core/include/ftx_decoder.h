@@ -18,7 +18,17 @@ typedef struct {
     int enable_wideband_dx_search;
     int ldpc_iterations;
     int deep_decode_enabled;
+    int q65_submode;
+    int q65_tr_period_seconds;
 } ftx_decoder_options_t;
+
+typedef struct {
+    int input_is_live;
+    int qso_frequency_hz;
+    int tx_frequency_hz;
+    int source_sample_rate;
+    int decode_stage;
+} ftx_decoder_input_context_t;
 
 ftx_decoder_t *ftx_decoder_create(
         ftx_mode_t mode,
@@ -32,6 +42,11 @@ void ftx_decoder_destroy(ftx_decoder_t *decoder);
 int ftx_decoder_set_options(
         ftx_decoder_t *decoder,
         const ftx_decoder_options_t *options
+);
+
+int ftx_decoder_set_input_context(
+        ftx_decoder_t *decoder,
+        const ftx_decoder_input_context_t *input_context
 );
 
 int ftx_decoder_set_ap_hints(
@@ -65,6 +80,18 @@ int ftx_decoder_get_last_bridge_raw_count(
 
 int ftx_decoder_get_last_merged_count(
         const ftx_decoder_t *decoder
+);
+
+int ftx_decoder_get_bridge_context_id(
+        const ftx_decoder_t *decoder
+);
+
+int ftx_decoder_reset_q65_averaging(ftx_decoder_t *decoder);
+
+int ftx_decoder_get_q65_averaging_state(
+        const ftx_decoder_t *decoder,
+        int *averaged_frame_count,
+        int *clear_pending
 );
 
 int ftx_decoder_get_result(

@@ -1,8 +1,8 @@
 package com.bg7yoz.ft8cn.diagnostics;
 
 /**
- * 调试用样本解码入口。
- * 仅负责把 WAV 路径交给 native 侧执行一次完整解码，并返回可读文本。
+ * Debug-only sample decode entry.
+ * It passes one WAV path to native code and returns a readable smoke-test report.
  */
 public final class NativeSampleDecode {
     static {
@@ -12,12 +12,17 @@ public final class NativeSampleDecode {
     private NativeSampleDecode() {
     }
 
+    public static native void configureRuntimeDirectories(String tempDir,
+                                                          String dataDir);
+
+    public static native int getFt8SyncThreadCount();
+
     public static native String inspectWavFile(String wavPath,
-                                               boolean isFt8,
+                                               int decodeMode,
                                                long utcTime);
 
     public static native String decodeWavFile(String wavPath,
-                                              boolean isFt8,
+                                              int decodeMode,
                                               long utcTime,
                                               String myCall,
                                               int decodePassCount,
@@ -26,5 +31,7 @@ public final class NativeSampleDecode {
                                               int decodeSensitivity,
                                               boolean enableEarlyDecode,
                                               boolean enableWidebandDxSearch,
-                                              boolean deepDecodeEnabled);
+                                              boolean deepDecodeEnabled,
+                                              int q65Submode,
+                                              int q65TrPeriodSeconds);
 }

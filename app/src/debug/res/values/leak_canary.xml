@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- LeakCanary 保留为按需诊断依赖，但不再自动监视并持续弹出内存通知。 -->
+    <bool name="leak_canary_watcher_auto_install">false</bool>
+    <bool name="leak_canary_plumber_auto_install">false</bool>
+    <bool name="leak_canary_add_dynamic_shortcut">false</bool>
+    <bool name="leak_canary_add_launcher_icon">false</bool>
+</resources>

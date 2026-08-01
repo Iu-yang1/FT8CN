@@ -4,9 +4,10 @@
 
 #include "ft8Encoder.h"
 
+#include <limits.h>
+
 //#define LOG_LEVEL LOG_INFO
 
-#define FT8_SYMBOL_BT 2.0f /// 符号平滑滤波器带宽因子（BT）
 #define FT4_SYMBOL_BT 1.0f /// 符号平滑滤波器带宽因子（BT）
 #define GFSK_CONST_K 5.336446f ///< 等于 pi * sqrt(2 / log(2))
 
@@ -42,9 +43,22 @@ void gfsk_pulse(int n_spsym, float symbol_bt, float *pulse) {
  * @param[in] signal_rate 合成信号的采样率，赫兹
  * @param[out] signal 信号波形样本的输出阵列（应为n_sym*n_spsym样本留出空间）
  */
-void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, float symbol_period,
-                int signal_rate, float *signal) {
-    int n_spsym = (int) (0.5f + (float)signal_rate * symbol_period); // 每个符号的样本数12000*0.16=1920
+int synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, float symbol_period,
+               int signal_rate, float *signal) {
+    if (symbols == NULL || signal == NULL || n_sym <= 0 || signal_rate <= 0 ||
+        !isfinite(f0) || !isfinite(symbol_bt) || !isfinite(symbol_period) ||
+        symbol_bt <= 0.0f || symbol_period <= 0.0f) {
+        return -1;
+    }
+
+    const double samples_per_symbol = (double) signal_rate * (double) symbol_period;
+    if (samples_per_symbol < 1.0 || samples_per_symbol > (double) INT_MAX) {
+        return -1;
+    }
+    int n_spsym = (int) (0.5 + samples_per_symbol); // 每个符号的样本数12000*0.16=1920
+    if (n_sym > INT_MAX / n_spsym || n_spsym > INT_MAX / 3) {
+        return -1;
+    }
     int n_wave = n_sym * n_spsym;                            // 输出样本数79*1920=151680
     float hmod = 1.0f;
 
@@ -59,7 +73,7 @@ void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, fl
         // 内存分配失败时记录详细错误信息
         LOG(LOG_ERROR, "synth_gfsk: Failed to allocate %zu bytes for dphi (n_wave=%d, n_spsym=%d)\n",
             sizeof(float) * (n_wave + 2 * n_spsym), n_wave, n_spsym);
-        return;
+        return -2;
     }
 
     // 频率上移f0
@@ -74,7 +88,7 @@ void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, fl
         LOG(LOG_ERROR, "synth_gfsk: Failed to allocate %zu bytes for pulse (n_spsym=%d)\n",
             sizeof(float) * 3 * n_spsym, n_spsym);
         free(dphi);
-        return;
+        return -2;
     }
 
     gfsk_pulse(n_spsym, symbol_bt, pulse);
@@ -107,25 +121,27 @@ void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt, fl
     // 清理资源：按分配的逆序释放
     free(pulse);
     free(dphi);
+    return n_wave;
 }
 
 //此代码已经弃用
-void generateFt8ToBuffer(char *message, float frequency, short *buffer) {
+int generateFt8ToBuffer(const char *message, float frequency, short *buffer) {
+    if (message == NULL || buffer == NULL || !isfinite(frequency)) {
+        return -1;
+    }
 // 首先，将文本数据打包为二进制消息
     uint8_t packed[FTX_LDPC_K_BYTES];//91位，包括CRC。
     int rc = pack77(message, packed);//生成数据
     if (rc < 0) {
         //LOGE("Cannot parse message!\n");
         //LOGE("RC = %d\n", rc);
-        return;
+        return -1;
     }
 
 
     //int num_tones = FT8_NN;//符号数量：FT8是79个，FT4是105个。
     //float symbol_period = FT8_SYMBOL_PERIOD;//FT8_SYMBOL_PERIOD=0.160f
     float symbol_bt = FT8_SYMBOL_BT;//FT8_SYMBOL_BT=2.0f
-    float slot_time = FT8_SLOT_TIME;//FT8_SLOT_TIME=15f
-
     // 其次，将二进制消息编码为FSK音调序列
     uint8_t tones[FT8_NN]; // 79音调（符号）数组
     ft8_encode(packed, tones);
@@ -139,17 +155,22 @@ void generateFt8ToBuffer(char *message, float frequency, short *buffer) {
     //int num_silence = (slot_time * sample_rate - num_samples) / 2;           // 两端填充静音到15秒（15*12000-num_samples）/2（1.18秒的样本数）
     int num_silence = 20;//把前面的静音时长缩短为20毫秒，留出时间给解码
     //int num_total_samples = num_silence + num_samples + num_silence;         // 填充信号中的样本数2.36秒+12.64秒=15秒的样本数
-    float signal[Ft8num_samples];
+    float *signal = (float *) calloc((size_t) Ft8num_samples, sizeof(float));
+    if (signal == NULL) {
+        return -2;
+    }
     //Ft8num_sampleFT8声音的总采样数，不是字节数。15*12000
-    for (int i = 0; i < Ft8num_samples; i++)//把数据全部静音。
-    {
-        signal[i] = 0;
-        //buffer[i + num_samples + num_silence] = 0;
+    if (num_silence > Ft8num_samples - num_samples) {
+        free(signal);
+        return -1;
     }
 
     // 合成波形数据（信号）并将其保存为WAV文件
-    synth_gfsk(tones, FT8_NN, frequency, symbol_bt, FT8_SYMBOL_PERIOD, FT8_SAMPLE_RATE,
-               signal + num_silence);
+    if (synth_gfsk(tones, FT8_NN, frequency, symbol_bt, FT8_SYMBOL_PERIOD, FT8_SAMPLE_RATE,
+                   signal + num_silence) != num_samples) {
+        free(signal);
+        return -2;
+    }
 
 
     for (int i = 0; i < Ft8num_samples; i++) {
@@ -161,8 +182,11 @@ void generateFt8ToBuffer(char *message, float frequency, short *buffer) {
         buffer[i] = (short) (0.5 + (x * 32767.0));
     }
 
+    free(signal);
+
 
     //save_wav(signal, num_total_samples, sample_rate, wav_path);
 
+    return Ft8num_samples;
 }
 

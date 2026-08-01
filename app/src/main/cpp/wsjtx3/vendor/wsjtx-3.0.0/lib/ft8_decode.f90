@@ -1,4 +1,5 @@
 module ft8_decode
+  use iso_c_binding, only: c_int, c_long_long
 
   parameter (MAXFOX=1000)
   character*12 c2fox(MAXFOX)
@@ -30,12 +31,56 @@ module ft8_decode
      end subroutine ft8_decode_callback
   end interface
 
+  interface
+     integer(c_int) function wsjtx3_phase_trace_is_enabled() bind(C, name="wsjtx3_phase_trace_is_enabled")
+       import :: c_int
+     end function wsjtx3_phase_trace_is_enabled
+
+     subroutine wsjtx3_vendor_trace_event(phase, pass_index, candidate_count, decoded_count, duration_us) &
+          bind(C, name="wsjtx3_vendor_trace_event")
+       import :: c_int, c_long_long
+       integer(c_int), value :: phase, pass_index, candidate_count, decoded_count
+       integer(c_long_long), value :: duration_us
+     end subroutine wsjtx3_vendor_trace_event
+
+     subroutine wsjtx3_ft8b_trace_reset(pass_index, candidate_count) bind(C, name="wsjtx3_ft8b_trace_reset")
+       import :: c_int
+       integer(c_int), value :: pass_index, candidate_count
+     end subroutine wsjtx3_ft8b_trace_reset
+
+     subroutine wsjtx3_ft8b_trace_flush(new_decode_count) bind(C, name="wsjtx3_ft8b_trace_flush")
+       import :: c_int
+       integer(c_int), value :: new_decode_count
+     end subroutine wsjtx3_ft8b_trace_flush
+  end interface
+
 contains
+
+  integer(c_long_long) function vendor_trace_now()
+    integer(c_long_long) :: count
+    if (wsjtx3_phase_trace_is_enabled() == 0) then
+       vendor_trace_now = 0
+       return
+    endif
+    call system_clock(count=count)
+    vendor_trace_now = count
+  end function vendor_trace_now
+
+  integer(c_long_long) function vendor_trace_elapsed_us(started_at)
+    integer(c_long_long), intent(in) :: started_at
+    integer(c_long_long) :: finished_at, count_rate
+    if (started_at <= 0) then
+       vendor_trace_elapsed_us = 0
+       return
+    endif
+    call system_clock(count=finished_at, count_rate=count_rate)
+    vendor_trace_elapsed_us = ((finished_at - started_at) * 1000000_c_long_long) / count_rate
+  end function vendor_trace_elapsed_us
 
   subroutine decode(this,callback,iwave,nQSOProgress,nfqso,nftx,newdat,  &
        nutc,nfa,nfb,nzhsym,ndepth,emedelay,ncontest,nagain,lft8apon,     &
        ltry_a8,lapcqonly,napwid,mycall12,hiscall12,hisgrid,ldiskdat)
-    use iso_c_binding, only: c_bool, c_int
+    use iso_c_binding, only: c_bool, c_int, c_long_long
     use timer_module, only: timer
     use shmem, only: shmem_lock, shmem_unlock
     use ft8_a7
@@ -63,6 +108,8 @@ contains
     character*37 allmessages(MAX_EARLY)
     character*12 ctime
     integer allsnrs(MAX_EARLY)
+    integer ndecoded_before_pass
+    integer(c_long_long) trace_pass_started, trace_phase_started
     integer itone(NN)
     integer itone_save(NN,MAX_EARLY)
     real f1_save(MAX_EARLY)
@@ -179,6 +226,8 @@ contains
     imetric=1
     if(ndepth.eq.1) npass=2
     do ipass=1,npass
+      ndecoded_before_pass=ndecodes
+      trace_pass_started=vendor_trace_now()
       newdat=.true.
       syncmin=1.3
       if(ndepth.le.2) syncmin=2.1
@@ -198,9 +247,14 @@ contains
         lsubtract=.true. 
       endif 
       call timer('sync8   ',0)
+      trace_phase_started=vendor_trace_now()
       maxc=MAXCAND
       call sync8(dd,NPTS,ifa,ifb,syncmin,nfqso,maxc,candidate,ncand,sbase)
       call timer('sync8   ',1)
+      call wsjtx3_vendor_trace_event(101_c_int, ipass, ncand, ndecodes-ndecoded_before_pass, &
+           vendor_trace_elapsed_us(trace_phase_started))
+      call wsjtx3_ft8b_trace_reset(ipass, ncand)
+      trace_phase_started=vendor_trace_now()
       do icand=1,ncand
         sync=candidate(3,icand)
         f1=candidate(1,icand)
@@ -243,6 +297,11 @@ contains
         if(.not.ldiskdat .and. nzhsym.eq.41 .and.                        &
              tseq.ge.13.4d0) go to 800                 !Bail out before done
       enddo  ! icand
+      call wsjtx3_vendor_trace_event(102_c_int, ipass, ncand, ndecodes-ndecoded_before_pass, &
+           vendor_trace_elapsed_us(trace_phase_started))
+      call wsjtx3_ft8b_trace_flush(ndecodes-ndecoded_before_pass)
+      call wsjtx3_vendor_trace_event(103_c_int, ipass, ncand, ndecodes-ndecoded_before_pass, &
+           vendor_trace_elapsed_us(trace_pass_started))
    enddo  ! ipass
 
 800 ndec_early=0

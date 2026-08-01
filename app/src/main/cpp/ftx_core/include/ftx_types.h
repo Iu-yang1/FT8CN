@@ -23,7 +23,8 @@ extern "C" {
 
 typedef enum {
     FTX_MODE_FT8 = 0,
-    FTX_MODE_FT4 = 1
+    FTX_MODE_FT4 = 1,
+    FTX_MODE_Q65 = 2
 } ftx_mode_t;
 
 #ifdef __cplusplus

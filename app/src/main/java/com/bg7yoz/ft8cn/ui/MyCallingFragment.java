@@ -1,7 +1,7 @@
 package com.bg7yoz.ft8cn.ui;
 /**
- * 呼叫界面。
- * 支持 FT8 / FT4 模式切换。
+ * My calling list screen.
+ * Handles FT8 / FT4 / Q65 transmit targets and quick actions.
  *
  * @author BGY70Z
  * @date 2023-03-20
@@ -26,6 +26,7 @@ import android.view.ViewGroup;
 import android.view.animation.AnimationUtils;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -50,7 +51,15 @@ import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.MainViewModel;
 import com.bg7yoz.ft8cn.R;
 import com.bg7yoz.ft8cn.cq.CqCallEntry;
+import com.bg7yoz.ft8cn.core.automation.Q65AutomationState;
 import com.bg7yoz.ft8cn.databinding.FragmentMyCallingBinding;
+import com.bg7yoz.ft8cn.eme.EmeAssistState;
+import com.bg7yoz.ft8cn.eme.EmeRigControlAdapter;
+import com.bg7yoz.ft8cn.eme.EmeTrackingEnvironment;
+import com.bg7yoz.ft8cn.eme.EmeTrackingPolicy;
+import com.bg7yoz.ft8cn.eme.EmeTrackingResult;
+import com.bg7yoz.ft8cn.eme.ui.DopplerCorrectionView;
+import com.bg7yoz.ft8cn.eme.ui.MoonSkyView;
 import com.bg7yoz.ft8cn.ft8transmit.DxpeditionFoxSlotFrequencyConfig;
 import com.bg7yoz.ft8cn.ft8transmit.DxpeditionMacroSupport;
 import com.bg7yoz.ft8cn.ft8transmit.FunctionOfTransmit;
@@ -58,7 +67,9 @@ import com.bg7yoz.ft8cn.ft8transmit.GenerateFT8;
 import com.bg7yoz.ft8cn.ft8transmit.TransmitCallsign;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.Locale;
 
 public class MyCallingFragment extends Fragment {
     private static final String TAG = "MyCallingFragment";
@@ -70,22 +81,502 @@ public class MyCallingFragment extends Fragment {
     private CqQueueAdapter cqQueueAdapter;
     private FunctionOrderSpinnerAdapter functionOrderSpinnerAdapter;
     private boolean updatingDxpeditionModeUi = false;
+    private boolean updatingSignalModeUi = false;
+    private AlertDialog emeTrackingDialog;
+    private boolean emeTrackingDialogAlive = false;
+    private Runnable emeTrackingPanelRefreshAction;
+
+    private static final class FragmentSafeEmeTrackingEnvironment implements EmeTrackingEnvironment {
+        private final WeakReference<MainViewModel> viewModelRef;
+
+        private FragmentSafeEmeTrackingEnvironment(MainViewModel mainViewModel) {
+            viewModelRef = new WeakReference<>(mainViewModel);
+        }
+
+        @Override
+        public String getObserverGrid() {
+            return GeneralVariables.getMyMaidenheadGrid();
+        }
+
+        @Override
+        public EmeRigControlAdapter getRigControlAdapter() {
+            MainViewModel viewModel = viewModelRef.get();
+            return new EmeRigControlAdapter(viewModel == null ? null : viewModel.baseRig);
+        }
+
+        @Override
+        public long getFallbackBaseFrequencyHz() {
+            MainViewModel viewModel = viewModelRef.get();
+            if (GeneralVariables.emeUseCurrentRigFrequency
+                    && viewModel != null
+                    && viewModel.baseRig != null
+                    && viewModel.baseRig.getFreq() > 0L) {
+                return viewModel.baseRig.getFreq();
+            }
+            if (!GeneralVariables.emeUseCurrentRigFrequency && GeneralVariables.emeBaseFrequencyHz > 0L) {
+                return GeneralVariables.emeBaseFrequencyHz;
+            }
+            return GeneralVariables.band;
+        }
+
+        @Override
+        public boolean hasAutoFrequencyConflict() {
+            return GeneralVariables.manualDxpeditionFoxMode
+                    || GeneralVariables.manualDxpeditionHoundMode
+                    || GeneralVariables.dxpeditionFoxManualSlotFrequency;
+        }
+
+        @Override
+        public String getAutoFrequencyConflictReason() {
+            if (GeneralVariables.manualDxpeditionFoxMode) {
+                return "dxpedition-fox-active";
+            }
+            if (GeneralVariables.manualDxpeditionHoundMode) {
+                return "dxpedition-hound-active";
+            }
+            if (GeneralVariables.dxpeditionFoxManualSlotFrequency) {
+                return "dxpedition-slot-frequency-active";
+            }
+            return "";
+        }
+    }
 
     private boolean isExperimentalManualTxMode() {
-        return GeneralVariables.isExperimentalCodecEnabled();
+        return GeneralVariables.isExperimentalCodecEnabled()
+                && GeneralVariables.getOperatingProfile() == GeneralVariables.OPERATING_PROFILE_NORMAL;
     }
 
     private String getCurrentModeLabel() {
         return GeneralVariables.getActiveModeLabel();
     }
 
+    private String getQ65ConfigLabel() {
+        return "Q65 "
+                + FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode())
+                + " · "
+                + GeneralVariables.getQ65TrPeriodSeconds()
+                + "s";
+    }
+
+    private void updateQ65ConfigUi() {
+        if (binding == null) {
+            return;
+        }
+        boolean emeMode = GeneralVariables.isEmeOperatingProfile();
+        binding.rbQ65.setText(emeMode ? getQ65ConfigLabel() : "Q65");
+        binding.rbQ65.setVisibility(emeMode ? View.VISIBLE : View.GONE);
+        binding.q65ConfigButton.setVisibility(emeMode ? View.VISIBLE : View.GONE);
+        binding.q65ConfigButton.setEnabled(false);
+        binding.q65ConfigButton.setText(getQ65ConfigLabel());
+    }
+
+    private String getDefaultQ65Message() {
+        return "CQ " + GeneralVariables.myCallsign + " " + GeneralVariables.getMyMaidenhead4Grid();
+    }
+
+    /** 在解码、呼叫两页统一显示当前业务模式、T/R 序列和 Doppler 状态。 */
+    private void updateOperatingModeUi() {
+        if (binding == null) {
+            return;
+        }
+        int profile = GeneralVariables.getOperatingProfile();
+        if (profile == GeneralVariables.OPERATING_PROFILE_NORMAL) {
+            binding.operatingModeTextView.setVisibility(View.GONE);
+            return;
+        }
+
+        int mode = profile == GeneralVariables.OPERATING_PROFILE_Q65_EME
+                ? FT8Common.Q65_MODE : FT8Common.FT4_MODE;
+        int currentSequence = UtcTimer.getNowSequential(FT8Common.getSlotTimeM(mode));
+        int txSequence = mainViewModel == null || mainViewModel.ft8TransmitSignal == null
+                ? 0 : mainViewModel.ft8TransmitSignal.sequential;
+        if (mode == FT8Common.Q65_MODE && mainViewModel != null
+                && mainViewModel.ft8TransmitSignal != null) {
+            Q65AutomationState state = mainViewModel.ft8TransmitSignal
+                    .getQ65AutomationState().getValue();
+            if (state != null) {
+                txSequence = state.getTxSequence();
+            }
+        }
+        boolean txSlot = mainViewModel != null && mainViewModel.ft8TransmitSignal != null
+                && mainViewModel.ft8TransmitSignal.isActivated()
+                && currentSequence == txSequence;
+        String tracking = GeneralVariables.getOperatingTrackingStatus();
+        if (tracking == null || tracking.trim().isEmpty()) {
+            tracking = "Doppler 未启用";
+        }
+        String sequenceText = "计划 TX" + (txSequence + 1)
+                + " · 当前 " + (txSlot ? "TX" : "RX") + (currentSequence + 1);
+        if (profile == GeneralVariables.OPERATING_PROFILE_Q65_EME) {
+            binding.operatingModeTextView.setText("Q65 EME · " + getQ65ConfigLabel()
+                    + " · " + sequenceText + " · " + tracking);
+        } else {
+            binding.operatingModeTextView.setText("卫星 · FT4 · " + sequenceText
+                    + " · 定向 CQ 已暂停 · " + tracking);
+        }
+        binding.operatingModeTextView.setVisibility(View.VISIBLE);
+    }
+
+    private void updateEmeAssistButtonUi() {
+        if (binding == null) {
+            return;
+        }
+        binding.emeAssistButton.setVisibility(View.GONE);
+        EmeTrackingResult result = mainViewModel == null || mainViewModel.emeAssistController == null
+                ? null
+                : mainViewModel.emeAssistController.getTrackingResult();
+        String status = result == null ? "OFF" : result.status.name();
+        if (!GeneralVariables.emeAssistEnabled && (result == null || !mainViewModel.emeAssistController.isTrackingActive())) {
+            status = "OFF";
+        }
+        binding.emeAssistButton.setText(getString(R.string.eme_tracking_entry, status));
+        binding.emeAssistButton.setAlpha(GeneralVariables.emeAssistEnabled ? 1.0f : 0.72f);
+    }
+
+    private void restartForModeRuntimeChange() {
+        if (mainViewModel.ft8SignalListener != null) {
+            mainViewModel.ft8SignalListener.restartByCurrentMode();
+        }
+        if (mainViewModel.ft8TransmitSignal != null) {
+            mainViewModel.ft8TransmitSignal.restartByCurrentMode();
+            mainViewModel.ft8TransmitSignal.setActivated(false);
+            mainViewModel.ft8TransmitSignal.setTransmitting(false);
+            mainViewModel.ft8TransmitSignal.resetToCQ();
+        }
+        mainViewModel.clearTransmittingMessage();
+    }
+
+    private void applyQ65Configuration(int submode, int trPeriodSeconds) {
+        String nextLabel = FT8Common.getQ65ModeLabel(submode, trPeriodSeconds);
+        boolean changed = GeneralVariables.setQ65Configuration(submode, trPeriodSeconds);
+        updateQ65ConfigUi();
+        if (!changed) {
+            return;
+        }
+
+        if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+            restartForModeRuntimeChange();
+            updateSignalModeUI();
+            ToastMessage.show(getString(R.string.q65_config_applied, nextLabel));
+            return;
+        }
+
+        ToastMessage.show(getString(R.string.q65_config_saved, nextLabel));
+    }
+
+    private void showQ65ConfigDialog() {
+        if (getContext() == null) {
+            return;
+        }
+
+        ArrayList<String> submodeLabels = new ArrayList<>();
+        for (String label : FT8Common.Q65_SUBMODE_LABELS) {
+            submodeLabels.add("Q65" + label);
+        }
+        ArrayList<String> periodLabels = new ArrayList<>();
+        for (int period : FT8Common.Q65_SUPPORTED_TR_PERIODS) {
+            periodLabels.add(period + "s");
+        }
+
+        LinearLayout root = new LinearLayout(requireContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        int padding = Math.round(getResources().getDisplayMetrics().density * 20.0f);
+        root.setPadding(padding, padding, padding, padding / 2);
+
+        TextView submodeTitle = new TextView(requireContext());
+        submodeTitle.setText(R.string.q65_config_submode);
+        root.addView(submodeTitle);
+
+        Spinner submodeSpinner = new Spinner(requireContext());
+        submodeSpinner.setAdapter(new ArrayAdapter<>(
+                requireContext(),
+                android.R.layout.simple_spinner_dropdown_item,
+                submodeLabels
+        ));
+        submodeSpinner.setSelection(GeneralVariables.getQ65Submode());
+        root.addView(submodeSpinner);
+
+        TextView periodTitle = new TextView(requireContext());
+        periodTitle.setText(R.string.q65_config_tr_period);
+        periodTitle.setPadding(0, padding / 2, 0, 0);
+        root.addView(periodTitle);
+
+        Spinner periodSpinner = new Spinner(requireContext());
+        periodSpinner.setAdapter(new ArrayAdapter<>(
+                requireContext(),
+                android.R.layout.simple_spinner_dropdown_item,
+                periodLabels
+        ));
+        int selectedPeriodIndex = 0;
+        for (int index = 0; index < FT8Common.Q65_SUPPORTED_TR_PERIODS.length; ++index) {
+            if (FT8Common.Q65_SUPPORTED_TR_PERIODS[index] == GeneralVariables.getQ65TrPeriodSeconds()) {
+                selectedPeriodIndex = index;
+                break;
+            }
+        }
+        periodSpinner.setSelection(selectedPeriodIndex);
+        root.addView(periodSpinner);
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.q65_config_title)
+                .setView(root)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    int selectedSubmode = submodeSpinner.getSelectedItemPosition();
+                    int selectedTrPeriod = FT8Common.Q65_SUPPORTED_TR_PERIODS[
+                            Math.max(0, Math.min(periodSpinner.getSelectedItemPosition(),
+                                    FT8Common.Q65_SUPPORTED_TR_PERIODS.length - 1))
+                            ];
+                    applyQ65Configuration(selectedSubmode, selectedTrPeriod);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private long getEmeSourceFrequencyHz() {
+        if (GeneralVariables.emeUseCurrentRigFrequency
+                && mainViewModel != null
+                && mainViewModel.baseRig != null
+                && mainViewModel.baseRig.getFreq() > 0L) {
+            return mainViewModel.baseRig.getFreq();
+        }
+        if (!GeneralVariables.emeUseCurrentRigFrequency && GeneralVariables.emeBaseFrequencyHz > 0L) {
+            return GeneralVariables.emeBaseFrequencyHz;
+        }
+        return GeneralVariables.band;
+    }
+
+    private double parseDoubleOrDefault(String value, double defaultValue) {
+        try {
+            return Double.parseDouble(value);
+        } catch (Exception e) {
+            return defaultValue;
+        }
+    }
+
+    private void writeEmeConfig(String key, String value) {
+        if (mainViewModel == null || mainViewModel.databaseOpr == null) {
+            return;
+        }
+        mainViewModel.databaseOpr.writeConfig(key, value, null);
+    }
+
+    private EmeAssistState updateEmePreview(boolean enabled, EmeAssistState.Mode mode) {
+        return mainViewModel.emeAssistController.updateCorrectionPreview(
+                GeneralVariables.getMyMaidenheadGrid(),
+                getEmeSourceFrequencyHz(),
+                UtcTimer.getSystemTime(),
+                enabled,
+                mode,
+                GeneralVariables.emeCorrectionDirectionMode,
+                GeneralVariables.emeMaxCorrectionHz,
+                GeneralVariables.emeMinElevationDeg);
+    }
+
+    private EmeTrackingPolicy buildEmeTrackingPolicy(boolean enabled) {
+        return new EmeTrackingPolicy(
+                enabled,
+                GeneralVariables.emeUseCurrentRigFrequency,
+                GeneralVariables.emeBaseFrequencyHz,
+                GeneralVariables.emeMaxCorrectionHz,
+                GeneralVariables.emeUpdateIntervalSeconds,
+                GeneralVariables.emeMinElevationDeg,
+                GeneralVariables.emeAllowCorrectionWhileTransmitting,
+                GeneralVariables.emeRestoreFrequencyOnDisable,
+                GeneralVariables.emeCorrectionDirectionMode);
+    }
+
+    private EmeTrackingEnvironment buildEmeTrackingEnvironment() {
+        return new FragmentSafeEmeTrackingEnvironment(mainViewModel);
+    }
+
+    private void detachEmeTrackingPanel(String reason) {
+        Log.i(TAG, "detach EME tracking panel: reason=" + reason);
+        emeTrackingDialogAlive = false;
+        emeTrackingPanelRefreshAction = null;
+    }
+
+    private void saveEmeTrackingConfig() {
+        writeEmeConfig("emeAssistEnabled", GeneralVariables.emeAssistEnabled ? "1" : "0");
+        writeEmeConfig("emeUseCurrentRigFrequency", GeneralVariables.emeUseCurrentRigFrequency ? "1" : "0");
+        writeEmeConfig("emeMaxCorrectionHz", String.format(Locale.US, "%.1f", GeneralVariables.emeMaxCorrectionHz));
+        writeEmeConfig("emeMinElevationDeg", String.format(Locale.US, "%.1f", GeneralVariables.emeMinElevationDeg));
+        writeEmeConfig("emeUpdateIntervalSeconds", String.valueOf(GeneralVariables.emeUpdateIntervalSeconds));
+        writeEmeConfig("emeAllowCorrectionWhileTransmitting",
+                GeneralVariables.emeAllowCorrectionWhileTransmitting ? "1" : "0");
+        writeEmeConfig("emeApplyMode", EmeAssistState.Mode.CAT_TRACKING.name());
+    }
+
+    private void showEmeAssistDialog() {
+        if (getContext() == null || mainViewModel == null || mainViewModel.emeAssistController == null) {
+            return;
+        }
+        Log.i(TAG, "open EME tracking dialog: orientation="
+                + getResources().getConfiguration().orientation
+                + " trackingActive="
+                + mainViewModel.emeAssistController.isTrackingActive());
+        if (emeTrackingDialog != null && emeTrackingDialog.isShowing()) {
+            emeTrackingDialog.dismiss();
+        }
+        View panelView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_eme_tracking, null);
+        TextView headerView = panelView.findViewById(R.id.emeTrackingHeaderTextView);
+        MoonSkyView moonSkyView = panelView.findViewById(R.id.emeMoonSkyView);
+        DopplerCorrectionView dopplerCorrectionView = panelView.findViewById(R.id.emeDopplerCorrectionView);
+        TextView statusView = panelView.findViewById(R.id.emeTrackingStatusTextView);
+        CheckBox useCurrentRigFrequencyCheckBox =
+                panelView.findViewById(R.id.emeUseCurrentRigFrequencyCheckBox);
+        useCurrentRigFrequencyCheckBox.setChecked(GeneralVariables.emeUseCurrentRigFrequency);
+        CheckBox allowTxCorrectionCheckBox =
+                panelView.findViewById(R.id.emeAllowTxCorrectionCheckBox);
+        allowTxCorrectionCheckBox.setChecked(GeneralVariables.emeAllowCorrectionWhileTransmitting);
+        EditText maxCorrectionEditor = panelView.findViewById(R.id.emeMaxCorrectionEditText);
+        maxCorrectionEditor.setText(String.format(Locale.US, "%.0f", GeneralVariables.emeMaxCorrectionHz));
+        EditText minElevationEditor = panelView.findViewById(R.id.emeMinElevationEditText);
+        minElevationEditor.setText(String.format(Locale.US, "%.1f", GeneralVariables.emeMinElevationDeg));
+        EditText updateIntervalEditor = panelView.findViewById(R.id.emeUpdateIntervalEditText);
+        updateIntervalEditor.setText(String.valueOf(GeneralVariables.emeUpdateIntervalSeconds));
+
+        Runnable applyEditors = () -> {
+            GeneralVariables.emeApplyMode = EmeAssistState.Mode.CAT_TRACKING;
+            GeneralVariables.emeUseCurrentRigFrequency = useCurrentRigFrequencyCheckBox.isChecked();
+            GeneralVariables.emeAllowCorrectionWhileTransmitting = allowTxCorrectionCheckBox.isChecked();
+            GeneralVariables.emeMaxCorrectionHz = Math.max(0.0, parseDoubleOrDefault(
+                    maxCorrectionEditor.getText().toString(),
+                    GeneralVariables.emeMaxCorrectionHz));
+            GeneralVariables.emeMinElevationDeg = parseDoubleOrDefault(
+                    minElevationEditor.getText().toString(),
+                    GeneralVariables.emeMinElevationDeg);
+            try {
+                GeneralVariables.emeUpdateIntervalSeconds = Math.max(1, Math.min(
+                        Integer.parseInt(updateIntervalEditor.getText().toString()),
+                        60));
+            } catch (Exception e) {
+                GeneralVariables.emeUpdateIntervalSeconds = 10;
+            }
+        };
+
+        Runnable refreshPanel = () -> {
+            if (!isAdded()
+                    || getView() == null
+                    || binding == null
+                    || emeTrackingDialog == null
+                    || !emeTrackingDialog.isShowing()
+                    || !emeTrackingDialogAlive) {
+                Log.i(TAG, "skip EME tracking UI update: reason=ui-detached");
+                return;
+            }
+            EmeTrackingResult result = mainViewModel.emeAssistController.getTrackingResult();
+            EmeAssistState emeState = mainViewModel.emeAssistController.updateCorrectionPreview(
+                    GeneralVariables.getMyMaidenheadGrid(),
+                    getEmeSourceFrequencyHz(),
+                    UtcTimer.getSystemTime(),
+                    GeneralVariables.emeAssistEnabled,
+                    EmeAssistState.Mode.CAT_TRACKING,
+                    GeneralVariables.emeCorrectionDirectionMode,
+                    GeneralVariables.emeMaxCorrectionHz,
+                    GeneralVariables.emeMinElevationDeg);
+            headerView.setText(getString(
+                    R.string.eme_tracking_header,
+                    result.status.name(),
+                    GeneralVariables.getActiveModeLabel()));
+            if (emeState.moonEphemeris != null) {
+                moonSkyView.setMoonPosition(
+                        emeState.moonEphemeris.azimuthDeg,
+                        emeState.moonEphemeris.elevationDeg);
+            }
+            double selectedCorrection = result.selectedCorrectionHz;
+            if (selectedCorrection == 0.0 && emeState.sourceFrequencyHz > 0L) {
+                selectedCorrection = emeState.targetFrequencyHz - emeState.sourceFrequencyHz;
+            }
+            double lastAppliedCorrection = emeState.lastAppliedRigFrequencyHz > 0L && emeState.sourceFrequencyHz > 0L
+                    ? emeState.lastAppliedRigFrequencyHz - emeState.sourceFrequencyHz
+                    : 0.0;
+            dopplerCorrectionView.setCorrections(
+                    GeneralVariables.emeMaxCorrectionHz,
+                    emeState.lastDopplerHz,
+                    emeState.lastTxDopplerHz,
+                    selectedCorrection,
+                    lastAppliedCorrection,
+                    Math.abs(result.rawCorrectionHz) > GeneralVariables.emeMaxCorrectionHz);
+            statusView.setText(String.format(
+                    Locale.US,
+                    "Rig: %s  connected=%s\nFrequency: %d -> %d Hz  source=%s\nCorrection: raw %.1f Hz selected %.1f Hz limit %.0f Hz\nMoon: Az %.1f El %.1f rangeRate %.2f m/s\nUpdate interval: %ds\nLast CAT: %s\nReason: %s",
+                    result.rigName,
+                    result.rigConnected ? "yes" : "no",
+                    result.currentFrequencyHz > 0L ? result.currentFrequencyHz : emeState.sourceFrequencyHz,
+                    result.targetFrequencyHz > 0L ? result.targetFrequencyHz : emeState.targetFrequencyHz,
+                    result.frequencySource,
+                    result.rawCorrectionHz,
+                    selectedCorrection,
+                    GeneralVariables.emeMaxCorrectionHz,
+                    emeState.moonEphemeris == null ? Double.NaN : emeState.moonEphemeris.azimuthDeg,
+                    emeState.moonEphemeris == null ? Double.NaN : emeState.moonEphemeris.elevationDeg,
+                    emeState.moonEphemeris == null ? Double.NaN : emeState.moonEphemeris.rangeRateMps,
+                    GeneralVariables.emeUpdateIntervalSeconds,
+                    result.catResult == null ? "-" : result.catResult.toSummary(),
+                    result.reason));
+            updateEmeAssistButtonUi();
+            updateAutoSessionStatus();
+        };
+        emeTrackingPanelRefreshAction = refreshPanel;
+
+        AlertDialog dialog = new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.eme_tracking_title)
+                .setView(panelView)
+                .setPositiveButton(R.string.eme_tracking_start, null)
+                .setNegativeButton(R.string.eme_tracking_stop, null)
+                .setNeutralButton(R.string.eme_tracking_refresh, null)
+                .create();
+        emeTrackingDialog = dialog;
+        dialog.setOnDismissListener(dialogInterface -> {
+            Log.i(TAG, "EME tracking dialog dismissed");
+            detachEmeTrackingPanel("dialog-dismiss");
+        });
+        dialog.setOnShowListener(dialogInterface -> {
+            emeTrackingDialogAlive = true;
+            refreshPanel.run();
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                applyEditors.run();
+                GeneralVariables.emeAssistEnabled = true;
+                saveEmeTrackingConfig();
+                Log.i(TAG, "start EME tracking from dialog");
+                mainViewModel.emeAssistController.startEmeTracking(
+                        buildEmeTrackingEnvironment(),
+                        buildEmeTrackingPolicy(true));
+                refreshPanel.run();
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view -> {
+                GeneralVariables.emeAssistEnabled = false;
+                saveEmeTrackingConfig();
+                Log.i(TAG, "stop EME tracking from dialog");
+                mainViewModel.emeAssistController.stopEmeTracking("user-stopped");
+                refreshPanel.run();
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
+                applyEditors.run();
+                EmeAssistState preview = updateEmePreview(
+                        GeneralVariables.emeAssistEnabled,
+                        EmeAssistState.Mode.CAT_TRACKING);
+                Log.i(TAG, "EME tracking refresh: " + (preview == null ? "null" : preview.statusText));
+                refreshPanel.run();
+            });
+        });
+        dialog.show();
+    }
+
     private void updateDxpeditionManualUi() {
         if (binding == null) {
             return;
         }
+        boolean specialProfile = GeneralVariables.isEmeOperatingProfile()
+                || GeneralVariables.isSatelliteOperatingProfile();
         boolean enabled = !isExperimentalManualTxMode()
                 && !mainViewModel.getTransitIsFreeText()
-                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE;
+                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && !specialProfile;
+        int controlVisibility = specialProfile ? View.GONE : View.VISIBLE;
+        binding.dxpeditionManualCheckBox.setVisibility(controlVisibility);
+        binding.dxpeditionFoxCheckBox.setVisibility(controlVisibility);
+        binding.dxpeditionHelpButton.setVisibility(controlVisibility);
         binding.dxpeditionManualCheckBox.setEnabled(enabled);
         binding.dxpeditionFoxCheckBox.setEnabled(enabled);
         boolean foxSlotsEnabled = enabled && binding.dxpeditionFoxCheckBox.isChecked();
@@ -101,7 +592,8 @@ public class MyCallingFragment extends Fragment {
             }
             binding.dxpeditionTxSlotsButton.setText(slotsText);
         }
-        if (!enabled && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
+        if (!enabled && !specialProfile
+                && (binding.dxpeditionManualCheckBox.isChecked() || binding.dxpeditionFoxCheckBox.isChecked())) {
             applyManualDxpeditionMode(false, false, true);
         }
         binding.dxpeditionManualCheckBox.setAlpha(enabled ? 1.0f : 0.45f);
@@ -563,7 +1055,76 @@ public class MyCallingFragment extends Fragment {
             binding.autoSessionTextView.setText("");
             return;
         }
+        if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+            binding.autoSessionTextView.setMaxLines(5);
+            binding.autoSessionTextView.setText(buildQ65StatusText());
+            return;
+        }
+        binding.autoSessionTextView.setMaxLines(1);
         binding.autoSessionTextView.setText(mainViewModel.ft8TransmitSignal.getAutoSessionStatusText());
+    }
+
+    private String buildQ65StatusText() {
+        String rxSummary = mainViewModel.ft8SignalListener == null
+                ? ""
+                : mainViewModel.ft8SignalListener.getLastDecodeStatusSummary();
+        String txSummary = mainViewModel.ft8TransmitSignal == null
+                ? ""
+                : mainViewModel.ft8TransmitSignal.getLastTransmitStatusSummary();
+        String schedulerSummary = mainViewModel.ft8SignalListener == null
+                ? ""
+                : mainViewModel.ft8SignalListener.getDecodeSchedulerStatusSummary();
+        if (rxSummary == null || rxSummary.trim().length() == 0) {
+            rxSummary = "-";
+        }
+        if (txSummary == null || txSummary.trim().length() == 0) {
+            txSummary = "-";
+        }
+        if (schedulerSummary == null || schedulerSummary.trim().length() == 0) {
+            schedulerSummary = "-";
+        }
+        Q65AutomationState state = mainViewModel.ft8TransmitSignal == null
+                ? null : mainViewModel.ft8TransmitSignal.getQ65AutomationState().getValue();
+        String automation = state == null
+                ? "RECEIVE_ONLY"
+                : state.getPhase().name()
+                    + " · TX" + (state.getTxSequence() + 1)
+                    + (state.getRepeat() ? " · 重复" : " · 单次")
+                    + " · 已发 " + state.getTransmitCount();
+        return getString(
+                R.string.q65_status_line,
+                GeneralVariables.getActiveModeLabel(),
+                "on",
+                "on",
+                "off",
+                "yes")
+                + "\n"
+                + getString(R.string.q65_status_rx_line, rxSummary)
+                + "\n"
+                + getString(R.string.q65_status_tx_line, txSummary)
+                + "\n"
+                + getString(R.string.q65_status_eme_line, buildEmeAssistStatusText())
+                + "\n"
+                + getString(R.string.q65_status_scheduler_line, schedulerSummary)
+                + "\nAutomation: " + automation;
+    }
+
+    private String buildEmeAssistStatusText() {
+        if (mainViewModel == null || mainViewModel.emeAssistController == null) {
+            return "Tracking: unavailable";
+        }
+        EmeTrackingResult result = mainViewModel.emeAssistController.getTrackingResult();
+        return String.format(
+                Locale.US,
+                "Tracking %s Az %.1f El %.1f dR %.2fm/s RX %.1fHz TX %.1fHz target %dHz reason=%s",
+                result.status,
+                result.moonAzimuthDeg,
+                result.moonElevationDeg,
+                result.rangeRateMps,
+                result.rxDopplerHz,
+                result.txDopplerHz,
+                result.targetFrequencyHz,
+                result.reason);
     }
 
     private void initCqQueuePanel() {
@@ -609,7 +1170,8 @@ public class MyCallingFragment extends Fragment {
             return;
         }
         int count = entries == null ? 0 : entries.size();
-        boolean visible = GeneralVariables.cqQueueEnabled || count > 0;
+        boolean visible = !GeneralVariables.isEmeOperatingProfile()
+                && (GeneralVariables.cqQueueEnabled || count > 0);
         binding.cqQueuePanelLayout.setVisibility(visible ? View.VISIBLE : View.GONE);
         if (!visible) {
             return;
@@ -628,28 +1190,41 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * 马上对发起者呼叫
+     * Start an immediate follow-up call for the selected message.
      *
-     * @param message 消息
+     * @param message selected message
      */
     private void doCallNow(Ft8Message message) {
         mainViewModel.addFollowCallsign(message.getCallsignFrom());
+        if (GeneralVariables.isEmeOperatingProfile()
+                && GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+            if (!mainViewModel.ft8TransmitSignal.armQ65Reply(message, true)) {
+                ToastMessage.show("无法从该消息建立 Q65 回复序列");
+                return;
+            }
+            if (!GeneralVariables.transmitMessages.contains(message)) {
+                GeneralVariables.transmitMessages.add(message);
+            }
+            updateSignalModeUI();
+            GeneralVariables.resetLaunchSupervision();
+            return;
+        }
         if (!mainViewModel.ft8TransmitSignal.isActivated()) {
             mainViewModel.ft8TransmitSignal.setActivated(true);
-            GeneralVariables.transmitMessages.add(message);//把消息添加到关注列表中
+            GeneralVariables.transmitMessages.add(message);// keep it in the transmit list for later status display
         }
-        // 呼叫发起者
+        // Jump straight into the follow-up transmit flow.
         mainViewModel.ft8TransmitSignal.setTransmit(message.getFromCallTransmitCallsign(), 1, message.getAutoReplyExtraInfo());
         mainViewModel.ft8TransmitSignal.transmitNow();
 
-        GeneralVariables.resetLaunchSupervision();//复位自动监管
+        GeneralVariables.resetLaunchSupervision();// reset launch supervision state
     }
 
     /**
-     * 菜单选项
+     * Handle the context menu actions.
      *
-     * @param item 菜单
-     * @return 是否选择
+     * @param item selected menu item
+     * @return whether the event should continue to the parent handler
      */
     @Override
     public boolean onContextItemSelected(@NonNull MenuItem item) {
@@ -657,10 +1232,14 @@ public class MyCallingFragment extends Fragment {
         Ft8Message ft8Message = transmitCallListAdapter.getMessageByPosition(position);
         if (ft8Message == null) return super.onContextItemSelected(item);
 
-        GeneralVariables.resetLaunchSupervision();//复位自动监管
+        GeneralVariables.resetLaunchSupervision();// reset launch supervision state
         switch (item.getItemId()) {
-            case 1://时序与发送者相反
-                Log.d(TAG, "呼叫：" + ft8Message.getCallsignTo());
+            case 1:// call the target station
+                Log.d(TAG, "call TO: " + ft8Message.getCallsignTo());
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    doCallNow(ft8Message);
+                    break;
+                }
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
                 }
@@ -669,31 +1248,35 @@ public class MyCallingFragment extends Fragment {
                 break;
 
             case 3:
-                Log.d(TAG, "呼叫：" + ft8Message.getCallsignFrom());
+                Log.d(TAG, "call FROM: " + ft8Message.getCallsignFrom());
                 doCallNow(ft8Message);
                 break;
 
-            case 4://回复
-                Log.d(TAG, "回复：" + ft8Message.getCallsignFrom());
+            case 4:// auto reply
+                Log.d(TAG, "auto reply " + ft8Message.getCallsignFrom());
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    doCallNow(ft8Message);
+                    break;
+                }
                 mainViewModel.addFollowCallsign(ft8Message.getCallsignFrom());
                 if (!mainViewModel.ft8TransmitSignal.isActivated()) {
                     mainViewModel.ft8TransmitSignal.setActivated(true);
-                    GeneralVariables.transmitMessages.add(ft8Message);//把消息添加到关注列表中
+                    GeneralVariables.transmitMessages.add(ft8Message);// keep it in the transmit list for later status display
                 }
                 mainViewModel.ft8TransmitSignal.setTransmit(ft8Message.getFromCallTransmitCallsign(), -1, ft8Message.getAutoReplyExtraInfo());
                 mainViewModel.ft8TransmitSignal.transmitNow();
                 break;
 
-            case 5://to 的QRZ
+            case 5:// open target in QRZ
                 showQrzFragment(ft8Message.getCallsignTo());
                 break;
-            case 6://from 的QRZ
+            case 6:// open source in QRZ
                 showQrzFragment(ft8Message.getCallsignFrom());
                 break;
-            case 7://查to的日志
+            case 7:// open target in history
                 navigateToLogFragment(ft8Message.getCallsignTo());
                 break;
-            case 8://查from的日志
+            case 8:// open source in history
                 navigateToLogFragment(ft8Message.getCallsignFrom());
                 break;
         }
@@ -702,20 +1285,20 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * 跳转到日志查询界面
+     * Navigate to the history screen.
      *
-     * @param callsign 呼号
+     * @param callsign callsign key
      */
     private void navigateToLogFragment(String callsign) {
-        mainViewModel.queryKey = callsign;//把呼号作为关键字提交
+        mainViewModel.queryKey = callsign;// pass the lookup key to the history page
         NavController navController = Navigation.findNavController(requireActivity(), R.id.fragmentContainerView);
-        navController.navigate(R.id.action_menu_nav_mycalling_to_menu_nav_history);//跳转到日志
+        navController.navigate(R.id.action_menu_nav_mycalling_to_menu_nav_history);// open the history page
     }
 
     /**
-     * 查询QRZ信息
+     * Open the QRZ page.
      *
-     * @param callsign 呼号
+     * @param callsign callsign key
      */
     private void showQrzFragment(String callsign) {
         NavHostFragment navHostFragment = (NavHostFragment) requireActivity().getSupportFragmentManager().findFragmentById(R.id.fragmentContainerView);
@@ -726,64 +1309,110 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * 切换 FT8 / FT4 模式
+     * 在 Call 页面原子切换 FT8 / FT4 模式。
      */
     @SuppressLint("NotifyDataSetChanged")
     private void switchSignalMode(int mode) {
+        if (GeneralVariables.isEmeOperatingProfile()
+                || GeneralVariables.isSatelliteOperatingProfile()) {
+            updateSignalModeUI();
+            ToastMessage.show(GeneralVariables.isEmeOperatingProfile()
+                    ? "请先从 EME 页关闭 Q65 EME 模式"
+                    : "请先从卫星页关闭卫星 FT4 模式");
+            return;
+        }
+        if (mode != FT8Common.FT8_MODE && mode != FT8Common.FT4_MODE) {
+            Log.w(TAG, "Call page rejected non-FT8/FT4 mode: " + mode);
+            mode = FT8Common.FT8_MODE;
+        }
         if (GeneralVariables.getSignalMode() == mode) {
             updateSignalModeUI();
             return;
         }
 
         GeneralVariables.setSignalMode(mode);
-
-        // 切换模式时，重建接收与发射时钟
-        if (mainViewModel.ft8SignalListener != null) {
-            mainViewModel.ft8SignalListener.restartByCurrentMode();
-        }
-        if (mainViewModel.ft8TransmitSignal != null) {
-            mainViewModel.ft8TransmitSignal.restartByCurrentMode();
-        }
-
-        // 切模式时停止发射，避免跨模式卡住
-        mainViewModel.ft8TransmitSignal.setActivated(false);
-        mainViewModel.ft8TransmitSignal.setTransmitting(false);
-
-        // 复位到 CQ 状态
-        mainViewModel.ft8TransmitSignal.resetToCQ();
-
-        // 清空当前显示列表，避免 FT8/FT4 混合
-        mainViewModel.clearTransmittingMessage();
-
+        Log.i(TAG, "switchSignalMode: mode=" + FT8Common.modeToString(mode));
+        restartForModeRuntimeChange();
         updateSignalModeUI();
+        ToastMessage.show("switch to " + getCurrentModeLabel());
+    }
 
-        ToastMessage.show("切换到 " + getCurrentModeLabel());
+    private int getSignalModeButtonId(int mode) {
+        if (mode == FT8Common.Q65_MODE) {
+            return R.id.rbQ65;
+        }
+        if (mode == FT8Common.FT4_MODE) {
+            return R.id.rbFt4;
+        }
+        return R.id.rbFt8;
     }
 
     /**
-     * 刷新模式相关 UI
+     * Refresh the signal-mode radio UI from the current mode.
      */
     @SuppressLint("DefaultLocale")
     private void updateSignalModeUI() {
         int mode = GeneralVariables.getSignalMode();
+        boolean emeProfile = GeneralVariables.isEmeOperatingProfile();
+        boolean satelliteProfile = GeneralVariables.isSatelliteOperatingProfile();
+        int targetButtonId = getSignalModeButtonId(mode);
 
-        if (mode == FT8Common.FT4_MODE) {
-            binding.rbFt4.setChecked(true);
+        updatingSignalModeUi = true;
+        try {
+            if (binding.rgSignalMode.getCheckedRadioButtonId() != targetButtonId) {
+                binding.rgSignalMode.check(targetButtonId);
+            }
+        } finally {
+            updatingSignalModeUi = false;
+        }
+        updateQ65ConfigUi();
+        updateEmeAssistButtonUi();
+        binding.rbFt8.setVisibility(emeProfile ? View.GONE : View.VISIBLE);
+        binding.rbFt4.setVisibility(emeProfile ? View.GONE : View.VISIBLE);
+        binding.rbFt8.setEnabled(!satelliteProfile);
+        binding.rbFt4.setEnabled(!satelliteProfile);
+        binding.rbQ65.setEnabled(false);
+        binding.q65SequenceControls.setVisibility(emeProfile ? View.VISIBLE : View.GONE);
+        binding.dxpeditionMacroButton.setVisibility(
+                emeProfile || satelliteProfile ? View.GONE : View.VISIBLE);
+        if (emeProfile) {
+            binding.transFreeTextEdit.setHint("Q65 发射报文");
+            Editable current = binding.transFreeTextEdit.getText();
+            if (current == null || current.toString().trim().isEmpty()
+                    || "FREE TEXT".equalsIgnoreCase(current.toString().trim())) {
+                binding.transFreeTextEdit.setText(getDefaultQ65Message());
+                binding.transFreeTextEdit.setSelection(binding.transFreeTextEdit.length());
+            }
         } else {
-            binding.rbFt8.setChecked(true);
+            binding.transFreeTextEdit.setHint(R.string.transmit_freeText);
+        }
+        showFreeTextEdit();
+        updateOperatingModeUi();
+        updateDxpeditionManualUi();
+
+        Long currentUtc = mainViewModel == null ? null : mainViewModel.timerSec.getValue();
+        if (currentUtc != null) {
+            binding.timerTextView.setText("[" + getCurrentModeLabel() + "] "
+                    + UtcTimer.getTimeStr(currentUtc));
         }
 
-        // 更新发射频率标题
+        Integer currentSequential = mainViewModel == null || mainViewModel.ft8TransmitSignal == null
+                ? null
+                : mainViewModel.ft8TransmitSignal.mutableSequential.getValue();
+        updateTransmitSequentialLabel(currentSequential);
+
+        // Refresh the base-frequency label for the active mode.
         binding.baseFrequencyTextView.setText(String.format(
                 "[%s] " + GeneralVariables.getStringFromResource(R.string.sound_frequency_is),
                 getCurrentModeLabel(),
                 GeneralVariables.getBaseFrequency()
         ));
 
-        // 更新当前目标显示
+        // Refresh the target-callsign label for the active mode.
         if (mainViewModel.ft8TransmitSignal != null && mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() != null) {
             TransmitCallsign transmitCallsign = mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue();
-            if (GeneralVariables.toModifier != null) {
+            if (!GeneralVariables.isSatelliteOperatingProfile()
+                    && GeneralVariables.toModifier != null) {
                 binding.toCallsignTextView.setText(String.format(
                         GeneralVariables.getStringFromResource(R.string.target_callsign),
                         "[" + getCurrentModeLabel() + "] " + transmitCallsign.callsign + " " + GeneralVariables.toModifier));
@@ -793,6 +1422,28 @@ public class MyCallingFragment extends Fragment {
                         "[" + getCurrentModeLabel() + "] " + transmitCallsign.callsign));
             }
         }
+        if (mainViewModel.ft8TransmitSignal != null) {
+            updateCqQueuePanel(mainViewModel.ft8TransmitSignal.getCqQueueSnapshot());
+        }
+    }
+
+    /**
+     * 发射序号和模式来自两个独立状态源，模式切换时也必须主动刷新，避免显示旧模式。
+     */
+    @SuppressLint("DefaultLocale")
+    private void updateTransmitSequentialLabel(Integer sequential) {
+        if (binding == null || sequential == null) {
+            return;
+        }
+        if (isExperimentalManualTxMode()) {
+            binding.transmittingSequentialTextView.setText(
+                    "[" + getCurrentModeLabel() + "] MANUAL");
+            return;
+        }
+        binding.transmittingSequentialTextView.setText(
+                String.format("[%s] " + GeneralVariables.getStringFromResource(R.string.transmission_sequence),
+                        getCurrentModeLabel(),
+                        sequential));
     }
 
     @SuppressLint("NotifyDataSetChanged")
@@ -802,17 +1453,30 @@ public class MyCallingFragment extends Fragment {
         mainViewModel = MainViewModel.getInstance(this);
         binding = FragmentMyCallingBinding.inflate(inflater, container, false);
 
-        // 当横屏时显示频谱图
+        // 页面只修复与全局运行档位不一致的模式，不擅自退出 EME/卫星模式。
+        int expectedMode = GeneralVariables.isEmeOperatingProfile()
+                ? FT8Common.Q65_MODE
+                : GeneralVariables.isSatelliteOperatingProfile()
+                    ? FT8Common.FT4_MODE
+                    : GeneralVariables.getSignalMode() == FT8Common.Q65_MODE
+                        ? FT8Common.FT8_MODE
+                        : GeneralVariables.getSignalMode();
+        if (GeneralVariables.getSignalMode() != expectedMode) {
+            GeneralVariables.setSignalMode(expectedMode);
+            restartForModeRuntimeChange();
+        }
+
+        // Show the spectrum panel in landscape mode.
         if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
             binding.messageSpectrumView.run(mainViewModel, this);
         }
 
-        // 发射消息的列表
+        // Initialize the function-order spinner.
         functionOrderSpinnerAdapter = new FunctionOrderSpinnerAdapter(requireContext(), mainViewModel);
         binding.functionOrderSpinner.setAdapter(functionOrderSpinnerAdapter);
         functionOrderSpinnerAdapter.notifyDataSetChanged();
 
-        // 关注的消息列表
+        // Initialize the transmit-message list.
         transmitRecycleView = binding.transmitRecycleView;
         transmitCallListAdapter = new CallingListAdapter(this.getContext(), mainViewModel,
                 GeneralVariables.transmitMessages, CallingListAdapter.ShowMode.MY_CALLING);
@@ -821,20 +1485,39 @@ public class MyCallingFragment extends Fragment {
         transmitCallListAdapter.notifyDataSetChanged();
         initCqQueuePanel();
 
-        // 设置消息列表滑动，用于快速呼叫
+        // Initialize swipe actions and the context menu for the list.
         initRecyclerViewAction();
         requireActivity().registerForContextMenu(transmitRecycleView);
 
-        // 初始化模式选择 UI
-        if (GeneralVariables.getSignalMode() == FT8Common.FT4_MODE) {
-            binding.rbFt4.setChecked(true);
-        } else {
-            binding.rbFt8.setChecked(true);
-        }
+        // Refresh the mode UI when the fragment starts.
+        updateSignalModeUI();
 
         binding.rgSignalMode.setOnCheckedChangeListener((group, checkedId) -> {
-            int mode = checkedId == R.id.rbFt4 ? FT8Common.FT4_MODE : FT8Common.FT8_MODE;
+            if (updatingSignalModeUi) {
+                return;
+            }
+            if (checkedId == View.NO_ID) {
+                updateSignalModeUI();
+                return;
+            }
+            if (GeneralVariables.isEmeOperatingProfile()
+                    || GeneralVariables.isSatelliteOperatingProfile()) {
+                updateSignalModeUI();
+                return;
+            }
+            int mode;
+            if (checkedId == R.id.rbFt4) {
+                mode = FT8Common.FT4_MODE;
+            } else {
+                mode = FT8Common.FT8_MODE;
+            }
             switchSignalMode(mode);
+        });
+        binding.q65ConfigButton.setOnClickListener(view -> showQ65ConfigDialog());
+        binding.emeAssistButton.setOnClickListener(view -> showEmeAssistDialog());
+        binding.rbQ65.setOnLongClickListener(view -> {
+            showQ65ConfigDialog();
+            return true;
         });
 
         binding.dxpeditionManualCheckBox.setOnCheckedChangeListener(null);
@@ -884,7 +1567,7 @@ public class MyCallingFragment extends Fragment {
             return true;
         });
 
-        // 显示UTC时间
+        // Observe the UTC timer.
         mainViewModel.timerSec.observe(getViewLifecycleOwner(), new Observer<Long>() {
             @Override
             public void onChanged(Long aLong) {
@@ -894,10 +1577,11 @@ public class MyCallingFragment extends Fragment {
                 }
                 binding.timerTextView.setText("[" + getCurrentModeLabel() + "] "
                         + UtcTimer.getTimeStr(aLong));
+                updateOperatingModeUi();
             }
         });
 
-        // 显示发射频率
+        // Observe base-frequency changes.
         GeneralVariables.mutableBaseFrequency.observe(getViewLifecycleOwner(), new Observer<Float>() {
             @SuppressLint("DefaultLocale")
             @Override
@@ -906,10 +1590,25 @@ public class MyCallingFragment extends Fragment {
                         "[%s] " + GeneralVariables.getStringFromResource(R.string.sound_frequency_is),
                         getCurrentModeLabel(),
                         aFloat));
+                updateAutoSessionStatus();
             }
         });
 
-        // 观察模式变化
+        GeneralVariables.mutableMyMaidenheadGrid.observe(getViewLifecycleOwner(), new Observer<String>() {
+            @Override
+            public void onChanged(String grid) {
+                updateAutoSessionStatus();
+            }
+        });
+
+        GeneralVariables.mutableBandChange.observe(getViewLifecycleOwner(), new Observer<Integer>() {
+            @Override
+            public void onChanged(Integer bandIndex) {
+                updateAutoSessionStatus();
+            }
+        });
+
+        // Observe signal-mode changes.
         GeneralVariables.mutableSignalMode.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @Override
             public void onChanged(Integer integer) {
@@ -918,8 +1617,14 @@ public class MyCallingFragment extends Fragment {
                 updateAutoSessionStatus();
             }
         });
+        GeneralVariables.mutableOperatingProfile.observe(getViewLifecycleOwner(), profile -> {
+            updateSignalModeUI();
+            updateOperatingModeUi();
+        });
+        GeneralVariables.mutableOperatingTrackingStatus.observe(getViewLifecycleOwner(), status ->
+                updateOperatingModeUi());
 
-        // 观察发射状态按钮的变化
+        // Observe transmit-state changes.
         Observer<Boolean> transmittingObserver = new Observer<Boolean>() {
             @Override
             public void onChanged(Boolean aBoolean) {
@@ -937,7 +1642,7 @@ public class MyCallingFragment extends Fragment {
                     binding.setTransmitImageButton.setAnimation(null);
                 }
 
-                // 暂停播放按键
+                // Update the pause button to match the current transmit state.
                 if (mainViewModel.ft8TransmitSignal.isTransmitting()) {
                     binding.pauseTransmittingImageButton.setImageResource(R.drawable.ic_baseline_pause_circle_outline_24);
                     binding.pauseTransmittingImageButton.setVisibility(View.VISIBLE);
@@ -951,16 +1656,20 @@ public class MyCallingFragment extends Fragment {
         mainViewModel.ft8TransmitSignal.mutableIsTransmitting.observe(getViewLifecycleOwner(), transmittingObserver);
         mainViewModel.ft8TransmitSignal.mutableIsActivated.observe(getViewLifecycleOwner(), transmittingObserver);
 
-        // 暂停按钮
+        // Pause transmission on demand.
         binding.pauseTransmittingImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    mainViewModel.ft8TransmitSignal.stopQ65Sequence("用户暂停 Q65 序列");
+                }
                 mainViewModel.ft8TransmitSignal.setTransmitting(false);
-                GeneralVariables.resetLaunchSupervision();//复位自动监管
+                GeneralVariables.resetLaunchSupervision();// reset launch supervision state
+                updateSignalModeUI();
             }
         });
 
-        // 监视命令程序
+        // Observe the transmit function list.
         mainViewModel.ft8TransmitSignal.mutableFunctions.observe(getViewLifecycleOwner(),
                 new Observer<ArrayList<FunctionOfTransmit>>() {
                     @Override
@@ -970,7 +1679,7 @@ public class MyCallingFragment extends Fragment {
                     }
                 });
 
-        // 观察指令序号的变化
+        // Observe DXpedition Fox slot status.
         mainViewModel.ft8TransmitSignal.mutableDxpeditionFoxSlotStatus.observe(getViewLifecycleOwner(),
                 new Observer<String>() {
                     @Override
@@ -991,7 +1700,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 设置当指令序号被选择的事件
+        // Observe CQ queue changes.
         mainViewModel.ft8TransmitSignal.mutableCqQueue.observe(getViewLifecycleOwner(), new Observer<ArrayList<CqCallEntry>>() {
             @Override
             public void onChanged(ArrayList<CqCallEntry> cqCallEntries) {
@@ -1015,7 +1724,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 显示当前目标呼号
+        // Observe target-callsign changes.
         mainViewModel.ft8TransmitSignal.mutableToCallsign.observe(getViewLifecycleOwner(), new Observer<TransmitCallsign>() {
             @Override
             public void onChanged(TransmitCallsign transmitCallsign) {
@@ -1027,7 +1736,8 @@ public class MyCallingFragment extends Fragment {
                     updateAutoSessionStatus();
                     return;
                 }
-                if (GeneralVariables.toModifier != null) {
+                if (!GeneralVariables.isSatelliteOperatingProfile()
+                        && GeneralVariables.toModifier != null) {
                     binding.toCallsignTextView.setText(String.format(
                             GeneralVariables.getStringFromResource(R.string.target_callsign),
                             "[" + getCurrentModeLabel() + "] "
@@ -1043,27 +1753,39 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 显示当前发射的时序
+        // Observe transmit-sequence changes.
         mainViewModel.ft8TransmitSignal.mutableSequential.observe(getViewLifecycleOwner(), new Observer<Integer>() {
-            @SuppressLint("DefaultLocale")
             @Override
             public void onChanged(Integer integer) {
-                if (isExperimentalManualTxMode()) {
-                    binding.transmittingSequentialTextView.setText(
-                            "[" + getCurrentModeLabel() + "] MANUAL");
-                    return;
-                }
-                binding.transmittingSequentialTextView.setText(
-                        String.format("[%s] " + GeneralVariables.getStringFromResource(R.string.transmission_sequence),
-                                getCurrentModeLabel(),
-                                integer));
+                updateTransmitSequentialLabel(integer);
             }
         });
 
-        // 设置发射按钮
+        // Toggle scheduled transmission on or off.
         binding.setTransmitImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (GeneralVariables.isEmeOperatingProfile()
+                        && GeneralVariables.getSignalMode() == FT8Common.Q65_MODE) {
+                    if (mainViewModel.ft8TransmitSignal.isActivated()) {
+                        mainViewModel.ft8TransmitSignal.stopQ65Sequence("用户停止 Q65 序列");
+                        mainViewModel.ft8TransmitSignal.setTransmitting(false);
+                    } else {
+                        String message = binding.transFreeTextEdit.getText() == null
+                                ? "" : binding.transFreeTextEdit.getText().toString();
+                        int txSequence = binding.rbQ65Tx2.isChecked() ? 1 : 0;
+                        boolean armed = mainViewModel.ft8TransmitSignal.armQ65Sequence(
+                                message,
+                                txSequence,
+                                binding.q65RepeatCheckBox.isChecked());
+                        if (!armed) {
+                            ToastMessage.show("Q65 报文为空或 TX 序列无效");
+                        }
+                    }
+                    GeneralVariables.resetLaunchSupervision();
+                    updateSignalModeUI();
+                    return;
+                }
                 if (isExperimentalManualTxMode()) {
                     // Experimental TX is intentionally triggered from the CQ button near the text box.
                     return;
@@ -1072,11 +1794,11 @@ public class MyCallingFragment extends Fragment {
                     mainViewModel.ft8TransmitSignal.restTransmitting();
                 }
                 mainViewModel.ft8TransmitSignal.setActivated(!mainViewModel.ft8TransmitSignal.isActivated());
-                GeneralVariables.resetLaunchSupervision();//复位自动监管
+                GeneralVariables.resetLaunchSupervision();// reset launch supervision state
             }
         });
 
-        // 观察传输消息列表的变化
+        // Observe message-count changes and auto-scroll when appropriate.
         mainViewModel.mutableTransmitMessagesCount.observe(getViewLifecycleOwner(), new Observer<Integer>() {
             @SuppressLint("DefaultLocale")
             @Override
@@ -1096,7 +1818,7 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 清除传输消息列表
+        // Clear the local calling list.
         binding.clearMycallListImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -1104,10 +1826,16 @@ public class MyCallingFragment extends Fragment {
             }
         });
 
-        // 复位到CQ按键
+        // Reset the transmit target back to CQ.
         binding.resetToCQImageView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    binding.transFreeTextEdit.setText(getDefaultQ65Message());
+                    binding.transFreeTextEdit.setSelection(binding.transFreeTextEdit.length());
+                    GeneralVariables.resetLaunchSupervision();
+                    return;
+                }
                 if (isExperimentalManualTxMode()) {
                     if (mainViewModel.ft8TransmitSignal.mutableToCallsign.getValue() == null) {
                         mainViewModel.ft8TransmitSignal.restTransmitting();
@@ -1117,11 +1845,11 @@ public class MyCallingFragment extends Fragment {
                     return;
                 }
                 mainViewModel.ft8TransmitSignal.resetToCQ();
-                GeneralVariables.resetLaunchSupervision();//复位自动监管
+                GeneralVariables.resetLaunchSupervision();// reset launch supervision state
             }
         });
 
-        // 自由文本输入框的限定操作
+        // Watch free-text input changes.
         binding.transFreeTextEdit.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
@@ -1147,6 +1875,9 @@ public class MyCallingFragment extends Fragment {
         binding.resetToCQImageView.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
+                if (GeneralVariables.isEmeOperatingProfile()) {
+                    return true;
+                }
                 mainViewModel.setTransmitIsFreeText(!mainViewModel.getTransitIsFreeText());
                 showFreeTextEdit();
                 return true;
@@ -1175,7 +1906,51 @@ public class MyCallingFragment extends Fragment {
         return binding.getRoot();
     }
 
+    @Override
+    public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+        mainViewModel.emeAssistController.getTrackingResultLiveData().observe(
+                getViewLifecycleOwner(),
+                result -> {
+                    if (binding == null) {
+                        Log.i(TAG, "skip EME tracking observer update: reason=binding-null");
+                        return;
+                    }
+                    updateEmeAssistButtonUi();
+                    updateAutoSessionStatus();
+                    Runnable refreshAction = emeTrackingPanelRefreshAction;
+                    if (refreshAction != null) {
+                        refreshAction.run();
+                    }
+                });
+    }
+
+    @Override
+    public void onDestroyView() {
+        Log.i(TAG, "MyCallingFragment onDestroyView: detach EME tracking panel");
+        detachEmeTrackingPanel("fragment-destroy-view");
+        if (emeTrackingDialog != null) {
+            emeTrackingDialog.setOnDismissListener(null);
+            if (emeTrackingDialog.isShowing()) {
+                emeTrackingDialog.dismiss();
+            }
+            emeTrackingDialog = null;
+        }
+        binding = null;
+        super.onDestroyView();
+    }
+
     private void showFreeTextEdit() {
+        if (GeneralVariables.isEmeOperatingProfile()) {
+            binding.transFreeTextEdit.setVisibility(View.VISIBLE);
+            binding.transFreeTextTypeTextView.setVisibility(View.GONE);
+            binding.q65SequenceControls.setVisibility(View.VISIBLE);
+            binding.functionOrderSpinner.setVisibility(View.GONE);
+            binding.dxpeditionMacroButton.setVisibility(View.GONE);
+            updateAutoSessionStatus();
+            return;
+        }
+        binding.q65SequenceControls.setVisibility(View.GONE);
         if (mainViewModel.getTransitIsFreeText()) {
             binding.transFreeTextEdit.setVisibility(View.VISIBLE);
             binding.transFreeTextTypeTextView.setVisibility(View.VISIBLE);
@@ -1195,7 +1970,7 @@ public class MyCallingFragment extends Fragment {
     }
 
     /**
-     * 设置列表滑动动作
+     * Synchronize the free-text input field with the current transmit state.
      */
     private void syncFreeTextInput() {
         String currentFreeText = mainViewModel.ft8TransmitSignal.getFreeText();
@@ -1246,7 +2021,7 @@ public class MyCallingFragment extends Fragment {
                     }
                     transmitCallListAdapter.notifyItemChanged(viewHolder.getAdapterPosition());
                 }
-                if (direction == ItemTouchHelper.END) {//删除
+                if (direction == ItemTouchHelper.END) {// swipe left to delete
                     transmitCallListAdapter.deleteMessage(viewHolder.getAdapterPosition());
                     transmitCallListAdapter.notifyItemRemoved(viewHolder.getAdapterPosition());
                 }
@@ -1305,4 +2080,3 @@ public class MyCallingFragment extends Fragment {
         }).attachToRecyclerView(binding.transmitRecycleView);
     }
 }
-

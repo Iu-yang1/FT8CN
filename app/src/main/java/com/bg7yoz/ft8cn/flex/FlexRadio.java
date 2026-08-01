@@ -463,7 +463,7 @@ public class FlexRadio {
 
         //port=4991;
         //streamTxId=0x084000001;
-        // class id=0x00 00 1c 2d 53 4c 01 23????
+        // class id=0x00 00 1c 2d 53 4c 01 23（字段含义待确认）
         //每5毫秒一个包？立体声，共256个float
         Log.e(TAG, String.format("sendWaveData: streamid:0x%x,ip:%s,port:%d",streamTxId,ip, port) );
         new Thread(new Runnable() {

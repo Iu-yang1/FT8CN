@@ -1,0 +1,8 @@
+FT8CN includes the Java SGP4 implementation from aholinch/sgp4.
+
+Pinned commit: 552cb1489a52c3023ae70cb6c7e239e84c5950fe
+License: The Unlicense (public-domain dedication)
+Included files: TLE.java, SGP4.java, ElsetRec.java
+
+The FT8CN coordinate conversion, pass prediction, Doppler, storage and UI code
+is maintained separately under the FT8CN project license.

@@ -53,6 +53,7 @@ import com.bg7yoz.ft8cn.log.QSLRecordStr;
 import com.bg7yoz.ft8cn.log.OnShareLogEvents;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 
 
@@ -154,15 +155,23 @@ public class LogFragment extends Fragment {
         binding.exportImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                if (getLocalIp() == null) {
+                String localIp = getLocalIp();
+                if (localIp == null) {
                     new HelpDialog(requireContext(), requireActivity()
                             , GeneralVariables.getStringFromResource(R.string.export_null)
                             , false).show();
                 } else {
-                    new HelpDialog(requireContext(), requireActivity()
-                            , String.format(GeneralVariables.getStringFromResource(R.string.export_info)
-                            , getLocalIp(), LogHttpServer.DEFAULT_PORT)
-                            , false).show();
+                    try {
+                        String token = mainViewModel.startLogHttpServer(true);
+                        String address = String.format("http://%s:%d/?token=%s",
+                                localIp, LogHttpServer.DEFAULT_PORT, token);
+                        new HelpDialog(requireContext(), requireActivity()
+                                , String.format(GeneralVariables.getStringFromResource(R.string.export_info)
+                                , localIp, LogHttpServer.DEFAULT_PORT) + "\n" + address
+                                , false).show();
+                    } catch (IOException exception) {
+                        ToastMessage.show("网页日志服务启动失败: " + exception.getMessage());
+                    }
                 }
 
             }
@@ -591,11 +600,8 @@ public class LogFragment extends Fragment {
      * 显示统计页面
      */
     private void showCountFragment() {
-        //用于Fragment的导航。
-        NavHostFragment navHostFragment = (NavHostFragment) requireActivity()
-                .getSupportFragmentManager().findFragmentById(R.id.fragmentContainerView);
-        assert navHostFragment != null;//断言不为空
-        navHostFragment.getNavController().navigate(R.id.countFragment);
+        // 日志页现在可能嵌入 Compose 的独立 NavHost，必须使用当前 Fragment 所属控制器。
+        NavHostFragment.findNavController(this).navigate(R.id.countFragment);
     }
 
     /**
@@ -604,12 +610,9 @@ public class LogFragment extends Fragment {
      * @param callsign 呼号
      */
     private void showQrzFragment(String callsign) {
-        NavHostFragment navHostFragment = (NavHostFragment) requireActivity()
-                .getSupportFragmentManager().findFragmentById(R.id.fragmentContainerView);
-        assert navHostFragment != null;//断言不为空
         Bundle bundle = new Bundle();
         bundle.putString(QRZ_Fragment.CALLSIGN_PARAM, callsign);
-        navHostFragment.getNavController().navigate(R.id.QRZ_Fragment, bundle);
+        NavHostFragment.findNavController(this).navigate(R.id.QRZ_Fragment, bundle);
     }
 
 

@@ -10,20 +10,36 @@ import androidx.lifecycle.MutableLiveData;
 import com.bg7yoz.ft8cn.wave.HamRecorder;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 
-public class SpectrumListener {
+import java.util.Arrays;
+
+public class SpectrumListener implements HamRecorder.OnCaptureStateChanged {
     private static final String TAG = "SpectrumListener";
     public static final int DISPLAY_MIN_FREQUENCY_HZ = 0;
     public static final int DISPLAY_MAX_FREQUENCY_HZ = 3000;
     public static final int DISPLAY_BIN_COUNT = 640;
-    private HamRecorder hamRecorder;
+    private final HamRecorder hamRecorder;
+    private HamRecorder.VoiceDataSubscription subscription;
 
     public static final class SpectrumFrame {
         public final float[] samples;
         public final int sampleRate;
+        public final float peak;
+        public final float rms;
+        public final String inputRoute;
+        public final boolean systemSilenced;
 
-        public SpectrumFrame(float[] samples, int sampleRate) {
+        public SpectrumFrame(float[] samples,
+                             int sampleRate,
+                             float peak,
+                             float rms,
+                             String inputRoute,
+                             boolean systemSilenced) {
             this.samples = samples;
             this.sampleRate = sampleRate;
+            this.peak = peak;
+            this.rms = rms;
+            this.inputRoute = inputRoute;
+            this.systemSilenced = systemSilenced;
         }
     }
 
@@ -34,19 +50,71 @@ public class SpectrumListener {
     private final OnGetVoiceDataDone onGetVoiceDataDone=new OnGetVoiceDataDone() {
         @Override
         public void onGetDone(float[] data) {
-                    dataBuffer = data;
-                    mutableDataBuffer.postValue(new SpectrumFrame(data, hamRecorder.getCurrentSampleRate()));
+            dataBuffer = data;
+            float peak = 0f;
+            double squareSum = 0.0;
+            int validSamples = 0;
+            for (float sample : data) {
+                if (!Float.isFinite(sample)) {
+                    continue;
+                }
+                float absolute = Math.abs(sample);
+                if (absolute > peak) {
+                    peak = absolute;
+                }
+                squareSum += (double) sample * sample;
+                validSamples++;
+            }
+            float rms = validSamples == 0 ? 0f
+                    : (float) Math.sqrt(squareSum / validSamples);
+            mutableDataBuffer.postValue(new SpectrumFrame(
+                    data,
+                    hamRecorder.getCurrentSampleRate(),
+                    peak,
+                    rms,
+                    hamRecorder.getCurrentInputRouteDescription(),
+                    hamRecorder.isCurrentInputSystemSilenced()
+            ));
         }
     };
 
     public SpectrumListener(HamRecorder hamRecorder) {
         this.hamRecorder = hamRecorder;
-        doReceiveData();
+        hamRecorder.addCaptureStateListener(this);
+        start();
     }
 
+    /** 每次录音源变化都丢弃旧窗口，确保频谱使用当前真实采样率。 */
+    public synchronized void start() {
+        stopSubscription();
+        if (hamRecorder.isRunning()) {
+            subscription = hamRecorder.getVoiceData(160, false, onGetVoiceDataDone);
+        }
+    }
 
-    private void doReceiveData(){
-        hamRecorder.getVoiceData(160,false,onGetVoiceDataDone);
+    public synchronized void stop() {
+        stopSubscription();
+    }
+
+    public synchronized void release() {
+        hamRecorder.removeCaptureStateListener(this);
+        stopSubscription();
+    }
+
+    private void stopSubscription() {
+        if (subscription != null) {
+            hamRecorder.deleteVoiceDataMonitor(subscription);
+            subscription = null;
+        }
+    }
+
+    @Override
+    public void onCaptureStateChanged(boolean running, int sampleRate) {
+        if (running) {
+            start();
+        } else {
+            stop();
+        }
     }
 
     public float[] getDataBuffer() {
@@ -72,6 +140,22 @@ public class SpectrumListener {
             return new int[0];
         }
         int[] display = new int[DISPLAY_BIN_COUNT];
+        normalizeDisplayBins(source, validLength, display);
+        return display;
+    }
+
+    /**
+     * 把频谱写入调用方复用的固定显示缓冲，避免每个 160 ms 帧创建新数组。
+     */
+    public static int normalizeDisplayBins(int[] source, int sourceLength, int[] display) {
+        int validLength = Math.max(0, Math.min(source == null ? 0 : source.length, sourceLength));
+        if (display == null || display.length < DISPLAY_BIN_COUNT) {
+            return 0;
+        }
+        if (validLength <= 0) {
+            Arrays.fill(display, 0, DISPLAY_BIN_COUNT, 0);
+            return 0;
+        }
         for (int i = 0; i < DISPLAY_BIN_COUNT; i++) {
             int start = Math.round(i * validLength / (float) DISPLAY_BIN_COUNT);
             int end = Math.round((i + 1) * validLength / (float) DISPLAY_BIN_COUNT);
@@ -90,7 +174,7 @@ public class SpectrumListener {
             }
             display[i] = peak;
         }
-        return display;
+        return DISPLAY_BIN_COUNT;
     }
 }
 

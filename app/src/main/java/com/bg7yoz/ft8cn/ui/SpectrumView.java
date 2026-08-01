@@ -185,7 +185,11 @@ public class SpectrumView extends ConstraintLayout {
                 buffer.length,
                 fftBuffer.length
         );
-        renderBuffer = SpectrumListener.normalizeDisplayBins(fftBuffer, renderBinCount);
+        if (renderBuffer == null
+                || renderBuffer.length != SpectrumListener.DISPLAY_BIN_COUNT) {
+            renderBuffer = new int[SpectrumListener.DISPLAY_BIN_COUNT];
+        }
+        SpectrumListener.normalizeDisplayBins(fftBuffer, renderBinCount, renderBuffer);
 
         if (lastLoggedSourceRate != sourceRate
                 || lastLoggedInputLen != buffer.length

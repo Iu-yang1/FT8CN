@@ -21,7 +21,6 @@ typedef struct {
     void *base_out;
     kiss_fft_cfg c2c_cfg;
     kiss_fftr_cfg real_cfg;
-    kiss_fft_cpx *complex_in;
     kiss_fft_cpx *complex_out;
     kiss_fft_scalar *real_buffer;
 } sfftw_plan_shim_t;
@@ -79,7 +78,6 @@ static void free_plan(sfftw_plan_shim_t *plan) {
     }
     kiss_fft_free(plan->c2c_cfg);
     kiss_fftr_free(plan->real_cfg);
-    free(plan->complex_in);
     free(plan->complex_out);
     free(plan->real_buffer);
     free(plan);
@@ -106,9 +104,8 @@ static sfftw_plan_shim_t *allocate_plan(int nfft,
                                            kind == SHIM_PLAN_C2C_BACKWARD,
                                            NULL,
                                            NULL);
-            plan->complex_in = (kiss_fft_cpx *) calloc((size_t) nfft, sizeof(kiss_fft_cpx));
             plan->complex_out = (kiss_fft_cpx *) calloc((size_t) nfft, sizeof(kiss_fft_cpx));
-            if (plan->c2c_cfg == NULL || plan->complex_in == NULL || plan->complex_out == NULL) {
+            if (plan->c2c_cfg == NULL || plan->complex_out == NULL) {
                 free_plan(plan);
                 return NULL;
             }
@@ -116,9 +113,8 @@ static sfftw_plan_shim_t *allocate_plan(int nfft,
 
         case SHIM_PLAN_R2C:
             plan->real_cfg = kiss_fftr_alloc(nfft, 0, NULL, NULL);
-            plan->real_buffer = (kiss_fft_scalar *) calloc((size_t) nfft, sizeof(kiss_fft_scalar));
             plan->complex_out = (kiss_fft_cpx *) calloc((size_t) (nfft / 2 + 1), sizeof(kiss_fft_cpx));
-            if (plan->real_cfg == NULL || plan->real_buffer == NULL || plan->complex_out == NULL) {
+            if (plan->real_cfg == NULL || plan->complex_out == NULL) {
                 free_plan(plan);
                 return NULL;
             }
@@ -242,30 +238,28 @@ void sfftw_execute_(intptr_t *plan_handle) {
     switch (plan->kind) {
         case SHIM_PLAN_C2C_FORWARD:
         case SHIM_PLAN_C2C_BACKWARD:
-            memcpy(plan->complex_in,
-                   plan->base_in,
-                   (size_t) plan->nfft * sizeof(kiss_fft_cpx));
-            kiss_fft(plan->c2c_cfg, plan->complex_in, plan->complex_out);
+            // KISS FFT 不修改输入；直接读取 Fortran 缓冲区，避免每次大 FFT 前的完整复制。
+            kiss_fft(plan->c2c_cfg,
+                     (const kiss_fft_cpx *) plan->base_in,
+                     plan->complex_out);
             memcpy(plan->base_out,
                    plan->complex_out,
                    (size_t) plan->nfft * sizeof(kiss_fft_cpx));
             break;
 
         case SHIM_PLAN_R2C:
-            memcpy(plan->real_buffer,
-                   plan->base_in,
-                   (size_t) plan->nfft * sizeof(kiss_fft_scalar));
-            kiss_fftr(plan->real_cfg, plan->real_buffer, plan->complex_out);
+            kiss_fftr(plan->real_cfg,
+                      (const kiss_fft_scalar *) plan->base_in,
+                      plan->complex_out);
             memcpy(plan->base_out,
                    plan->complex_out,
                    (size_t) (plan->nfft / 2 + 1) * sizeof(kiss_fft_cpx));
             break;
 
         case SHIM_PLAN_C2R:
-            memcpy(plan->complex_out,
-                   plan->base_in,
-                   (size_t) (plan->nfft / 2 + 1) * sizeof(kiss_fft_cpx));
-            kiss_fftri(plan->real_cfg, plan->complex_out, plan->real_buffer);
+            kiss_fftri(plan->real_cfg,
+                       (const kiss_fft_cpx *) plan->base_in,
+                       plan->real_buffer);
             memcpy(plan->base_out,
                    plan->real_buffer,
                    (size_t) plan->nfft * sizeof(kiss_fft_scalar));

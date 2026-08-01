@@ -43,10 +43,15 @@ void signalToFFT(decoder_t *decoder, float signal[], int sample_rate) {
     free(window);
 }
 
-void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8) {
+void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, int mode) {
     decoder_t *decoder = (decoder_t *) malloc(sizeof(decoder_t));
+    ftx_protocol_t monitor_protocol = PROTO_FT8;
     if (decoder == NULL) {
         return NULL;
+    }
+
+    if (mode == FTX_MODE_FT4) {
+        monitor_protocol = PROTO_FT4;
     }
 
     memset(decoder, 0, sizeof(decoder_t));
@@ -60,10 +65,10 @@ void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft
             .sample_rate = sample_rate,
             .time_osr = kTime_osr,
             .freq_osr = kFreq_osr,
-            .protocol = is_ft8 ? PROTO_FT8 : PROTO_FT4
+            .protocol = monitor_protocol
     };
 
-    if (!wsjtx3_backend_init_decoder(decoder, utcTime, sample_rate, num_samples, is_ft8)) {
+    if (!wsjtx3_backend_init_decoder(decoder, utcTime, sample_rate, num_samples, mode)) {
         free(decoder);
         return NULL;
     }
@@ -146,6 +151,27 @@ int decoder_get_last_merged_count(decoder_t *decoder) {
     return wsjtx3_backend_get_last_merged_count(decoder);
 }
 
+int decoder_get_bridge_context_id(decoder_t *decoder) {
+    if (decoder == NULL) {
+        return 0;
+    }
+    return wsjtx3_backend_get_bridge_context_id(decoder);
+}
+
+int decoder_reset_q65_averaging(decoder_t *decoder) {
+    return decoder == NULL ? 0 : wsjtx3_backend_reset_q65_averaging(decoder);
+}
+
+int decoder_get_q65_averaging_state(decoder_t *decoder,
+                                    int *averaged_frame_count,
+                                    int *clear_pending) {
+    if (decoder == NULL || averaged_frame_count == NULL || clear_pending == NULL) {
+        return 0;
+    }
+    return wsjtx3_backend_get_q65_averaging_state(
+            decoder, averaged_frame_count, clear_pending);
+}
+
 void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep) {
     if (decoder == NULL) {
         return;
@@ -186,6 +212,34 @@ void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t
         return;
     }
     wsjtx3_backend_set_options(decoder, options);
+}
+
+void decoder_set_q65_config(decoder_t *decoder, int q65_submode, int q65_tr_period_seconds) {
+    if (decoder == NULL) {
+        return;
+    }
+    wsjtx3_backend_set_q65_config(decoder, q65_submode, q65_tr_period_seconds);
+}
+
+void decoder_set_input_context(decoder_t *decoder,
+                               bool input_is_live,
+                               int qso_frequency_hz,
+                               int tx_frequency_hz,
+                               int source_sample_rate,
+                               int decode_stage) {
+    if (decoder == NULL) {
+        return;
+    }
+    wsjtx3_backend_set_input_context(decoder,
+                                     input_is_live,
+                                     qso_frequency_hz,
+                                     tx_frequency_hz,
+                                     source_sample_rate,
+                                     decode_stage);
+}
+
+void decoder_configure_runtime_dirs(const char *temp_dir, const char *data_dir) {
+    wsjtx3_backend_configure_runtime_dirs(temp_dir, data_dir);
 }
 
 bool decoder_owns_session_flow(decoder_t *decoder) {

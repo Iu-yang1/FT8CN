@@ -9,9 +9,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <chrono>
+#include <cstdint>
+#include <android/log.h>
 
 extern "C" {
 #include "common/debug.h"
+#include "common/native_float_buffer.h"
 #include "ft8Decoder.h"
 #include "ft8Encoder.h"
 #include "ftx_core/include/ftx_decoder.h"
@@ -21,6 +25,19 @@ extern "C" {
 
 static const int SIGNAL_MODE_FT8 = 0;
 static const int SIGNAL_MODE_FT4 = 1;
+static const int SIGNAL_MODE_Q65 = 2;
+
+#ifndef NDEBUG
+#define FTX_JNI_BENCHMARK_LOG(...) \
+    __android_log_print(ANDROID_LOG_INFO, "FtxJniBenchmark", __VA_ARGS__)
+#else
+#define FTX_JNI_BENCHMARK_LOG(...) ((void) 0)
+#endif
+
+static long long elapsed_ms(std::chrono::steady_clock::time_point started_at) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started_at).count();
+}
 
 typedef struct {
     jclass messageClass;
@@ -53,6 +70,8 @@ typedef struct {
     jfieldID callToHash10;
     jfieldID callToHash12;
     jfieldID callToHash22;
+    jfieldID txRawText;
+    jfieldID useTxRawText;
 } ft8_message_jni_cache_t;
 
 static ft8_message_jni_cache_t g_ft8_message_jni_cache = {};
@@ -138,7 +157,22 @@ static bool ensure_ft8_message_jni_cache(JNIEnv *env) {
     g_ft8_message_jni_cache.callToHash10 = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "callToHash10", "J");
     g_ft8_message_jni_cache.callToHash12 = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "callToHash12", "J");
     g_ft8_message_jni_cache.callToHash22 = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "callToHash22", "J");
+    g_ft8_message_jni_cache.txRawText = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "txRawText", "Ljava/lang/String;");
+    g_ft8_message_jni_cache.useTxRawText = env->GetFieldID(g_ft8_message_jni_cache.messageClass, "useTxRawText", "Z");
     return true;
+}
+
+static bool should_use_raw_decoded_text(int signalMode, const ftx_decode_result_t *result) {
+    if (signalMode == SIGNAL_MODE_Q65) {
+        return true;
+    }
+    if (result == nullptr) {
+        return false;
+    }
+    return result->text[0] != '\0'
+           && result->call_to[0] == '\0'
+           && result->call_de[0] == '\0'
+           && result->extra[0] == '\0';
 }
 
 static void populate_ft8_message_fields(JNIEnv *env,
@@ -189,6 +223,15 @@ static void populate_ft8_message_fields(JNIEnv *env,
     env->SetObjectField(ft8Message, g_ft8_message_jni_cache.rttyState, rttyState);
     env->SetObjectField(ft8Message, g_ft8_message_jni_cache.arrlRac, arrlRac);
     env->SetObjectField(ft8Message, g_ft8_message_jni_cache.arrlClass, arrlClass);
+
+    if (g_ft8_message_jni_cache.txRawText != nullptr && g_ft8_message_jni_cache.useTxRawText != nullptr) {
+        jstring txRawText = newJStringOrEmpty(env, should_use_raw_decoded_text(signalMode, result) ? result->text : "");
+        env->SetObjectField(ft8Message, g_ft8_message_jni_cache.txRawText, txRawText);
+        env->SetBooleanField(ft8Message,
+                             g_ft8_message_jni_cache.useTxRawText,
+                             should_use_raw_decoded_text(signalMode, result) ? JNI_TRUE : JNI_FALSE);
+        env->DeleteLocalRef(txRawText);
+    }
 
     env->DeleteLocalRef(callsignFrom);
     env->DeleteLocalRef(callsignTo);
@@ -458,16 +501,46 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderSetApHints(JNIEnv *en
  * 把频率幅度置零
  */
 extern "C"
+JNIEXPORT void JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_ConfigureNativeRuntimeDirectories(JNIEnv *env,
+                                                                                       jobject thiz,
+                                                                                       jstring tempDir,
+                                                                                       jstring dataDir) {
+    (void) thiz;
+
+    char tempPath[512] = {};
+    char dataPath[512] = {};
+    copyJStringToBuffer(env, tempDir, tempPath, sizeof(tempPath));
+    copyJStringToBuffer(env, dataDir, dataPath, sizeof(dataPath));
+    decoder_configure_runtime_dirs(tempPath, dataPath);
+}
+
+extern "C"
 JNIEXPORT jlong JNICALL
 Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_InitBatchDecoder(JNIEnv *env,
                                                                      jobject thiz,
                                                                      jint sampleRate,
                                                                      jint num_samples,
-                                                                     jboolean isFt8) {
+                                                                     jint mode) {
     (void) env;
     (void) thiz;
-    ftx_mode_t mode = isFt8 ? FTX_MODE_FT8 : FTX_MODE_FT4;
-    return (jlong) ftx_decoder_create(mode, sampleRate, num_samples, 0LL);
+    ftx_mode_t decoderMode;
+
+    switch (mode) {
+        case SIGNAL_MODE_FT8:
+            decoderMode = FTX_MODE_FT8;
+            break;
+        case SIGNAL_MODE_FT4:
+            decoderMode = FTX_MODE_FT4;
+            break;
+        case SIGNAL_MODE_Q65:
+            decoderMode = FTX_MODE_Q65;
+            break;
+        default:
+            return 0L;
+    }
+
+    return (jlong) ftx_decoder_create(decoderMode, sampleRate, num_samples, 0LL);
 }
 
 extern "C"
@@ -501,29 +574,73 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetLastMergedCount(JN
 }
 
 extern "C"
-JNIEXPORT jobjectArray JNICALL
-Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *env,
-                                                                        jobject thiz,
-                                                                        jlong decoderHandle,
-                                                                        jlong utcTime,
-                                                                        jint expectedSamples,
-                                                                        jfloatArray buffer,
-                                                                        jint decodeMode,
-                                                                        jint decodePassCount,
-                                                                        jint multiDecodeRoundCount,
-                                                                        jint qsoFreqSensitivity,
-                                                                        jint decodeSensitivity,
-                                                                        jboolean enableEarlyDecode,
-                                                                        jboolean enableWidebandDxSearch,
-                                                                        jboolean deepDecodeEnabled,
-                                                                        jstring myCall,
-                                                                        jobjectArray hintCallsigns,
-                                                                        jobjectArray hintGrids) {
+JNIEXPORT jint JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetBridgeContextId(JNIEnv *env,
+                                                                               jobject thiz,
+                                                                               jlong decoderHandle) {
+    (void) env;
     (void) thiz;
-    (void) expectedSamples;
+    return (jint) ftx_decoder_get_bridge_context_id((ftx_decoder_t *) decoderHandle);
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderResetQ65Averaging(JNIEnv *env,
+                                                                             jobject thiz,
+                                                                             jlong decoderHandle) {
+    (void) env;
+    (void) thiz;
+    return ftx_decoder_reset_q65_averaging((ftx_decoder_t *) decoderHandle) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C"
+JNIEXPORT jintArray JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderGetQ65AveragingState(JNIEnv *env,
+                                                                                jobject thiz,
+                                                                                jlong decoderHandle) {
+    (void) thiz;
+    int averagedFrameCount = 0;
+    int clearPending = 1;
+    if (ftx_decoder_get_q65_averaging_state(
+            (ftx_decoder_t *) decoderHandle, &averagedFrameCount, &clearPending) != 0) {
+        return nullptr;
+    }
+    const jint values[] = {(jint) averagedFrameCount, (jint) clearPending};
+    jintArray result = env->NewIntArray(2);
+    if (result != nullptr) {
+        env->SetIntArrayRegion(result, 0, 2, values);
+    }
+    return result;
+}
+
+static jobjectArray decoder_process_batch_common(JNIEnv *env,
+                                                 jlong decoderHandle,
+                                                 jlong utcTime,
+                                                 const float *samples,
+                                                 jint sampleCount,
+                                                 jint decodeMode,
+                                                 jint decodePassCount,
+                                                 jint multiDecodeRoundCount,
+                                                 jint qsoFreqSensitivity,
+                                                 jint decodeSensitivity,
+                                                 jboolean enableEarlyDecode,
+                                                 jboolean enableWidebandDxSearch,
+                                                 jboolean deepDecodeEnabled,
+                                                 jint q65Submode,
+                                                 jint q65TrPeriodSeconds,
+                                                 jboolean inputIsLive,
+                                                 jint sourceSampleRate,
+                                                 jint decodeStage,
+                                                 jint qsoFrequencyHz,
+                                                 jint txFrequencyHz,
+                                                 jstring myCall,
+                                                 jobjectArray hintCallsigns,
+                                                 jobjectArray hintGrids,
+                                                 jlong inputMs) {
+    const auto total_started_at = std::chrono::steady_clock::now();
 
     auto *decoder = (ftx_decoder_t *) decoderHandle;
-    if (decoder == nullptr || buffer == nullptr) {
+    if (decoder == nullptr || samples == nullptr || sampleCount <= 0) {
         return nullptr;
     }
     if (!ensure_ft8_message_jni_cache(env)) {
@@ -539,7 +656,21 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
     options.enable_wideband_dx_search = enableWidebandDxSearch ? 1 : 0;
     options.deep_decode_enabled = deepDecodeEnabled ? 1 : 0;
     options.ldpc_iterations = deepDecodeEnabled ? deep_kLDPC_iterations : fast_kLDPC_iterations;
-    ftx_decoder_set_options(decoder, &options);
+    options.q65_submode = q65Submode;
+    options.q65_tr_period_seconds = q65TrPeriodSeconds;
+    if (ftx_decoder_set_options(decoder, &options) != 0) {
+        return nullptr;
+    }
+
+    ftx_decoder_input_context_t inputContext{};
+    inputContext.input_is_live = inputIsLive ? 1 : 0;
+    inputContext.qso_frequency_hz = qsoFrequencyHz;
+    inputContext.tx_frequency_hz = txFrequencyHz;
+    inputContext.source_sample_rate = sourceSampleRate;
+    inputContext.decode_stage = decodeStage;
+    if (ftx_decoder_set_input_context(decoder, &inputContext) != 0) {
+        return nullptr;
+    }
 
     char myCallBuffer[FTX_AP_CALLSIGN_MAX] = {};
     copyJStringToBuffer(env, myCall, myCallBuffer, sizeof(myCallBuffer));
@@ -566,19 +697,14 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
                                 : env->GetStringUTFChars(hintGridRefs[index], nullptr);
     }
     ftx_decoder_set_ap_hints(decoder, myCallBuffer, hintCalls, hintGridValues, (int) hintCount);
+    const long long setup_ms = elapsed_ms(total_started_at);
 
-    jsize sampleCount = env->GetArrayLength(buffer);
-    jfloat *samples = env->GetFloatArrayElements(buffer, nullptr);
-    int resultCount = -1;
-    if (samples != nullptr && sampleCount > 0) {
-        resultCount = ftx_decoder_process_float_slot(decoder,
-                                                     samples,
-                                                     (int) sampleCount,
-                                                     (long long) utcTime);
-        env->ReleaseFloatArrayElements(buffer, samples, JNI_ABORT);
-    } else if (samples != nullptr) {
-        env->ReleaseFloatArrayElements(buffer, samples, JNI_ABORT);
-    }
+    const auto core_started_at = std::chrono::steady_clock::now();
+    const int resultCount = ftx_decoder_process_float_slot(decoder,
+                                                           samples,
+                                                           (int) sampleCount,
+                                                           (long long) utcTime);
+    const long long core_ms = elapsed_ms(core_started_at);
 
     for (jsize index = 0; index < hintCount; ++index) {
         if (hintCalls[index] != nullptr) {
@@ -596,12 +722,23 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
     }
 
     if (resultCount < 0) {
+        FTX_JNI_BENCHMARK_LOG(
+                "decode-jni-benchmark mode=%d stage=%d live=%d sourceRate=%d qsoHz=%d txHz=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=0 totalMs=%lld resultCount=%d",
+                decodeMode, decodeStage, inputIsLive ? 1 : 0, sourceSampleRate, qsoFrequencyHz,
+                 txFrequencyHz, sampleCount, setup_ms, (long long) inputMs, core_ms,
+                elapsed_ms(total_started_at), resultCount);
         return nullptr;
     }
     if (resultCount == 0) {
+        FTX_JNI_BENCHMARK_LOG(
+                "decode-jni-benchmark mode=%d stage=%d live=%d sourceRate=%d qsoHz=%d txHz=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=0 totalMs=%lld resultCount=0",
+                decodeMode, decodeStage, inputIsLive ? 1 : 0, sourceSampleRate, qsoFrequencyHz,
+                 txFrequencyHz, sampleCount, setup_ms, (long long) inputMs, core_ms,
+                 elapsed_ms(total_started_at));
         return env->NewObjectArray(0, g_ft8_message_jni_cache.messageClass, nullptr);
     }
 
+    const auto result_object_started_at = std::chrono::steady_clock::now();
     jobjectArray resultArray = env->NewObjectArray(resultCount,
                                                    g_ft8_message_jni_cache.messageClass,
                                                    nullptr);
@@ -627,7 +764,154 @@ Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *
         env->DeleteLocalRef(messageObject);
     }
 
+    const long long result_object_ms = elapsed_ms(result_object_started_at);
+    FTX_JNI_BENCHMARK_LOG(
+            "decode-jni-benchmark mode=%d stage=%d live=%d sourceRate=%d qsoHz=%d txHz=%d samples=%d setupMs=%lld inputMs=%lld coreMs=%lld resultObjectMs=%lld totalMs=%lld resultCount=%d",
+            decodeMode,
+            decodeStage,
+            inputIsLive ? 1 : 0,
+            sourceSampleRate,
+            qsoFrequencyHz,
+            txFrequencyHz,
+            sampleCount,
+            setup_ms,
+            (long long) inputMs,
+            core_ms,
+            result_object_ms,
+            elapsed_ms(total_started_at),
+            resultCount);
     return resultArray;
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatch(JNIEnv *env,
+                                                                        jobject,
+                                                                        jlong decoderHandle,
+                                                                        jlong utcTime,
+                                                                        jint expectedSamples,
+                                                                        jfloatArray buffer,
+                                                                        jint decodeMode,
+                                                                        jint decodePassCount,
+                                                                        jint multiDecodeRoundCount,
+                                                                        jint qsoFreqSensitivity,
+                                                                        jint decodeSensitivity,
+                                                                        jboolean enableEarlyDecode,
+                                                                        jboolean enableWidebandDxSearch,
+                                                                        jboolean deepDecodeEnabled,
+                                                                        jint q65Submode,
+                                                                        jint q65TrPeriodSeconds,
+                                                                        jboolean inputIsLive,
+                                                                        jint sourceSampleRate,
+                                                                        jint decodeStage,
+                                                                        jint qsoFrequencyHz,
+                                                                        jint txFrequencyHz,
+                                                                        jstring myCall,
+                                                                        jobjectArray hintCallsigns,
+                                                                        jobjectArray hintGrids) {
+    (void) expectedSamples;
+    if (buffer == nullptr) {
+        return nullptr;
+    }
+    const jsize sampleCount = env->GetArrayLength(buffer);
+    const auto input_started_at = std::chrono::steady_clock::now();
+    jfloat *samples = env->GetFloatArrayElements(buffer, nullptr);
+    const jlong inputMs = (jlong) elapsed_ms(input_started_at);
+    if (samples == nullptr || sampleCount <= 0) {
+        if (samples != nullptr) {
+            env->ReleaseFloatArrayElements(buffer, samples, JNI_ABORT);
+        }
+        return nullptr;
+    }
+    jobjectArray result = decoder_process_batch_common(
+            env,
+            decoderHandle,
+            utcTime,
+            samples,
+            sampleCount,
+            decodeMode,
+            decodePassCount,
+            multiDecodeRoundCount,
+            qsoFreqSensitivity,
+            decodeSensitivity,
+            enableEarlyDecode,
+            enableWidebandDxSearch,
+            deepDecodeEnabled,
+            q65Submode,
+            q65TrPeriodSeconds,
+            inputIsLive,
+            sourceSampleRate,
+            decodeStage,
+            qsoFrequencyHz,
+            txFrequencyHz,
+            myCall,
+            hintCallsigns,
+            hintGrids,
+            inputMs);
+    env->ReleaseFloatArrayElements(buffer, samples, JNI_ABORT);
+    return result;
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_com_bg7yoz_ft8cn_ft8listener_FT8SignalListener_DecoderProcessBatchNativeBuffer(
+        JNIEnv *env,
+        jobject,
+        jlong decoderHandle,
+        jlong utcTime,
+        jint expectedSamples,
+        jlong nativeBufferHandle,
+        jint sampleCount,
+        jint decodeMode,
+        jint decodePassCount,
+        jint multiDecodeRoundCount,
+        jint qsoFreqSensitivity,
+        jint decodeSensitivity,
+        jboolean enableEarlyDecode,
+        jboolean enableWidebandDxSearch,
+        jboolean deepDecodeEnabled,
+        jint q65Submode,
+        jint q65TrPeriodSeconds,
+        jboolean inputIsLive,
+        jint sourceSampleRate,
+        jint decodeStage,
+        jint qsoFrequencyHz,
+        jint txFrequencyHz,
+        jstring myCall,
+        jobjectArray hintCallsigns,
+        jobjectArray hintGrids) {
+    auto *nativeBuffer = reinterpret_cast<ftx_native_float_buffer_t *>(
+            static_cast<uintptr_t>(nativeBufferHandle));
+    if (nativeBuffer == nullptr || sampleCount <= 0 || expectedSamples != sampleCount
+        || ftx_native_float_buffer_size(nativeBuffer) != static_cast<size_t>(sampleCount)
+        || ftx_native_float_buffer_capacity(nativeBuffer) < static_cast<size_t>(sampleCount)) {
+        return nullptr;
+    }
+    return decoder_process_batch_common(
+            env,
+            decoderHandle,
+            utcTime,
+            ftx_native_float_buffer_data(nativeBuffer),
+            sampleCount,
+            decodeMode,
+            decodePassCount,
+            multiDecodeRoundCount,
+            qsoFreqSensitivity,
+            decodeSensitivity,
+            enableEarlyDecode,
+            enableWidebandDxSearch,
+            deepDecodeEnabled,
+            q65Submode,
+            q65TrPeriodSeconds,
+            inputIsLive,
+            sourceSampleRate,
+            decodeStage,
+            qsoFrequencyHz,
+            txFrequencyHz,
+            myCall,
+            hintCallsigns,
+            hintGrids,
+            0L);
 }
 
 extern "C"

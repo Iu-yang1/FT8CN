@@ -1,0 +1,166 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:7a6a4f78-42f8-4b7c-94e4-0acb223b8f8c",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-07-28T18:26:24Z",
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:github/Iu-yang1/FT8CN@dae3b4e37db5abd1b3a4c08d7635f60fd8bc4f20",
+      "name": "FT8CN",
+      "version": "dae3b4e37db5abd1b3a4c08d7635f60fd8bc4f20",
+      "licenses": [{"license": {"id": "MIT"}}]
+    },
+    "properties": [
+      {"name": "ft8cn:qualification", "value": "stage-0-9-device-release-2026-07-29"},
+      {"name": "ft8cn:native-profile", "value": "Release O2 NDEBUG; PARALLEL_NATIVE disabled"}
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/WSJTX/wsjtx@ab976b1b4b72a96aaa3259591f68ad772af7d7f9",
+      "name": "WSJT-X mobile core",
+      "version": "3.0.0+ft8cn",
+      "licenses": [{"license": {"id": "GPL-3.0-or-later"}}],
+      "externalReferences": [{"type": "vcs", "url": "https://github.com/WSJTX/wsjtx/tree/ab976b1b4b72a96aaa3259591f68ad772af7d7f9"}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/kgoba/ft8_lib@6f528128ee3ebf4d08ba2313f6c5d3913eda5608",
+      "name": "ft8_lib compatible codec",
+      "version": "6f528128",
+      "licenses": [{"license": {"id": "MIT"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/mborgerding/kissfft",
+      "name": "KISS FFT",
+      "licenses": [{"license": {"id": "BSD-3-Clause"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/llvm/llvm-project@llvmorg-22.1.5",
+      "name": "LLVM Flang/OpenMP runtime",
+      "version": "22.1.5",
+      "licenses": [{"expression": "Apache-2.0 WITH LLVM-exception"}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/boostorg/boost@boost-1.91.0",
+      "name": "Boost headers",
+      "version": "1.91.0",
+      "licenses": [{"license": {"id": "BSL-1.0"}}]
+    },
+    {
+      "type": "library",
+      "scope": "excluded",
+      "bom-ref": "pkg:github/Hamlib/Hamlib@c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e",
+      "name": "Hamlib Android library candidate",
+      "version": "5.0.0-git-c7fb0fa",
+      "hashes": [{"alg": "SHA-256", "content": "5441e4ded7f2485b066eff2748e1709dc848cc4b28e4611ec223a51b668e29ee"}],
+      "licenses": [{"expression": "LGPL-2.1-or-later"}],
+      "externalReferences": [{"type": "vcs", "url": "https://github.com/Hamlib/Hamlib/tree/c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e"}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:maven/com.github.PhilJay/MPAndroidChart@v3.1.0",
+      "name": "MPAndroidChart",
+      "version": "3.1.0",
+      "hashes": [{"alg": "SHA-256", "content": "bd7bbcc4a7354748d27056200c4cb1807b44fb8620ba211a112e0823dc3f9ded"}],
+      "licenses": [{"license": {"id": "Apache-2.0"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:maven/commons-net/commons-net@3.6",
+      "name": "Apache Commons Net",
+      "version": "3.6",
+      "hashes": [{"alg": "SHA-256", "content": "d3b3866c61a47ba3bf040ab98e60c3010d027da0e7a99e1755e407dd47bc2702"}],
+      "licenses": [{"license": {"id": "Apache-2.0"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:maven/org.nanohttpd/nanohttpd@2.2.0",
+      "name": "NanoHTTPD",
+      "version": "2.2.0",
+      "hashes": [{"alg": "SHA-256", "content": "8463e7678ff962f730828e55327696a9936eddc4c12fe8bf3a6187cfe7956eb6"}],
+      "licenses": [{"license": {"id": "BSD-3-Clause"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:maven/org.osmdroid/osmdroid-android@6.1.14",
+      "name": "osmdroid-android",
+      "version": "6.1.14",
+      "hashes": [{"alg": "SHA-256", "content": "f97ad5198597a59c559ed6f87e040b06cb3c51256d77b03bfec0f247b55a22aa"}],
+      "licenses": [{"license": {"id": "Apache-2.0"}}]
+    },
+    {"type": "library", "bom-ref": "pkg:maven/androidx.appcompat/appcompat@1.6.1", "name": "AndroidX AppCompat", "version": "1.6.1", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/com.google.android.material/material@1.8.0", "name": "Material Components", "version": "1.8.0", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "framework", "bom-ref": "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@1.8.10", "name": "Kotlin", "version": "1.8.10", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.6.4", "name": "Kotlin Coroutines Android", "version": "1.6.4", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "framework", "bom-ref": "pkg:maven/androidx.compose.ui/ui@1.4.0", "name": "Jetpack Compose UI", "version": "1.4.0", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "framework", "bom-ref": "pkg:maven/androidx.compose.material3/material3@1.0.1", "name": "Material 3 Compose", "version": "1.0.1", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/androidx.room/room-runtime@2.5.2", "name": "AndroidX Room", "version": "2.5.2", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/androidx.datastore/datastore-preferences@1.0.0", "name": "AndroidX DataStore Preferences", "version": "1.0.0", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/androidx.work/work-runtime-ktx@2.8.1", "name": "AndroidX WorkManager", "version": "2.8.1", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "scope": "optional", "bom-ref": "pkg:maven/com.squareup.leakcanary/leakcanary-android@2.12", "name": "LeakCanary", "version": "2.12", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "scope": "excluded", "bom-ref": "pkg:maven/org.robolectric/robolectric@4.10.3", "name": "Robolectric", "version": "4.10.3", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/androidx.constraintlayout/constraintlayout@2.1.4", "name": "ConstraintLayout", "version": "2.1.4", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel@2.5.1", "name": "AndroidX Lifecycle", "version": "2.5.1", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/androidx.navigation/navigation-fragment@2.5.3", "name": "AndroidX Navigation", "version": "2.5.3", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/com.google.guava/guava@31.1-jre", "name": "Guava", "version": "31.1-jre", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "bom-ref": "pkg:maven/com.google.android.gms/play-services-maps@18.1.0", "name": "Google Play services Maps", "version": "18.1.0", "licenses": [{"license": {"name": "Google APIs Terms of Service"}}]},
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/aholinch/sgp4@552cb1489a52c3023ae70cb6c7e239e84c5950fe",
+      "name": "aholinch Java SGP4",
+      "version": "552cb148",
+      "hashes": [{"alg": "SHA-256", "content": "12af6e4fce194d7eb3b48cd0afd2a70edf2fcfd9501d775cef08b5fba451d119"}],
+      "licenses": [{"license": {"id": "Unlicense"}}],
+      "externalReferences": [{"type": "vcs", "url": "https://github.com/aholinch/sgp4/tree/552cb1489a52c3023ae70cb6c7e239e84c5950fe"}]
+    },
+    {
+      "type": "library",
+      "scope": "excluded",
+      "bom-ref": "pkg:generic/trustedqsl@2.8.6",
+      "name": "TrustedQSL external signing reference",
+      "version": "2.8.6",
+      "hashes": [{"alg": "SHA-256", "content": "182e5f2ac35a3db8b409b45d96505e6bd265ae4668ed064754209c4b8e7bdf37"}],
+      "licenses": [{"license": {"name": "TrustedQSL License"}}],
+      "externalReferences": [{"type": "distribution", "url": "https://downloads.sourceforge.net/project/trustedqsl/tqsl-2.8.6.tar.gz"}]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:github/Iu-yang1/FT8CN@10b2c62e4c75021eb559825c3da85f77b10a052d",
+      "dependsOn": [
+        "pkg:github/WSJTX/wsjtx@ab976b1b4b72a96aaa3259591f68ad772af7d7f9",
+        "pkg:github/kgoba/ft8_lib@6f528128ee3ebf4d08ba2313f6c5d3913eda5608",
+        "pkg:github/mborgerding/kissfft",
+        "pkg:github/llvm/llvm-project@llvmorg-22.1.5",
+        "pkg:github/boostorg/boost@boost-1.91.0",
+        "pkg:maven/com.github.PhilJay/MPAndroidChart@v3.1.0",
+        "pkg:maven/commons-net/commons-net@3.6",
+        "pkg:maven/org.nanohttpd/nanohttpd@2.2.0",
+        "pkg:maven/org.osmdroid/osmdroid-android@6.1.14",
+        "pkg:maven/androidx.appcompat/appcompat@1.6.1",
+        "pkg:maven/com.google.android.material/material@1.8.0",
+        "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@1.8.10",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.6.4",
+        "pkg:maven/androidx.compose.ui/ui@1.4.0",
+        "pkg:maven/androidx.compose.material3/material3@1.0.1",
+        "pkg:maven/androidx.room/room-runtime@2.5.2",
+        "pkg:maven/androidx.datastore/datastore-preferences@1.0.0",
+        "pkg:maven/androidx.work/work-runtime-ktx@2.8.1",
+        "pkg:maven/com.squareup.leakcanary/leakcanary-android@2.12",
+        "pkg:maven/androidx.constraintlayout/constraintlayout@2.1.4",
+        "pkg:maven/androidx.lifecycle/lifecycle-viewmodel@2.5.1",
+        "pkg:maven/androidx.navigation/navigation-fragment@2.5.3",
+        "pkg:maven/com.google.guava/guava@31.1-jre",
+        "pkg:maven/com.google.android.gms/play-services-maps@18.1.0"
+        ,"pkg:github/aholinch/sgp4@552cb1489a52c3023ae70cb6c7e239e84c5950fe"
+      ]
+    }
+  ]
+}

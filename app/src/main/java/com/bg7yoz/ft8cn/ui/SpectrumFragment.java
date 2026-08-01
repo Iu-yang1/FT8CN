@@ -1,7 +1,9 @@
 package com.bg7yoz.ft8cn.ui;
 
 import android.annotation.SuppressLint;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -32,6 +34,9 @@ public class SpectrumFragment extends Fragment {
     private int lastLoggedSourceRate = -1;
     private int lastLoggedInputLen = -1;
     private int lastLoggedRenderBins = -1;
+    private long lastAudioStatusLogMillis = 0L;
+    private boolean lastLoggedSystemSilenced = false;
+    private boolean lastLoggedHasAudio = true;
 
     static {
         System.loadLibrary("ft8cn");
@@ -59,6 +64,15 @@ public class SpectrumFragment extends Fragment {
         observeViewModel();
 
         return binding.getRoot();
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        // 从配置页返回时，采样率或输入源可能已变化，需要用最新参数重建窗口。
+        if (mainViewModel != null && mainViewModel.spectrumListener != null) {
+            mainViewModel.spectrumListener.start();
+        }
     }
 
     private void setupSwitchListeners() {
@@ -142,7 +156,12 @@ public class SpectrumFragment extends Fragment {
                         buffer.length,
                         fftBuffer.length
                 );
-                renderBuffer = SpectrumListener.normalizeDisplayBins(fftBuffer, renderBinCount);
+                if (renderBuffer == null
+                        || renderBuffer.length != SpectrumListener.DISPLAY_BIN_COUNT) {
+                    renderBuffer = new int[SpectrumListener.DISPLAY_BIN_COUNT];
+                }
+                SpectrumListener.normalizeDisplayBins(fftBuffer, renderBinCount, renderBuffer);
+                updateAudioInputStatus(frame);
 
                 if (lastLoggedSourceRate != sourceRate
                         || lastLoggedInputLen != buffer.length
@@ -207,6 +226,53 @@ public class SpectrumFragment extends Fragment {
         binding.showMessageSwitch.setText(mainViewModel.markMessage ?
                 getString(R.string.markMessage) :
                 getString(R.string.unMarkMessage));
+    }
+
+    private void updateAudioInputStatus(SpectrumListener.SpectrumFrame frame) {
+        final boolean hasAudio = frame.peak > 1.0e-7f || frame.rms > 1.0e-8f;
+        final String route = frame.inputRoute == null || frame.inputRoute.isEmpty()
+                ? "系统默认输入" : frame.inputRoute;
+        final String text;
+        final int color;
+        if (frame.systemSilenced) {
+            text = "录音被其他应用占用 · " + route;
+            color = Color.rgb(255, 92, 92);
+        } else if (!hasAudio) {
+            text = "未检测到音频 · " + route;
+            color = Color.rgb(255, 193, 7);
+        } else {
+            double dbfs = 20.0 * Math.log10(Math.max(frame.rms, 1.0e-9f));
+            text = String.format("输入 %.0f dBFS · %s", dbfs, route);
+            color = Color.rgb(0, 255, 255);
+        }
+        binding.audioInputStatusTextView.setText(
+                GeneralVariables.isQ65Mode() ? "Q65 EME 已启用 · " + text : text);
+        binding.audioInputStatusTextView.setTextColor(color);
+
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastAudioStatusLogMillis >= 3_000L
+                || frame.systemSilenced != lastLoggedSystemSilenced
+                || hasAudio != lastLoggedHasAudio) {
+            Log.i(TAG, String.format(
+                    "Spectrum audio sourceRate=%d peak=%.7f rms=%.7f route=%s systemSilenced=%s",
+                    frame.sampleRate,
+                    frame.peak,
+                    frame.rms,
+                    route,
+                    frame.systemSilenced
+            ));
+            lastAudioStatusLogMillis = now;
+            lastLoggedSystemSilenced = frame.systemSilenced;
+            lastLoggedHasAudio = hasAudio;
+        }
+    }
+
+    @Override
+    public void onDestroyView() {
+        fftBuffer = null;
+        renderBuffer = null;
+        binding = null;
+        super.onDestroyView();
     }
 
     // native 方法保持不变

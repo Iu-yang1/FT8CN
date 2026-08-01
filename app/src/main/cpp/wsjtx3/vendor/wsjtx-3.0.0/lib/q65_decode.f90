@@ -1,8 +1,10 @@
 module q65_decode
+  use iso_c_binding, only: c_int, c_long_long
 
   integer nsnr0,nfreq0
   real xdt0
   character msg0*37,cq0*3
+  logical :: q65_file_io_enabled = .true.
 
   type :: q65_decoder
      procedure(q65_decode_callback), pointer :: callback
@@ -28,7 +30,41 @@ module q65_decode
      end subroutine q65_decode_callback
   end interface
 
+  interface
+     integer(c_int) function wsjtx3_phase_trace_is_enabled() bind(C, name="wsjtx3_phase_trace_is_enabled")
+       import :: c_int
+     end function wsjtx3_phase_trace_is_enabled
+
+     subroutine wsjtx3_vendor_trace_event(phase, pass_index, candidate_count, decoded_count, duration_us) &
+          bind(C, name="wsjtx3_vendor_trace_event")
+       import :: c_int, c_long_long
+       integer(c_int), value :: phase, pass_index, candidate_count, decoded_count
+       integer(c_long_long), value :: duration_us
+     end subroutine wsjtx3_vendor_trace_event
+  end interface
+
 contains
+
+  integer(c_long_long) function vendor_trace_now()
+    integer(c_long_long) :: count
+    if (wsjtx3_phase_trace_is_enabled() == 0) then
+       vendor_trace_now = 0
+       return
+    endif
+    call system_clock(count=count)
+    vendor_trace_now = count
+  end function vendor_trace_now
+
+  integer(c_long_long) function vendor_trace_elapsed_us(started_at)
+    integer(c_long_long), intent(in) :: started_at
+    integer(c_long_long) :: finished_at, count_rate
+    if (started_at <= 0) then
+       vendor_trace_elapsed_us = 0
+       return
+    endif
+    call system_clock(count=finished_at, count_rate=count_rate)
+    vendor_trace_elapsed_us = ((finished_at - started_at) * 1000000_c_long_long) / count_rate
+  end function vendor_trace_elapsed_us
 
   subroutine decode(this,callback,iwave,nqd0,nutc,ntrperiod,nsubmode,nfqso,  &
        ntol,ndepth,nfa0,nfb0,lclearave,single_decode,lagain,max_drift0,      &
@@ -81,7 +117,8 @@ contains
     integer nqf(20)
     integer stageno                       !Added by W3SZ
     integer time
-    logical lclearave,lnewdat0,lapcqonly,unpk77_success
+    integer(c_long_long) trace_phase_started
+    logical lclearave,lnewdat0,lapcqonly,unpk77_success,c00_ready
     logical single_decode,lagain
     complex c00(0:3600000)                !Analytic signal, 6000 Sa/s
     type(q3list) callers(MAX_CALLERS)
@@ -103,6 +140,7 @@ contains
     idf=0
     idt=0
     nrc=-2
+    c00_ready=.false.
     mode_q65=2**nsubmode
     npts=ntrperiod*12000
     nfft1=ntrperiod*12000
@@ -206,11 +244,14 @@ contains
     if(nQSOprogress.eq.5) npasses=3
 
     call timer('q65_dec0',0)
+    trace_phase_started=vendor_trace_now()
 ! Call top-level routine in q65 module: establish sync and try for a
 ! q3 or q0 decode.
     call q65_dec0(iavg,iwave,ntrperiod,nfqso,ntol,lclearave,  &
          emedelay,xdt,f0,snr1,width,dat4,snr2,idec,stageno)
     call timer('q65_dec0',1)
+    call wsjtx3_vendor_trace_event(201_c_int, 0_c_int, ncand, ndecodes, &
+         vendor_trace_elapsed_us(trace_phase_started))
 
     if(idec.ge.0) then
        dtdec=xdt                    !We have a q3 or q0 decode at nfqso
@@ -225,7 +266,11 @@ contains
     jpk0=(xdt+1.0)*6000                      !Index of nominal start of signal
     if(ntrperiod.le.30) jpk0=(xdt+0.5)*6000  !For shortest sequences
     if(jpk0.lt.0) jpk0=0
+    trace_phase_started=vendor_trace_now()
     call ana64(iwave,npts,c00)          !Convert to complex c00() at 6000 Sa/s
+    c00_ready=.true.
+    call wsjtx3_vendor_trace_event(202_c_int, 0_c_int, ncand, ndecodes, &
+         vendor_trace_elapsed_us(trace_phase_started))
     if(lapcqonly) npasses=1
     iaptype=0
     do ipass=0,npasses                  !Loop over AP passes
@@ -244,9 +289,12 @@ contains
        endif
 
        call timer('q65loop1',0)
+       trace_phase_started=vendor_trace_now()
        call q65_loops(c00,npts/2,nsps/2,nsubmode,ndepth,jpk0,   &
             xdt,f0,iaptype,xdt1,f1,snr2,dat4,idec)
        call timer('q65loop1',1)
+       call wsjtx3_vendor_trace_event(203_c_int, ipass, ncand, ndecodes, &
+            vendor_trace_elapsed_us(trace_phase_started))
        if(idec.ge.0) then
           dtdec=xdt1
           f0dec=f1
@@ -260,11 +308,14 @@ contains
 ! There was no single-transmission decode. Try for an average 'q3n' decode.
 50  iavg=1
     call timer('list_avg',0)
+    trace_phase_started=vendor_trace_now()
 ! Call top-level routine in q65 module: establish sync and try for a q3
 ! decode, this time using the cumulative 's1a' symbol spectra.
     call q65_dec0(iavg,iwave,ntrperiod,nfqso,ntol,lclearave,  &
          emedelay,xdt,f0,snr1,width,dat4,snr2,idec,stageno)
     call timer('list_avg',1)
+    call wsjtx3_vendor_trace_event(201_c_int, 10_c_int, ncand, ndecodes, &
+         vendor_trace_elapsed_us(trace_phase_started))
 
     if(idec.ge.0) then
        dtdec=xdt               !We have a list-decode result from averaged data
@@ -278,10 +329,13 @@ contains
 ! decode, this time using the cumulative 's1a' symbol spectra.
 
     call timer('q65_avg ',0)
+    trace_phase_started=vendor_trace_now()
     iavg=2
     call q65_dec0(iavg,iwave,ntrperiod,nfqso,ntol,lclearave,  &
          emedelay,xdt,f0,snr1,width,dat4,snr2,idec,stageno)
     call timer('q65_avg ',1)
+    call wsjtx3_vendor_trace_event(201_c_int, 20_c_int, ncand, ndecodes, &
+         vendor_trace_elapsed_us(trace_phase_started))
     if(idec.ge.0) then
        dtdec=xdt                          !We have a q[012]n result
        f0dec=f0
@@ -291,11 +345,14 @@ contains
 100 if(idec.lt.0 .and. max_drift.eq.50) then
        stageno = 5
        call timer('q65_dec0',0)
+       trace_phase_started=vendor_trace_now()
        ! Call top-level routine in q65 module: establish sync and try for a
        ! q3 or q0 decode.
        call q65_dec0(iavg,iwave,ntrperiod,nfqso,ntol,lclearave,  &
             emedelay,xdt,f0,snr1,width,dat4,snr2,idec,stageno)
        call timer('q65_dec0',1)
+       call wsjtx3_vendor_trace_event(201_c_int, 50_c_int, ncand, ndecodes, &
+            vendor_trace_elapsed_us(trace_phase_started))
        if(idec.ge.0) then
           dtdec=xdt             !We have a q[012]n result
           f0dec=f0
@@ -337,8 +394,9 @@ contains
           if(iand(ndepth,128).ne.0 .and. .not.lagain .and.      &
                int(abs(f0dec-nfqso)).le.ntol ) call q65_clravg    !AutoClrAvg
           call sec0(1,tdecode)
-          open(22,file=trim(data_dir)//'/q65_decodes.txt',status='unknown',  &
-               position='append',iostat=ios)
+          ios=1
+          if(q65_file_io_enabled) open(22,file=trim(data_dir)//'/q65_decodes.txt', &
+               status='unknown',position='append',iostat=ios)
           if(ios.eq.0) then
 ! Save decoding parameters to q65_decoded.dat, for later analysis.
              write(cmode,'(i3)') ntrperiod
@@ -360,6 +418,15 @@ contains
     endif
     navg0=1000*navg(0) + navg(1)
     if(single_decode .or. lagain) go to 900
+
+    ! 同一接收帧的解析信号与候选频率无关，宽带候选共用一次 ana64 结果。
+    if(ncand.gt.0 .and. .not.c00_ready) then
+       trace_phase_started=vendor_trace_now()
+       call ana64(iwave,npts,c00)
+       c00_ready=.true.
+       call wsjtx3_vendor_trace_event(202_c_int, -1_c_int, ncand, ndecodes, &
+            vendor_trace_elapsed_us(trace_phase_started))
+    endif
 
     do icand=1,ncand
 ! Prepare for single-period candidate decodes with iaptype = 0, 1, 2, or 4
@@ -389,7 +456,6 @@ contains
        jpk0=(xdt+1.0)*6000                   !Index of nominal start of signal
        if(ntrperiod.le.30) jpk0=(xdt+0.5)*6000  !For shortest sequences
        if(jpk0.lt.0) jpk0=0
-       call ana64(iwave,npts,c00)       !Convert to complex c00() at 6000 Sa/s
        call ft8apset(mycall,hiscall,ncontest,apsym0,aph10) ! Generate ap symbols
        where(apsym0.eq.-1) apsym0=0
 
@@ -413,9 +479,12 @@ contains
           endif
 
           call timer('q65loop2',0)
+          trace_phase_started=vendor_trace_now()
           call q65_loops(c00,npts/2,nsps/2,nsubmode,ndepth,jpk0,   &
                xdt,f0,iaptype,xdt1,f1,snr2,dat4,idec)
           call timer('q65loop2',1)
+          call wsjtx3_vendor_trace_event(203_c_int, ipass, ncand, ndecodes, &
+               vendor_trace_elapsed_us(trace_phase_started))
 !          write(*,3001) '=e',nfqso,ntol,ndepth,xdt,f0,idec
           if(idec.ge.0) then
              dtdec=xdt1
@@ -450,8 +519,8 @@ contains
                   int(abs(f0dec-nfqso)).le.ntol ) call q65_clravg    !AutoClrAvg
              call sec0(1,tdecode)
              ios=1
-             open(22,file=trim(data_dir)//'/q65_decodes.txt',status='unknown',&
-                  position='append',iostat=ios)
+             if(q65_file_io_enabled) open(22,file=trim(data_dir)//'/q65_decodes.txt', &
+                  status='unknown',position='append',iostat=ios)
              if(ios.eq.0) then
 ! Save decoding parameters to q65_decoded.dat, for later analysis.
                 write(cmode,'(i3)') ntrperiod

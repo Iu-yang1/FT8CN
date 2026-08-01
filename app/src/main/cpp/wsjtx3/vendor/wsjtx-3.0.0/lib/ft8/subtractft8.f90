@@ -8,7 +8,7 @@ subroutine subtractft8(dd0,itone,f0,dt,lrefinedt)
 ! Subtract         : dd(t)    = dd(t) - 2*REAL{cref*cfilt}
 
   parameter (NMAX=15*12000,NFRAME=1920*79)
-  parameter (NFFT=NMAX,NFILT=4000)
+  parameter (NFFT=160000,NFILT=4000)
   real dd(NMAX),dd0(NMAX)
   real window(-NFILT/2:NFILT/2)
   real x(NFFT+2)
@@ -30,11 +30,11 @@ subroutine subtractft8(dd0,itone,f0,dt,lrefinedt)
         window(j)=cos(pi*j/NFILT)**2
         sumw=sumw+window(j)
      enddo
-     cw=0.
+     cw(1:NFFT)=0.
      cw(1:NFILT+1)=window/sumw
-     cw=cshift(cw,NFILT/2+1)
+     cw(1:NFFT)=cshift(cw(1:NFFT),NFILT/2+1)
      call four2a(cw,nfft,1,-1,1)
-     cw=cw*fac
+     cw(1:NFFT)=cw(1:NFFT)*fac
      first=.false.
      do j=1,NFILT/2+1
        endcorrection(j)=1.0/(1.0-sum(window(j-1:NFILT/2))/sumw)
@@ -66,7 +66,7 @@ contains
 
   real function sqf(idt)         !Internal function: all variables accessible
     nstart=dt*12000+1 + idt
-    camp=0.
+    camp(1:nframe)=0.
     dd=dd0
     do i=1,nframe
        j=nstart-1+i 
@@ -74,7 +74,7 @@ contains
     enddo
 
     cfilt(1:nframe)=camp(1:nframe)
-    cfilt(nframe+1:)=0.0
+    cfilt(nframe+1:NFFT)=0.0
     call four2a(cfilt,nfft,1,-1,1)
     cfilt(1:nfft)=cfilt(1:nfft)*cw(1:nfft)
     call four2a(cfilt,nfft,1,1,1)

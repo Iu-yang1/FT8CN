@@ -3,6 +3,7 @@
 
 #include "ft8/constants.h"
 #include "ft8/decode.h"
+#include "ftx_core/include/ftx_types.h"
 #include "monitor_opr.h"
 
 #include <time.h>
@@ -63,7 +64,7 @@ static const int kFreq_osr = 2;
 static const int kTime_osr = 2;
 
 void signalToFFT(decoder_t *decoder, float signal[], int sample_rate);
-void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, bool is_ft8);
+void *init_decoder(int64_t utcTime, int sample_rate, int num_samples, int mode);
 void delete_decoder(decoder_t *decoder);
 void decoder_monitor_press(float signal[], decoder_t *decoder);
 void decoder_monitor_press_samples(float signal[], decoder_t *decoder, int sample_count);
@@ -73,10 +74,23 @@ void decoder_ft8_reset(decoder_t *decoder, long utcTime, int num_samples);
 void decoder_get_a91(decoder_t *decoder, uint8_t out[FTX_LDPC_K_BYTES]);
 int decoder_get_last_bridge_raw_count(decoder_t *decoder);
 int decoder_get_last_merged_count(decoder_t *decoder);
+int decoder_get_bridge_context_id(decoder_t *decoder);
+int decoder_reset_q65_averaging(decoder_t *decoder);
+int decoder_get_q65_averaging_state(decoder_t *decoder,
+                                    int *averaged_frame_count,
+                                    int *clear_pending);
 void decoder_set_ldpc_iterations(decoder_t *decoder, bool is_deep);
 void decoder_set_ldpc_iterations_value(decoder_t *decoder, int iterations);
 void decoder_set_ap_hints(decoder_t *decoder, const ap_hints_t *ap_hints);
 void decoder_set_wsjtx_options(decoder_t *decoder, const wsjtx_decoder_options_t *options);
+void decoder_set_q65_config(decoder_t *decoder, int q65_submode, int q65_tr_period_seconds);
+void decoder_set_input_context(decoder_t *decoder,
+                               bool input_is_live,
+                               int qso_frequency_hz,
+                               int tx_frequency_hz,
+                               int source_sample_rate,
+                               int decode_stage);
+void decoder_configure_runtime_dirs(const char *temp_dir, const char *data_dir);
 bool decoder_owns_session_flow(decoder_t *decoder);
 void decoder_subtract_signal(decoder_t *decoder,
                              const uint8_t *payload,

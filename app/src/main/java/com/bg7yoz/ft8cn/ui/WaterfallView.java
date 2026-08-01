@@ -118,6 +118,14 @@ public class WaterfallView extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         setClickable(true);
+        super.onSizeChanged(w, h, oldw, oldh);
+        createDrawingBuffers(w, h);
+    }
+
+    private void createDrawingBuffers(int w, int h) {
+        if (w <= 0 || h <= 0) {
+            return;
+        }
         blockHeight = Math.max(1, h / (symbols * cycle));
         freq_width = (float) w / (float) SpectrumListener.DISPLAY_MAX_FREQUENCY_HZ;
         if (lastBitMap != null) {
@@ -199,8 +207,14 @@ public class WaterfallView extends View {
             pathEnd = 130 * getResources().getDisplayMetrics().density;
         }
 
-        super.onSizeChanged(w, h, oldw, oldh);
+    }
 
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (lastBitMap == null) {
+            createDrawingBuffers(getWidth(), getHeight());
+        }
     }
 
     @SuppressLint("DefaultLocale")
@@ -337,6 +351,22 @@ public class WaterfallView extends View {
 
     public int getFreq_hz() {
         return freq_hz;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (lastBitMap != null) {
+            lastBitMap.recycle();
+            lastBitMap = null;
+            _canvas = null;
+        }
+        if (scrollBitmap != null) {
+            scrollBitmap.recycle();
+            scrollBitmap = null;
+            scrollCanvas = null;
+        }
+        colorBuffer = new int[0];
+        super.onDetachedFromWindow();
     }
 }
 

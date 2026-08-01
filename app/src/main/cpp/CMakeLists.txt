@@ -3,16 +3,21 @@ cmake_minimum_required(VERSION 3.18.1)
 project("ft8cn")
 
 option(FT8CN_ENABLE_WSJTX3_BACKEND "Enable official WSJT-X 3.0 backend bridge" ON)
+option(FT8CN_ENABLE_NATIVE_HAMLIB "Enable the in-process Hamlib radio backend" ON)
 
-if (DEFINED ANDROID_NDK AND NOT ANDROID_NDK STREQUAL "")
-    set(FT8CN_WSJTX3_NDK_ROOT_DEFAULT "${ANDROID_NDK}")
-else ()
-    set(FT8CN_WSJTX3_NDK_ROOT_DEFAULT "H:/iu_yang1/AndroidSDKLIB/ndk/23.1.7779620")
+set(FT8CN_WSJTX3_NDK_ROOT "${ANDROID_NDK}" CACHE PATH "Android NDK root; empty lets the build script discover it")
+set(FT8CN_WSJTX3_FLANG_PATH "$ENV{FT8CN_FLANG_PATH}" CACHE FILEPATH "Android-capable Flang; empty enables discovery")
+set(FT8CN_WSJTX3_BOOST_HEADERS "$ENV{BOOST_ROOT}" CACHE PATH "Boost headers; empty enables discovery")
+set(FT8CN_WSJTX3_LLVM_SOURCE_ROOT "$ENV{LLVM_SOURCE_ROOT}" CACHE PATH "LLVM source root used for isolated flang-rt build")
+set(FT8CN_HAMLIB_PREBUILT_ROOT "$ENV{FT8CN_HAMLIB_PREBUILT_ROOT}" CACHE PATH
+        "Optional verified Hamlib Android install root; empty builds it reproducibly")
+set(FT8CN_WSJTX3_BUILD_PROFILE "Auto" CACHE STRING "WSJT-X core profile: Auto, Debug, Profile, or Release")
+set_property(CACHE FT8CN_WSJTX3_BUILD_PROFILE PROPERTY STRINGS Auto Debug Profile Release)
+set(FT8CN_WSJTX3_OPTIMIZATION "O2" CACHE STRING "WSJT-X release optimization: O2 or O3")
+set_property(CACHE FT8CN_WSJTX3_OPTIMIZATION PROPERTY STRINGS O2 O3)
+if (NOT FT8CN_WSJTX3_OPTIMIZATION MATCHES "^O[23]$")
+    message(FATAL_ERROR "FT8CN_WSJTX3_OPTIMIZATION must be O2 or O3")
 endif ()
-
-set(FT8CN_WSJTX3_FLANG_PATH "H:/tools/build/llvm-flang-22.1.5-clangcl/bin/flang.exe" CACHE FILEPATH "Path to the Android-capable flang compiler")
-set(FT8CN_WSJTX3_BOOST_HEADERS "H:/tools/boost_headers" CACHE PATH "Path to standalone Boost headers used by wsjtx3 Android bridge")
-set(FT8CN_WSJTX3_NDK_ROOT "${FT8CN_WSJTX3_NDK_ROOT_DEFAULT}" CACHE PATH "Path to Android NDK root used by wsjtx3 Android bridge")
 
 add_library(
         ftx_core
@@ -35,6 +40,7 @@ add_library(
         ft8/encode.c
         ft8/pack.c
 
+        common/resampler.c
         common/wave.c
         monitor_opr.c
         ft8Decoder.c
@@ -57,9 +63,12 @@ add_library(
         generate_ft8.cpp
         diagnostics/ap_regression.cpp
         diagnostics/sample_decode.cpp
+        ft8Resample.cpp
+        nativeFloatBuffer.cpp
         ft8Listener.cpp
         ft8Spectrum.cpp
         experimentalCodec.cpp
+        hamlib_jni.cpp
 )
 
 find_library(
@@ -72,6 +81,56 @@ find_library(
         m
 )
 
+set(FT8CN_NATIVE_HAMLIB_ACTIVE 0)
+if (FT8CN_ENABLE_NATIVE_HAMLIB AND ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
+    if (FT8CN_HAMLIB_PREBUILT_ROOT)
+        set(FT8CN_HAMLIB_OUTPUT_ROOT "${FT8CN_HAMLIB_PREBUILT_ROOT}")
+    elseif (CMAKE_HOST_WIN32)
+        set(FT8CN_HAMLIB_OUTPUT_ROOT "${CMAKE_CURRENT_BINARY_DIR}/hamlib_android/install")
+    else ()
+        message(FATAL_ERROR
+                "Native Hamlib is enabled. Pass FT8CN_HAMLIB_PREBUILT_ROOT with a verified Android install, "
+                "or explicitly set FT8CN_ENABLE_NATIVE_HAMLIB=OFF for a rigctld-only build.")
+    endif ()
+    set(FT8CN_HAMLIB_LIBRARY "${FT8CN_HAMLIB_OUTPUT_ROOT}/lib/arm64-v8a/libhamlib.so")
+    set(FT8CN_HAMLIB_INCLUDE_ROOT "${FT8CN_HAMLIB_OUTPUT_ROOT}/include")
+
+    if (NOT EXISTS "${FT8CN_HAMLIB_LIBRARY}" AND CMAKE_HOST_WIN32)
+        add_custom_command(
+                OUTPUT "${FT8CN_HAMLIB_LIBRARY}"
+                COMMAND powershell.exe -ExecutionPolicy Bypass -File
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../../scripts/build-hamlib-android.ps1"
+                -NdkRoot "${ANDROID_NDK}"
+                -OutputRoot "${FT8CN_HAMLIB_OUTPUT_ROOT}"
+                -Abi "${ANDROID_ABI}"
+                -Api 28
+                DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../../scripts/build-hamlib-android.ps1"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../../scripts/toolchain-common.ps1"
+                VERBATIM
+        )
+        add_custom_target(hamlib_android_build DEPENDS "${FT8CN_HAMLIB_LIBRARY}")
+    endif ()
+
+    if (NOT EXISTS "${FT8CN_HAMLIB_LIBRARY}" AND NOT TARGET hamlib_android_build)
+        message(FATAL_ERROR "Verified Hamlib library not found: ${FT8CN_HAMLIB_LIBRARY}")
+    endif ()
+
+    file(MAKE_DIRECTORY "${FT8CN_HAMLIB_INCLUDE_ROOT}")
+    add_library(ft8cn_hamlib SHARED IMPORTED GLOBAL)
+    set_target_properties(ft8cn_hamlib PROPERTIES IMPORTED_LOCATION "${FT8CN_HAMLIB_LIBRARY}")
+    if (TARGET hamlib_android_build)
+        add_dependencies(ft8cn_hamlib hamlib_android_build)
+        add_dependencies(ft8cn hamlib_android_build)
+    endif ()
+    target_include_directories(ft8cn PRIVATE "${FT8CN_HAMLIB_INCLUDE_ROOT}")
+    target_link_libraries(ft8cn ft8cn_hamlib)
+    set(FT8CN_NATIVE_HAMLIB_ACTIVE 1)
+endif ()
+
+target_compile_definitions(ft8cn PRIVATE
+        FT8CN_NATIVE_HAMLIB_ACTIVE=${FT8CN_NATIVE_HAMLIB_ACTIVE})
+
 target_include_directories(
         ftx_core
         PUBLIC
@@ -82,26 +141,67 @@ target_include_directories(
 set(FT8CN_WSJTX3_BACKEND_ACTIVE 0)
 set(FT8CN_WSJTX3_BACKEND_REQUESTED ${FT8CN_ENABLE_WSJTX3_BACKEND})
 
-# 统一到官方 WSJT-X 3.0 backend 后，Android 侧必须显式启用官方 core。
-if (NOT FT8CN_ENABLE_WSJTX3_BACKEND
-        AND ANDROID
-        AND CMAKE_HOST_WIN32
-        AND ANDROID_ABI STREQUAL "arm64-v8a"
-        AND EXISTS "${FT8CN_WSJTX3_FLANG_PATH}"
-        AND EXISTS "${FT8CN_WSJTX3_BOOST_HEADERS}")
-    message(STATUS "Overriding cached FT8CN_ENABLE_WSJTX3_BACKEND=OFF for arm64-v8a official WSJT-X core build")
-    set(FT8CN_WSJTX3_BACKEND_REQUESTED ON)
-endif ()
-
 if (FT8CN_WSJTX3_BACKEND_REQUESTED
         AND ANDROID
         AND CMAKE_HOST_WIN32
-        AND ANDROID_ABI STREQUAL "arm64-v8a"
-        AND EXISTS "${FT8CN_WSJTX3_FLANG_PATH}"
-        AND EXISTS "${FT8CN_WSJTX3_BOOST_HEADERS}")
+        AND ANDROID_ABI STREQUAL "arm64-v8a")
     set(WSJTX3_ANDROID_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/wsjtx3_android/${ANDROID_ABI}")
     set(WSJTX3_ANDROID_CORE_LIB "${WSJTX3_ANDROID_OUT_DIR}/libwsjtx3_official_core.a")
     set(WSJTX3_ANDROID_RUNTIME_LIB "${WSJTX3_ANDROID_OUT_DIR}/libflang_rt.runtime.a")
+    execute_process(
+            COMMAND "${CMAKE_C_COMPILER}" -target aarch64-linux-android21
+            -fopenmp --print-file-name=libomp.a
+            OUTPUT_VARIABLE WSJTX3_ANDROID_OPENMP_LIB
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE WSJTX3_OPENMP_LOOKUP_RESULT)
+    if (NOT WSJTX3_OPENMP_LOOKUP_RESULT EQUAL 0
+            OR NOT IS_ABSOLUTE "${WSJTX3_ANDROID_OPENMP_LIB}"
+            OR NOT EXISTS "${WSJTX3_ANDROID_OPENMP_LIB}")
+        message(FATAL_ERROR "Unable to locate the NDK arm64 OpenMP runtime")
+    endif ()
+    set(WSJTX3_SOURCE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/wsjtx3-sources.manifest")
+    set(WSJTX3_MANIFEST_DEPENDS "${WSJTX3_SOURCE_MANIFEST}")
+    file(STRINGS "${WSJTX3_SOURCE_MANIFEST}" WSJTX3_MANIFEST_LINES)
+    foreach (manifest_line IN LISTS WSJTX3_MANIFEST_LINES)
+        string(STRIP "${manifest_line}" manifest_line)
+        if (manifest_line STREQUAL "" OR manifest_line MATCHES "^#")
+            continue()
+        endif ()
+        string(REPLACE "|" ";" manifest_fields "${manifest_line}")
+        list(LENGTH manifest_fields manifest_field_count)
+        if (NOT manifest_field_count EQUAL 2)
+            message(FATAL_ERROR "Invalid WSJT-X source manifest line: ${manifest_line}")
+        endif ()
+        list(GET manifest_fields 1 source_relative_path)
+        set(manifest_source "${CMAKE_CURRENT_SOURCE_DIR}/${source_relative_path}")
+        if (NOT EXISTS "${manifest_source}")
+            message(FATAL_ERROR "WSJT-X manifest source does not exist: ${manifest_source}")
+        endif ()
+        list(APPEND WSJTX3_MANIFEST_DEPENDS "${manifest_source}")
+    endforeach ()
+
+    if (FT8CN_WSJTX3_BUILD_PROFILE STREQUAL "Auto")
+        if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+            # Android Debug 仍保留符号，但官方解码核心必须使用 O2；O0 会让 FT4/Q65
+            # 占满槽位并造成后续请求排队。需要逐指令调试时仍可显式指定 Debug。
+            set(WSJTX3_EFFECTIVE_BUILD_PROFILE "Profile")
+        else ()
+            set(WSJTX3_EFFECTIVE_BUILD_PROFILE "Release")
+        endif ()
+    else ()
+        set(WSJTX3_EFFECTIVE_BUILD_PROFILE "${FT8CN_WSJTX3_BUILD_PROFILE}")
+    endif ()
+    set(WSJTX3_TOOL_STAMP "${CMAKE_CURRENT_BINARY_DIR}/wsjtx3-tool-config.stamp")
+    file(GENERATE OUTPUT "${WSJTX3_TOOL_STAMP}" CONTENT
+            "profile=${WSJTX3_EFFECTIVE_BUILD_PROFILE}\noptimization=${FT8CN_WSJTX3_OPTIMIZATION}\nflang=${FT8CN_WSJTX3_FLANG_PATH}\nndk=${FT8CN_WSJTX3_NDK_ROOT}\nboost=${FT8CN_WSJTX3_BOOST_HEADERS}\nllvm=${FT8CN_WSJTX3_LLVM_SOURCE_ROOT}\n")
+
+    set(WSJTX3_TOOL_DEPENDS "${WSJTX3_TOOL_STAMP}" "${WSJTX3_ANDROID_OPENMP_LIB}")
+    foreach (tool_path IN ITEMS "${FT8CN_WSJTX3_FLANG_PATH}"
+            "${FT8CN_WSJTX3_NDK_ROOT}/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe")
+        if (EXISTS "${tool_path}")
+            list(APPEND WSJTX3_TOOL_DEPENDS "${tool_path}")
+        endif ()
+    endforeach ()
 
     add_custom_command(
             OUTPUT "${WSJTX3_ANDROID_CORE_LIB}" "${WSJTX3_ANDROID_RUNTIME_LIB}"
@@ -113,16 +213,16 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
             -NdkRoot "${FT8CN_WSJTX3_NDK_ROOT}"
             -FlangPath "${FT8CN_WSJTX3_FLANG_PATH}"
             -BoostHeaders "${FT8CN_WSJTX3_BOOST_HEADERS}"
+            -LlvmSourceRoot "${FT8CN_WSJTX3_LLVM_SOURCE_ROOT}"
+            -BuildProfile "${WSJTX3_EFFECTIVE_BUILD_PROFILE}"
+            -Optimization "${FT8CN_WSJTX3_OPTIMIZATION}"
             DEPENDS
+            ${WSJTX3_MANIFEST_DEPENDS}
+            ${WSJTX3_TOOL_DEPENDS}
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/build_flang_rt_android.ps1"
             "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/build_wsjtx3_android_core.ps1"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/fftw3f_kiss_shim.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/complex_math_shim.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/fft/kiss_fft.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/fft/kiss_fftr.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/CMakeLists.txt"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_bridge.f90"
-            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/host/wsjtx3_host_support.f90"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wsjtx3/android/patches/flang-rt-android-time.patch"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../../../scripts/toolchain-common.ps1"
             VERBATIM
     )
 
@@ -140,6 +240,7 @@ if (FT8CN_WSJTX3_BACKEND_REQUESTED
     add_dependencies(wsjtx3_flang_rt wsjtx3_android_core_build)
 
     target_link_libraries(ftx_core PUBLIC wsjtx3_official_core wsjtx3_flang_rt)
+    target_link_libraries(ftx_core PUBLIC "${WSJTX3_ANDROID_OPENMP_LIB}")
     set(FT8CN_WSJTX3_BACKEND_ACTIVE 1)
 endif ()
 

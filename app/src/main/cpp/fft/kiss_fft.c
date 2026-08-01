@@ -340,7 +340,8 @@ kiss_fft_cfg kiss_fft_alloc(int nfft,int inverse_fft,void * mem,size_t * lenmem 
 
     kiss_fft_cfg st=NULL;
     // check for overflow condition {memneeded > SIZE_MAX}.
-    if (nfft >= (SIZE_MAX - 2*sizeof(struct kiss_fft_state))/sizeof(kiss_fft_cpx))
+    if (nfft <= 0 || (size_t)nfft >=
+            (SIZE_MAX - 2 * sizeof(struct kiss_fft_state)) / sizeof(kiss_fft_cpx))
         return NULL;
 
     size_t memneeded = KISS_FFT_ALIGN_SIZE_UP(sizeof(struct kiss_fft_state)

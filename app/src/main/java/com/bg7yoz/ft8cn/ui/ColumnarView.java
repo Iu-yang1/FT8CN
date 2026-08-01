@@ -16,9 +16,6 @@ import android.view.View;
 
 import com.bg7yoz.ft8cn.spectrum.SpectrumListener;
 
-import java.util.ArrayList;
-import java.util.List;
-
 public class ColumnarView extends View {
     private int width;
     private final int spacing = 1;
@@ -27,9 +24,10 @@ public class ColumnarView extends View {
     private final int distance = 2;
 
     private boolean drawblock = false;
+    private boolean hasData = false;
     private final Paint paint = new Paint();
-    private final List<Rect> newData = new ArrayList<>();
-    private final List<Rect> blockData = new ArrayList<>();
+    private Rect[] newData = new Rect[0];
+    private Rect[] blockData = new Rect[0];
 
     private Bitmap lastBitMap = null;
     private Canvas _canvas;
@@ -65,19 +63,11 @@ public class ColumnarView extends View {
         int binCount = data.length;
         width = Math.max(1, getWidth() / binCount);
 
-        if (drawblock && !newData.isEmpty()) {
-            if (blockData.size() != newData.size()) {
-                blockData.clear();
-                for (int i = 0; i < binCount; i++) {
-                    Rect blockRect = new Rect();
-                    blockRect.top = getHeight() - blockHeight;
-                    blockRect.bottom = getHeight();
-                    blockData.add(blockRect);
-                }
-            }
-            for (int i = 0; i < blockData.size() && i < newData.size(); i++) {
-                Rect block = blockData.get(i);
-                Rect column = newData.get(i);
+        ensureRectCapacity(binCount);
+        if (drawblock && hasData) {
+            for (int i = 0; i < binCount; i++) {
+                Rect block = blockData[i];
+                Rect column = newData[i];
                 block.left = column.left;
                 block.right = column.right;
                 if (column.top < block.top) {
@@ -89,15 +79,27 @@ public class ColumnarView extends View {
             }
         }
 
-        newData.clear();
         float rateHeight = 0.95f * getHeight() / 256f;
         for (int i = 0; i < binCount; i++) {
-            Rect colRect = new Rect();
+            Rect colRect = newData[i];
             colRect.left = i * getWidth() / binCount;
             colRect.top = getHeight() - Math.round(data[i] * rateHeight);
             colRect.right = Math.max(colRect.left + 1, (i + 1) * getWidth() / binCount - spacing);
             colRect.bottom = getHeight();
-            newData.add(colRect);
+        }
+        hasData = true;
+        postInvalidateOnAnimation();
+    }
+
+    private void ensureRectCapacity(int binCount) {
+        if (newData.length == binCount) {
+            return;
+        }
+        newData = new Rect[binCount];
+        blockData = new Rect[binCount];
+        for (int i = 0; i < binCount; i++) {
+            newData[i] = new Rect();
+            blockData[i] = new Rect(0, getHeight() - blockHeight, 0, getHeight());
         }
     }
 
@@ -105,7 +107,16 @@ public class ColumnarView extends View {
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         setClickable(true);
         super.onSizeChanged(w, h, oldw, oldh);
+        createDrawingBuffer(w, h);
+    }
 
+    private void createDrawingBuffer(int w, int h) {
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        if (lastBitMap != null) {
+            lastBitMap.recycle();
+        }
         lastBitMap = Bitmap.createBitmap(w, h, ARGB_8888);
         _canvas = new Canvas(lastBitMap);
         LinearGradient linearGradient = new LinearGradient(0f, 0f, 0f, getHeight(),
@@ -116,6 +127,19 @@ public class ColumnarView extends View {
         touchPaint = new Paint();
         touchPaint.setColor(0xff00ffff);
         touchPaint.setStrokeWidth(2);
+        hasData = false;
+        for (Rect block : blockData) {
+            block.top = h - blockHeight;
+            block.bottom = h;
+        }
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (lastBitMap == null) {
+            createDrawingBuffer(getWidth(), getHeight());
+        }
     }
 
     @Override
@@ -141,14 +165,24 @@ public class ColumnarView extends View {
                     * (float) touch_x / (float) getWidth());
             canvas.drawLine(touch_x, 0, touch_x, getHeight(), touchPaint);
         }
-        invalidate();
     }
 
     public void setTouch_x(int touch_x) {
         this.touch_x = touch_x;
+        postInvalidateOnAnimation();
     }
 
     public int getFreq_hz() {
         return freq_hz;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (lastBitMap != null) {
+            lastBitMap.recycle();
+            lastBitMap = null;
+            _canvas = null;
+        }
+        super.onDetachedFromWindow();
     }
 }

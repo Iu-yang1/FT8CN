@@ -1,0 +1,2 @@
+LLVM Flang runtime and OpenMP runtime are statically linked into the Android native library.
+They are licensed under Apache-2.0 WITH LLVM-exception.

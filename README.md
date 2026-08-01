@@ -1,68 +1,37 @@
 # FT8CN
-Developed by BG7YOZ and hosted by N0BOY
 
-Run FT8 natively on Android
+FT8CN 是一款运行在 Android 上的业余无线电数字模式应用，由 BG7YOZ 开发并由 N0BOY 托管。
 
-Check [Releases](https://github.com/N0BOY/FT8CN/releases) to download the latest apk file.
+## Native 后端
 
+- FT8/FT4 接收使用裁剪后的官方 WSJT-X 3.0 core。
+- FT8/FT4 发射继续使用项目内兼容实现，并由 pack/CRC/LDPC/tone、合成波形回环和协议级 golden selftest 保护。
+- Q65A-E 是正式开放能力；Q65F 只保留在诊断测试中，不向正式 UI 或 TX 开放。
+- FT2 未集成。vendor 中保留上游源码，但不构建 FT2 应用或模式。
+- Fortran callback 仍依赖全局活动上下文，因此 native 解码保持串行。Java `nativeBatchDecodeLock`、C bridge mutex 和 Q65 串行 lane 不得移除。
+- `radio_experimental` 是独立实验调制解调模块，不属于 WSJT-X core。
+
+## 构建
+
+项目需要 JDK 17、Android SDK/NDK、CMake、Ninja，以及能够为 Android arm64 生成对象的 Flang 工具链。工具路径通过参数、环境变量或 `local.properties` 发现，不写死个人目录。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/check-toolchain.ps1
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 ```
-免责声明：
-   FT8CN旨在研究的目的，学习如何对FT8信号进行解码、发射等操作，不对使用者操作本APP所产生的后果负责。
-   在中华人民共和国境内，使用FT8CN请遵守《中华人民共和国无线电管理条例》等相关规定。
-   考虑到手机的性能和续航的限制，对信号的处理采用轻量化的运算，未做深度解码等处理。
-   如有好的建议或问题可以提交到到”有问题要吐槽“。
 
-Disclaimer
-FT8CN aims to learn how to decode, transmit FT8 signal for research purposes, which is not responsible for the consequences caused by the user's operation.
-Please comply with local laws and regulations when using FT8CN.
-Considering the performance and endurance limitations of the mobile phone, the processing of the signal adopts lightweight operations instead of deep decoding and other processing.
-Please click "FAQ" if you have good suggestions or questions .
+`scripts/verify.ps1` 会执行工具链检查、Release O2 host CTest、语料结果/哈希回归、官方 `jt9` 逐条 oracle、Java 单测以及 debug/release/internal-test APK 构建。连接授权设备后，它还会运行非导出的 instrumentation harness，对 debug/release 与 12/24/48 kHz 输入执行结果、耗时和内存对照。大型 WAV 语料不进入 Git；语料路径和 SHA256 记录在 `docs/verification/test-corpus.json`。
 
-BG7YOZ
-2022-07-01
+门禁明确区分 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_ORACLE`、`BLOCKED_DEVICE`、`BLOCKED_SANITIZER` 和 `FAIL`。缺少官方工具或设备不会被写成通过。机器负载明显变化时，可通过 `-PerformanceBaselinePath` 指定同电源状态、同工具链、同语料生成的基线 JSON；3% p95 阈值本身不会被放宽。
 
-致敬：
-   Steve Franke(K9AN)、Bill Somerville(G4WJS)、Joe Taylor(K1JT)，提出FT8和FT4协议（FT是Franke和Taylor的首字母），并在论文《The FT4 and FT8 Communication Protocols》详细介绍了FT4和FT8的设计初衷和在WSJT-X中的具体实现细节，成为完成本APP的根本指南。
-   Karlis Goba(YL3JG)在代码的具体实现上提供了参考。
-鸣谢：
-   BG7YOY，在FT8CN开发阶段为我在无线电基本理论上作出指导，并为FT8CN设计了图标
-   BG4IGX，在我刚刚入门业余无线电时为我在具体实践上作出指导。抖音上您可以搜到很多他的教学视频
-   BD7MXN，帮助我对部分电台的连接控制做了一些测试，并提出改进建议
-   BH2RSJ，帮助我建立了一个FT8CN测试群，为测试和后续改进提出了很多宝贵意见
-   BH7ACO，帮助解决了某电台的驱动和相关的配置参数
-   BG7IKK，帮助解决了只支持通过RTS控制PTT发射的电台的测试
-   BI1NIZ，帮助注册账号，用于收集问题反馈和FAQ的功能
-   BD3OOX以及石家庄业余无线电俱乐部，FT8CN的呼号地区归属数据提取至JTDX石家庄版，使呼号定位可以精确到中国的省级
-   VR2UPU(BD7MJO)，在FT8的开发和使用经验上提供指导，并在多语言方面给予帮助
-   BA2BI，在业余无线电的基础知识和通联的日志处理方面上给予帮助和指导
-   BI3QXJ，在对某品牌系列电台的指令集上给予专业性的指导
-   BG6TQD，在对某型号电台的指令集测试上给予帮助
-   BG5CSS，提供某型号电台用于测试
-   BG7YXN，提供某型号电台用于测试
-   BG7YRB，对呼号规则运算提供帮助
-   BG8KAH，提供设备用于测试
-   BA7LVG、JE6WUD，完成日文的翻译校对工作
-   BG6RI，帮助解决日志的信号报告问题
-   SV1EEX，完成希腊文、西班牙文UI的翻译工作
-   VR2VRC，帮助修正历史呼号读取规则
-   BA7NQ，提供设备用于测试
-   BD7MYM，对某型号的电台测试给予指导
-   NØBOY，帮助提供Github源，以及翻译工作
-   BG5JNT，帮助修正非标准呼号的识别问题
-   BH3NEK，协助对某型号电台进行测试
-   BG2ALB，协助对某型号电台进行测试
-   BG6DRU，协助对某型号电台进行测试
-   BG7NQF，提供某型号电台的隐藏指令，对一些设备做兼容性测试
-   BH2VSQ，协助对某型号电台进行测试
-   BG7YBW，协助对部分功能进行测试
-   BH1RNN，协助对部分功能进行测试
-   BG7BSM，协助对一些BUG进行调试
-   BH4FTI，发现并协助对一些BUG进行调试
-   BG8BXM（M哥），为FT8CN的使用做推广，抖音和B站上有很多他的教学视频
-   BA7MFQ，为FT8CN的使用做推广，帮助测试
-   BG2EFX，提供大数据量的日志用于测试
-   DS1UFX，贡献(tr)uSDX audio over CAT代码
-   BG8HT，提供某型号电台进行测试
-   UB6LUM，帮助解决某型号电台的操作模式设置
-   BG5VLI，贡献向Cloudlog和QRZ自动上传日志的代码
-```
+当前功能边界、操作安全和数据处理方式分别见 [用户使用说明](docs/user-guide.md)、[架构说明](docs/architecture.md) 与 [隐私说明](docs/privacy.md)。阶段 0-9 的逐阶段证据见 [实施台账](docs/implementation/phases-0-9.md)，最终发布门禁见 [完整加固报告](docs/verification/full-hardening-2026-08-01.md)。
+
+## 使用说明
+
+本项目用于业余无线电研究和学习。使用者应遵守所在地无线电管理法规，并自行承担设备连接、发射频率、功率和自动操作所产生的责任。
+
+感谢 K9AN、G4WJS、K1JT 及 WSJT-X 贡献者对 FT4、FT8、Q65 协议和实现的工作，也感谢 FT8CN 历史贡献者、测试者和翻译者。
+
+## 许可证与第三方源码
+
+FT8CN 自有源码继续采用顶层 `LICENSE` 所示 MIT 许可证。Android 组合产物同时静态包含 GPL-3.0-or-later 的 WSJT-X core，因此发行 APK 时必须满足 GPL 的完整对应源码、许可证和修改说明义务，不能把整个 APK 描述为“仅 MIT”。其他 MIT/BSD/Apache/LGPL 候选与未打包参考项目的边界见 `docs/third-party/license-matrix.md`，机器可读清单见 `docs/third-party/sbom.cdx.json`。

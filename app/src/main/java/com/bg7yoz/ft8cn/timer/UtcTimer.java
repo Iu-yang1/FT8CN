@@ -5,11 +5,8 @@ package com.bg7yoz.ft8cn.timer;
  * FT8 = 150（15秒）
  * FT4 = 75（7.5秒）
  *
- * 已增强：
- * 1. 支持指定 NTP 服务器同步
- * 2. 保留真实偏移 realDelay
- * 3. 内部使用对齐后的 delay 参与时隙计算
- * 4. 返回 NTP offset / round-trip delay / server / syncTime
+ * 时间由单调时钟锚定；NTP/GNSS 校准不会在 slot 中途跟随系统 wall clock 跳变。
+ * 旧 delay 字段仅作为用户手动微调兼容层。
  *
  * @author BG7YOZ
  * @date 2022.5.7
@@ -17,19 +14,22 @@ package com.bg7yoz.ft8cn.timer;
 
 import android.annotation.SuppressLint;
 
-import org.apache.commons.net.ntp.NTPUDPClient;
-import org.apache.commons.net.ntp.TimeInfo;
+import com.bg7yoz.ft8cn.core.time.DisciplinedClockRegistry;
+import com.bg7yoz.ft8cn.core.time.MultiSourceNtpDiscipline;
+import com.bg7yoz.ft8cn.core.time.NtpMeasurement;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.TimeZone;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class UtcTimer {
     /**
@@ -45,8 +45,7 @@ public class UtcTimer {
     private long utc;
 
     /**
-     * 参与系统时间计算的“对齐后偏移”，单位毫秒
-     * getSystemTime() = System.currentTimeMillis() + delay
+     * 用户手动微调，单位毫秒。NTP/GNSS 校准由 DisciplinedClock 单独维护，避免重复叠加。
      */
     public static volatile int delay = 0;
 
@@ -70,10 +69,30 @@ public class UtcTimer {
      */
     public static volatile String lastSyncServer = "";
 
-    private boolean running = false;
+    private volatile boolean running = false;
 
-    private final Timer secTimer = new Timer();
-    private final Timer heartBeatTimer = new Timer();
+    private static final ThreadFactory TIME_THREAD_FACTORY = runnable -> {
+        Thread thread = new Thread(runnable, "ft8cn-time-scheduler");
+        thread.setDaemon(true);
+        return thread;
+    };
+    private static final ScheduledThreadPoolExecutor TIME_SCHEDULER =
+            new ScheduledThreadPoolExecutor(1, TIME_THREAD_FACTORY);
+    private static final ThreadPoolExecutor CALLBACK_EXECUTOR = new ThreadPoolExecutor(
+            2, 2, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(32),
+            runnable -> {
+                Thread thread = new Thread(runnable, "ft8cn-time-callback");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
+    private static final ThreadPoolExecutor NTP_EXECUTOR = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1),
+            runnable -> {
+                Thread thread = new Thread(runnable, "ft8cn-sntp");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
+    private static final AtomicBoolean NTP_SYNC_RUNNING = new AtomicBoolean(false);
 
     /**
      * 实例级时间偏移（毫秒）
@@ -81,22 +100,10 @@ public class UtcTimer {
     private int time_sec = 0;
     private volatile long lastTriggeredSlotIndex = Long.MIN_VALUE;
     private volatile boolean destroyed = false;
-
-    private final ExecutorService cachedThreadPool = Executors.newCachedThreadPool();
-    private final Runnable doSomething = new Runnable() {
-        @Override
-        public void run() {
-            onUtcTimer.doOnSecTimer(utc);
-        }
-    };
-
-    private final ExecutorService heartBeatThreadPool = Executors.newCachedThreadPool();
-    private final Runnable doHeartBeat = new Runnable() {
-        @Override
-        public void run() {
-            onUtcTimer.doHeartBeatTimer(utc);
-        }
-    };
+    private final AtomicBoolean slotCallbackPending = new AtomicBoolean(false);
+    private final AtomicBoolean heartbeatCallbackPending = new AtomicBoolean(false);
+    private final ScheduledFuture<?> slotFuture;
+    private final ScheduledFuture<?> heartbeatFuture;
 
     /**
      * NTP 同步结果
@@ -169,73 +176,69 @@ public class UtcTimer {
         this.doOnce = doOnce;
         this.onUtcTimer = onUtcTimer;
 
-        // 10ms轮询，用于精确检测0.1秒周期边界
-        secTimer.schedule(secTask(), 0, 10);
-        // 1秒心跳
-        heartBeatTimer.schedule(heartBeatTask(), 0, 1000);
+        TIME_SCHEDULER.setRemoveOnCancelPolicy(true);
+        slotFuture = TIME_SCHEDULER.scheduleAtFixedRate(this::tickSlot, 0L, 10L, TimeUnit.MILLISECONDS);
+        heartbeatFuture = TIME_SCHEDULER.scheduleAtFixedRate(
+                this::tickHeartbeat, 0L, 1L, TimeUnit.SECONDS);
     }
 
-    private TimerTask heartBeatTask() {
-        return new TimerTask() {
-            @Override
-            public void run() {
-                if (destroyed) {
-                    return;
-                }
-                doHeartBeatEvent(onUtcTimer);
-            }
-        };
-    }
-
-    private TimerTask secTask() {
-        return new TimerTask() {
-            @Override
-            public void run() {
+    private void tickSlot() {
+        if (destroyed) {
+            return;
+        }
+        long currentUtc = getSystemTime();
+        utc = currentUtc;
+        long currentSlotIndex = getSlotIndex(currentUtc);
+        if (!running || currentSlotIndex <= lastTriggeredSlotIndex) {
+            return;
+        }
+        lastTriggeredSlotIndex = currentSlotIndex;
+        if (doOnce) {
+            running = false;
+        }
+        if (!slotCallbackPending.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            CALLBACK_EXECUTOR.execute(() -> {
                 try {
-                    if (destroyed) {
-                        return;
+                    if (!destroyed) {
+                        onUtcTimer.doOnSecTimer(currentUtc);
                     }
-                    utc = getSystemTime();
-                    long currentSlotIndex = getSlotIndex(utc);
-
-                    // 转换为0.1秒单位的时间轴
-                    long tick100ms = (utc - time_sec) / 100L;
-
-                    if (running && currentSlotIndex > lastTriggeredSlotIndex) {
-                        lastTriggeredSlotIndex = currentSlotIndex;
-                        try {
-                            cachedThreadPool.execute(doSomething);
-                        } catch (RejectedExecutionException ignored) {
-                            return;
-                        }
-
-                        if (doOnce) {
-                            running = false;
-                            return;
-                        }
-
-                        Thread.sleep(1);
-                    }
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+                } finally {
+                    slotCallbackPending.set(false);
                 }
-            }
-        };
+            });
+        } catch (RejectedExecutionException rejected) {
+            slotCallbackPending.set(false);
+        }
+    }
+
+    private void tickHeartbeat() {
+        if (destroyed || !heartbeatCallbackPending.compareAndSet(false, true)) {
+            return;
+        }
+        DisciplinedClockRegistry.refreshState();
+        long currentUtc = getSystemTime();
+        utc = currentUtc;
+        try {
+            CALLBACK_EXECUTOR.execute(() -> {
+                try {
+                    if (!destroyed) {
+                        onUtcTimer.doHeartBeatTimer(currentUtc);
+                    }
+                } finally {
+                    heartbeatCallbackPending.set(false);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            heartbeatCallbackPending.set(false);
+        }
     }
 
     /**
      * 心跳动作
      */
-    private void doHeartBeatEvent(OnUtcTimer onUtcTimer) {
-        if (destroyed) {
-            return;
-        }
-        try {
-            heartBeatThreadPool.execute(doHeartBeat);
-        } catch (RejectedExecutionException ignored) {
-        }
-    }
-
     public void stop() {
         running = false;
     }
@@ -262,12 +265,8 @@ public class UtcTimer {
         }
         destroyed = true;
         running = false;
-        secTimer.cancel();
-        secTimer.purge();
-        heartBeatTimer.cancel();
-        heartBeatTimer.purge();
-        cachedThreadPool.shutdownNow();
-        heartBeatThreadPool.shutdownNow();
+        slotFuture.cancel(false);
+        heartbeatFuture.cancel(false);
     }
 
     /**
@@ -348,24 +347,7 @@ public class UtcTimer {
     }
 
     public static long getSystemTime() {
-        return delay + System.currentTimeMillis();
-    }
-
-    /**
-     * 对齐到FT8 15秒周期窗口，保证FT4也能跟随
-     * 输出范围约为[-7500, +7500]
-     */
-    private static int alignDelayToFt8Slot(long rawOffsetMs) {
-        long slot = com.bg7yoz.ft8cn.FT8Common.FT8_SLOT_TIME_MILLISECOND;
-        long half = slot / 2L;
-        long mod = rawOffsetMs % slot;
-
-        if (mod > half) {
-            mod -= slot;
-        } else if (mod < -half) {
-            mod += slot;
-        }
-        return (int) mod;
+        return delay + DisciplinedClockRegistry.nowMillis();
     }
 
     /**
@@ -414,61 +396,78 @@ public class UtcTimer {
      * 详细同步接口：可返回服务器、真实偏移、对齐偏移、往返延迟、同步时间
      */
     public static void syncTime(String server, AfterSyncTimeDetail afterSyncTimeDetail) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
+        if (!NTP_SYNC_RUNNING.compareAndSet(false, true)) {
+            if (afterSyncTimeDetail != null) {
+                afterSyncTimeDetail.syncFailed(new IOException("SNTP synchronization already in progress"));
+            }
+            return;
+        }
+        try {
+            NTP_EXECUTOR.execute(() -> {
+                try {
                 String targetServer = (server == null || server.trim().length() == 0)
                         ? "pool.ntp.org"
                         : server.trim();
 
-                try {
-                    NtpSyncResult bestResult = queryNtpServer(targetServer);
+                IOException lastFailure = null;
+                for (int attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        NtpSyncResult bestResult = queryNtpServers(targetServer);
 
-                    realDelay = bestResult.realOffsetMs;
-                    delay = bestResult.alignedOffsetMs;
-                    lastNtpRoundTripDelay = bestResult.roundTripDelayMs;
-                    lastSyncTime = bestResult.syncTimeMs;
-                    lastSyncServer = targetServer;
+                        realDelay = bestResult.realOffsetMs;
+                        // 校准已进入单调时钟锚点，旧 delay 只保留给用户手动微调。
+                        delay = 0;
+                        lastNtpRoundTripDelay = bestResult.roundTripDelayMs;
+                        lastSyncTime = bestResult.syncTimeMs;
+                        lastSyncServer = bestResult.server;
 
-                    if (afterSyncTimeDetail != null) {
-                        afterSyncTimeDetail.doAfterSyncTimer(bestResult);
-                    }
-                } catch (IOException e) {
-                    if (afterSyncTimeDetail != null) {
-                        afterSyncTimeDetail.syncFailed(e);
+                        if (afterSyncTimeDetail != null) {
+                            afterSyncTimeDetail.doAfterSyncTimer(bestResult);
+                        }
+                        return;
+                    } catch (IOException e) {
+                        lastFailure = e;
+                        if (attempt < 2) {
+                            try {
+                                Thread.sleep(500L << attempt);
+                            } catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                                lastFailure = new IOException("NTP synchronization interrupted", interrupted);
+                                break;
+                            }
+                        }
                     }
                 }
+                if (afterSyncTimeDetail != null) {
+                    afterSyncTimeDetail.syncFailed(lastFailure == null
+                            ? new IOException("NTP synchronization failed")
+                            : lastFailure);
+                }
+                } finally {
+                    NTP_SYNC_RUNNING.set(false);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            NTP_SYNC_RUNNING.set(false);
+            if (afterSyncTimeDetail != null) {
+                afterSyncTimeDetail.syncFailed(
+                        new IOException("SNTP synchronization queue is unavailable", rejected));
             }
-        }).start();
+        }
     }
 
-    private static NtpSyncResult queryNtpServer(String targetServer) throws IOException {
-        NTPUDPClient timeClient = new NTPUDPClient();
-        timeClient.setDefaultTimeout(3000);
-
-        try {
-            InetAddress inetAddress = InetAddress.getByName(targetServer);
-            TimeInfo timeInfo = timeClient.getTime(inetAddress);
-            timeInfo.computeDetails();
-
-            Long offset = timeInfo.getOffset();
-            Long roundTrip = timeInfo.getDelay();
-
-            long localNow = System.currentTimeMillis();
-            long serverTime = timeInfo.getMessage().getTransmitTimeStamp().getTime();
-
-            long trueOffset = (offset != null) ? offset : (serverTime - localNow);
-
-            return new NtpSyncResult(
-                    targetServer,
-                    (int) trueOffset,
-                    alignDelayToFt8Slot(trueOffset),
-                    roundTrip == null ? -1 : roundTrip,
-                    System.currentTimeMillis()
-            );
-        } finally {
-            timeClient.close();
+    private static NtpSyncResult queryNtpServers(String targetServer) throws IOException {
+        NtpMeasurement measurement = new MultiSourceNtpDiscipline().synchronize(targetServer);
+        if (!DisciplinedClockRegistry.submitSample(measurement.getSample())) {
+            throw new IOException("NTP sample rejected by disciplined clock");
         }
+        return new NtpSyncResult(
+                measurement.getServer(),
+                (int) Math.round(measurement.getOffsetMillis()),
+                0,
+                Math.round(measurement.getRoundTripDelayMillis()),
+                DisciplinedClockRegistry.nowMillis()
+        );
     }
 
     public interface AfterSyncTime {

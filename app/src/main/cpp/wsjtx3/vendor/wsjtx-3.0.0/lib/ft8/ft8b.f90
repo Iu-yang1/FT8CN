@@ -3,6 +3,7 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
      f1,xdt,xbase,apsym,aph10,nharderrors,dmin,nbadcrc,ipass,               &
      msg37,xsnr,itone)
 
+  use iso_c_binding, only: c_int, c_long_long
   use crc
   use timer_module, only: timer
   use packjt77
@@ -32,6 +33,7 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
   integer graymap(0:7)
   integer iloc(1)
   complex cd0(0:3199)
+  complex cd_shifted(0:NP2-1)
   complex ctwk(32)
   complex csymb(32)
   complex cs(0:7,NN)
@@ -48,6 +50,37 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
   data first/.true./
   data graymap/0,1,3,2,5,6,4,7/
   save nappasses,naptypes,ncontest0,one
+
+  interface
+     integer(c_int) function wsjtx3_phase_trace_is_enabled() bind(C, name="wsjtx3_phase_trace_is_enabled")
+       import :: c_int
+     end function wsjtx3_phase_trace_is_enabled
+
+     subroutine wsjtx3_ft8b_trace_add(success, total_us, downsample_us, ap_us, ldpc_us, validation_us, &
+          unpack_us, subtract_us) bind(C, name="wsjtx3_ft8b_trace_add")
+       import :: c_int, c_long_long
+       integer(c_int), value :: success
+       integer(c_long_long), value :: total_us, downsample_us, ap_us, ldpc_us
+       integer(c_long_long), value :: validation_us, unpack_us, subtract_us
+     end subroutine wsjtx3_ft8b_trace_add
+  end interface
+
+  integer(c_int) trace_enabled, trace_success
+  integer(c_long_long) trace_total_started, trace_phase_started
+  integer(c_long_long) trace_downsample_us, trace_ap_us, trace_ldpc_us
+  integer(c_long_long) trace_validation_us, trace_unpack_us, trace_subtract_us
+  integer(c_long_long) ft8b_trace_elapsed_us
+
+  trace_enabled=wsjtx3_phase_trace_is_enabled()
+  trace_success=0
+  trace_total_started=0
+  trace_downsample_us=0
+  trace_ap_us=0
+  trace_ldpc_us=0
+  trace_validation_us=0
+  trace_unpack_us=0
+  trace_subtract_us=0
+  if(trace_enabled.ne.0) call system_clock(count=trace_total_started)
 
   if(first.or.(ncontest.ne.ncontest0)) then
      mcq=2*mcq-1
@@ -103,7 +136,9 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
   ibest=0
 
   call timer('ft8_down',0)
+  if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
   call ft8_downsample(dd0,newdat,f1,cd0)   !Mix f1 to baseband and downsample
+  if(trace_enabled.ne.0) trace_downsample_us=trace_downsample_us+ft8b_trace_elapsed_us(trace_phase_started)
   call timer('ft8_down',1)
 
   i0=nint((xdt+0.5)*fs2)                   !Initial guess for start of signal
@@ -134,11 +169,16 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
   enddo
   a=0.0
   a(1)=-delfbest
-  call twkfreq1(cd0,NP2,fs2,a,cd0)
+! Fortran 不允许不同 dummy argument 通过同一实际数组发生读写别名；
+! 独立输出缓冲区可避免 Flang -O2 重排循环后破坏候选的局部同步数据。
+  call twkfreq1(cd0,NP2,fs2,a,cd_shifted)
+  cd0(0:NP2-1)=cd_shifted
   f1=f1+delfbest                           !Improved estimate of DF
 
   call timer('ft8_down',0)
+  if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
   call ft8_downsample(dd0,.false.,f1,cd0)   !Mix f1 to baseband and downsample
+  if(trace_enabled.ne.0) trace_downsample_us=trace_downsample_us+ft8b_trace_elapsed_us(trace_phase_started)
   call timer('ft8_down',1)
 
   smax=0.0
@@ -180,7 +220,7 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
   if(ndepth.le.2) syncmin=8
   if(nsync.le.syncmin) then ! bail out
     nbadcrc=1
-    return
+    go to 900
   endif
 
   do nsym=1,3
@@ -281,6 +321,7 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
   if(nzhsym.lt.50) npasses=5
   
   do ipass=1,npasses 
+     if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
      llrz=llra
      if(ipass.eq.2) llrz=llrb
      if(ipass.eq.3) llrz=llrc
@@ -432,13 +473,17 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
         (abs(nfqso-f1).le.napwid .or. abs(nftx-f1).le.napwid .or. ncontest.eq.7)) then
         maxosd=2
      endif
+     if(trace_enabled.ne.0) trace_ap_us=trace_ap_us+ft8b_trace_elapsed_us(trace_phase_started)
      call timer('dec174_91 ',0)
+     if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
      Keff=91
      call decode174_91(llrz,Keff,maxosd,norder,apmask,message91,cw,  &
                        ntype,nharderrors,dmin)
+     if(trace_enabled.ne.0) trace_ldpc_us=trace_ldpc_us+ft8b_trace_elapsed_us(trace_phase_started)
      if(nharderrors.ge.0) message77=message91(1:77)
      call timer('dec174_91 ',1)
 
+     if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
      msg37='                                     '
      nbadcrc=1
      if(nharderrors.lt.0 .or. nharderrors.gt.36) cycle
@@ -448,7 +493,10 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
      read(c77(75:77),'(b3)') i3
      if(i3.gt.5 .or. (i3.eq.0.and.n3.gt.6)) cycle
      if(i3.eq.0 .and. n3.eq.2) cycle
+     if(trace_enabled.ne.0) trace_validation_us=trace_validation_us+ft8b_trace_elapsed_us(trace_phase_started)
+     if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
      call unpack77(c77,1,msg37,unpk77_success)
+     if(trace_enabled.ne.0) trace_unpack_us=trace_unpack_us+ft8b_trace_elapsed_us(trace_phase_started)
      if(.not.unpk77_success .or. index(msg37,'/R').gt.0 .or.     &
           msg37(1:4).eq.'TU; ') then
         if(i3.ge.1 .and. i3.le.3 .and. ncontest.eq.0) cycle
@@ -456,10 +504,13 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
      if(.not.unpk77_success) cycle
 ! If we get this far: valid codeword, valid (i3,n3), nonquirky message.
      nbadcrc=0
+     trace_success=1
      call get_ft8_tones_from_77bits(message77,itone)
      if(lsubtract) then
         call timer('sub_ft8a',0)
+        if(trace_enabled.ne.0) call system_clock(count=trace_phase_started)
         call subtractft8(dd0,itone,f1,xdt,.false.)
+        if(trace_enabled.ne.0) trace_subtract_us=trace_subtract_us+ft8b_trace_elapsed_us(trace_phase_started)
         call timer('sub_ft8a',1)
      endif
      xsig=0.0
@@ -482,13 +533,30 @@ subroutine ft8b(dd0,newdat,nQSOProgress,nfqso,nftx,ndepth,nzhsym,lapon,     &
     endif
     if(nsync.le.10 .and. xsnr.lt.-25.0) then    !bail out, likely false decode
        nbadcrc=1
-       return
+       trace_success=0
+       go to 900
     endif
     if(xsnr .lt. -25.0) xsnr=-25.0
-    return
+    go to 900
   enddo
+900 if(trace_enabled.ne.0) then
+    call wsjtx3_ft8b_trace_add(trace_success, ft8b_trace_elapsed_us(trace_total_started), trace_downsample_us, &
+         trace_ap_us, trace_ldpc_us, trace_validation_us, trace_unpack_us, trace_subtract_us)
+  endif
   return
 end subroutine ft8b
+
+integer(kind=8) function ft8b_trace_elapsed_us(started_at)
+  use iso_c_binding, only: c_long_long
+  integer(c_long_long), intent(in) :: started_at
+  integer(c_long_long) :: finished_at, count_rate
+  if(started_at.le.0) then
+     ft8b_trace_elapsed_us=0
+     return
+  endif
+  call system_clock(count=finished_at,count_rate=count_rate)
+  ft8b_trace_elapsed_us=((finished_at-started_at)*1000000_c_long_long)/count_rate
+end function ft8b_trace_elapsed_us
 
 subroutine normalizebmet(bmet,n)
   real bmet(n)

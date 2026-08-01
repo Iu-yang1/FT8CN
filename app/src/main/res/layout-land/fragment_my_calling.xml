@@ -163,7 +163,56 @@
                                 android:textColor="@color/bar_text_view_color"
                                 android:textSize="11sp"
                                 tools:ignore="TouchTargetSizeCheck" />
+
+                        <RadioButton
+                                android:id="@+id/rbQ65"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:minHeight="0dp"
+                                android:text="Q65"
+                                android:textColor="@color/bar_text_view_color"
+                                android:textSize="11sp"
+                                tools:ignore="TouchTargetSizeCheck" />
                     </RadioGroup>
+
+                    <Button
+                            android:id="@+id/q65ConfigButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="24dp"
+                            android:layout_marginStart="6dp"
+                            android:layout_marginEnd="4dp"
+                            android:background="@drawable/imagebutton_style"
+                            android:minHeight="0dp"
+                            android:minWidth="0dp"
+                            android:paddingLeft="8dp"
+                            android:paddingTop="0dp"
+                            android:paddingRight="8dp"
+                            android:paddingBottom="0dp"
+                            android:text="A/60s"
+                            android:textAllCaps="false"
+                            android:textColor="@color/bar_text_view_color"
+                            android:textSize="10sp"
+                            android:visibility="gone"
+                            tools:ignore="SmallSp" />
+
+                    <Button
+                            android:id="@+id/emeAssistButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="24dp"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp"
+                            android:background="@drawable/imagebutton_style"
+                            android:minHeight="0dp"
+                            android:minWidth="0dp"
+                            android:paddingLeft="8dp"
+                            android:paddingTop="0dp"
+                            android:paddingRight="8dp"
+                            android:paddingBottom="0dp"
+                            android:text="@string/eme_assist_button"
+                            android:textAllCaps="false"
+                            android:textColor="@color/bar_text_view_color"
+                            android:textSize="10sp"
+                            tools:ignore="SmallSp" />
 
                     <CheckBox
                             android:id="@+id/dxpeditionManualCheckBox"

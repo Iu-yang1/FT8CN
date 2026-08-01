@@ -1,0 +1,5 @@
+TrustedQSL/TQSL is not compiled, linked, or packaged in FT8CN.
+
+FT8CN exports ADIF for signing by an independently installed TQSL application,
+then accepts only structurally signed .tq8 files for upload to the official ARRL
+endpoint. ARRL does not endorse FT8CN.

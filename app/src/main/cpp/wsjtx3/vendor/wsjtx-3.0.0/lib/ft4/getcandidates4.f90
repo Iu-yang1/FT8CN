@@ -1,19 +1,24 @@
 subroutine getcandidates4(dd,fa,fb,syncmin,nfqso,maxcand,savg,candidate,   &
      ncand,sbase)
 
+  use iso_c_binding, only: c_float, c_float_complex, c_loc, c_f_pointer
+
   include 'ft4_params.f90'
   real s(NH1,NHSYM)
   real savg(NH1),savsm(NH1)
   real sbase(NH1)
-  real x(NFFT1)
+  real(c_float), pointer :: x(:)
   real window(NFFT1)
-  complex cx(0:NH1)
+  complex(c_float_complex), target, save :: fft_buffer(NFFT1)
   real candidate(2,maxcand),candidatet(2,maxcand)
   real dd(NMAX)
-  equivalence (x,cx)
   logical first
   data first/.true./
   save first,window
+
+! 使用容量完整且地址稳定的复数工作区，并以实数视图写入 R2C 输入。
+! 这避免 EQUIVALENCE 和短实际参数在 Flang -O2 下触发未定义别名优化。
+  call c_f_pointer(c_loc(fft_buffer(1)),x,(/2*NFFT1/))
 
   if(first) then
     first=.false.
@@ -30,9 +35,9 @@ subroutine getcandidates4(dd,fa,fb,syncmin,nfqso,maxcand,savg,candidate,   &
      ia=(j-1)*NSTEP + 1
      ib=ia+NFFT1-1
      if(ib.gt.NMAX) exit
-     x=fac*dd(ia:ib)*window
-     call four2a(x,NFFT1,1,-1,0)              !r2c FFT
-     s(1:NH1,j)=abs(cx(1:NH1))**2
+     x(1:NFFT1)=fac*dd(ia:ib)*window
+     call four2a(fft_buffer,NFFT1,1,-1,0)      !r2c FFT
+     s(1:NH1,j)=abs(fft_buffer(2:NH1+1))**2
      savg=savg + s(1:NH1,j)                   !Average spectrum
   enddo
   savg=savg/NHSYM

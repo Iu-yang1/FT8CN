@@ -14,6 +14,7 @@ struct ftx_decoder {
     int num_samples;
     long long utc_time;
     ftx_decoder_options_t options;
+    ftx_decoder_input_context_t input_context;
     ap_hints_t ap_hints;
     ftx_decode_result_t results[FTX_MAX_DECODE_RESULTS];
     int result_count;
@@ -56,6 +57,32 @@ static void load_default_options(ftx_decoder_options_t *options) {
     options->enable_wideband_dx_search = 1;
     options->ldpc_iterations = fast_kLDPC_iterations;
     options->deep_decode_enabled = 0;
+    options->q65_submode = 0;
+    options->q65_tr_period_seconds = 60;
+}
+
+static void load_default_input_context(ftx_decoder_input_context_t *input_context,
+                                       int source_sample_rate) {
+    if (input_context == NULL) {
+        return;
+    }
+    memset(input_context, 0, sizeof(*input_context));
+    input_context->input_is_live = 0;
+    input_context->qso_frequency_hz = 1000;
+    input_context->tx_frequency_hz = 1000;
+    input_context->source_sample_rate = source_sample_rate;
+}
+
+static void apply_input_context(ftx_decoder_t *decoder) {
+    if (decoder == NULL || decoder->impl == NULL) {
+        return;
+    }
+    decoder_set_input_context(decoder->impl,
+                              decoder->input_context.input_is_live != 0,
+                              decoder->input_context.qso_frequency_hz,
+                              decoder->input_context.tx_frequency_hz,
+                              decoder->input_context.source_sample_rate,
+                              decoder->input_context.decode_stage);
 }
 
 static void apply_decoder_options(ftx_decoder_t *decoder) {
@@ -74,6 +101,9 @@ static void apply_decoder_options(ftx_decoder_t *decoder) {
     wsjtx_options.enable_early_decode = decoder->options.enable_early_decode != 0;
     wsjtx_options.enable_wideband_dx_search = decoder->options.enable_wideband_dx_search != 0;
     decoder_set_wsjtx_options(decoder->impl, &wsjtx_options);
+    decoder_set_q65_config(decoder->impl,
+                           decoder->options.q65_submode,
+                           decoder->options.q65_tr_period_seconds);
 
     iterations = decoder->options.ldpc_iterations;
     if (iterations <= 0) {
@@ -132,12 +162,11 @@ ftx_decoder_t *ftx_decoder_create(ftx_mode_t mode,
                                   int num_samples,
                                   long long utc_time) {
     ftx_decoder_t *decoder;
-    int is_ft8;
 
     if (sample_rate <= 0 || num_samples <= 0) {
         return NULL;
     }
-    if (mode != FTX_MODE_FT8 && mode != FTX_MODE_FT4) {
+    if (mode != FTX_MODE_FT8 && mode != FTX_MODE_FT4 && mode != FTX_MODE_Q65) {
         return NULL;
     }
 
@@ -151,15 +180,16 @@ ftx_decoder_t *ftx_decoder_create(ftx_mode_t mode,
     decoder->num_samples = num_samples;
     decoder->utc_time = utc_time;
     load_default_options(&decoder->options);
+    load_default_input_context(&decoder->input_context, sample_rate);
 
-    is_ft8 = (mode == FTX_MODE_FT8);
-    decoder->impl = (decoder_t *) init_decoder((int64_t) utc_time, sample_rate, num_samples, is_ft8);
+    decoder->impl = (decoder_t *) init_decoder((int64_t) utc_time, sample_rate, num_samples, (int) mode);
     if (decoder->impl == NULL) {
         free(decoder);
         return NULL;
     }
 
     apply_decoder_options(decoder);
+    apply_input_context(decoder);
     decoder_set_ap_hints(decoder->impl, &decoder->ap_hints);
     return decoder;
 }
@@ -180,6 +210,17 @@ int ftx_decoder_set_options(ftx_decoder_t *decoder, const ftx_decoder_options_t 
 
     decoder->options = *options;
     apply_decoder_options(decoder);
+    return 0;
+}
+
+int ftx_decoder_set_input_context(ftx_decoder_t *decoder,
+                                  const ftx_decoder_input_context_t *input_context) {
+    if (decoder == NULL || input_context == NULL || input_context->source_sample_rate <= 0) {
+        return -1;
+    }
+    decoder->input_context = *input_context;
+    decoder->input_context.input_is_live = input_context->input_is_live != 0 ? 1 : 0;
+    apply_input_context(decoder);
     return 0;
 }
 
@@ -247,6 +288,7 @@ int ftx_decoder_process_float_slot(ftx_decoder_t *decoder,
 
     decoder_ft8_reset(decoder->impl, (long) utc_time, sample_count);
     apply_decoder_options(decoder);
+    apply_input_context(decoder);
     decoder_set_ap_hints(decoder->impl, &decoder->ap_hints);
     decoder_monitor_press_samples((float *) samples, decoder->impl, sample_count);
 
@@ -285,6 +327,31 @@ int ftx_decoder_get_last_merged_count(const ftx_decoder_t *decoder) {
         return -1;
     }
     return decoder_get_last_merged_count(decoder->impl);
+}
+
+int ftx_decoder_get_bridge_context_id(const ftx_decoder_t *decoder) {
+    if (decoder == NULL) {
+        return 0;
+    }
+    return decoder_get_bridge_context_id(decoder->impl);
+}
+
+int ftx_decoder_reset_q65_averaging(ftx_decoder_t *decoder) {
+    if (decoder == NULL || decoder->mode != FTX_MODE_Q65) {
+        return -1;
+    }
+    return decoder_reset_q65_averaging(decoder->impl) ? 0 : -1;
+}
+
+int ftx_decoder_get_q65_averaging_state(const ftx_decoder_t *decoder,
+                                        int *averaged_frame_count,
+                                        int *clear_pending) {
+    if (decoder == NULL || decoder->mode != FTX_MODE_Q65 ||
+        averaged_frame_count == NULL || clear_pending == NULL) {
+        return -1;
+    }
+    return decoder_get_q65_averaging_state(
+            decoder->impl, averaged_frame_count, clear_pending) ? 0 : -1;
 }
 
 int ftx_decoder_get_result(const ftx_decoder_t *decoder, int index, ftx_decode_result_t *out) {

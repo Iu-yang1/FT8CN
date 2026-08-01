@@ -2798,9 +2798,10 @@
 
         <Button
                 android:id="@+id/aboutButton"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="6dp"
                 android:layout_marginBottom="12dp"
                 android:background="@drawable/imagebutton_style"
                 android:elevation="6dp"
@@ -2813,9 +2814,10 @@
 
         <Button
                 android:id="@+id/faqButton"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="16dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginEnd="12dp"
                 android:layout_marginTop="3dp"
                 android:background="@drawable/imagebutton_style"
                 android:elevation="6dp"

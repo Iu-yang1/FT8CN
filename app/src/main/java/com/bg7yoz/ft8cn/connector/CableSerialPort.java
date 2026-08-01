@@ -19,6 +19,8 @@ import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.util.Log;
 
+import androidx.core.content.ContextCompat;
+
 import com.bg7yoz.ft8cn.BuildConfig;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.R;
@@ -47,9 +49,14 @@ public class CableSerialPort {
     private BroadcastReceiver broadcastReceiver;
     private final Context context;
 
+    private int deviceId = 0;
     private int vendorId = 0x0c26;//设备号
+    private int productId = 0;
     private int portNum = 0;//端口号
     private int baudRate = 19200;//波特率
+    private int dataBits = 8;
+    private int stopBits = 1;
+    private int parity = UsbSerialPort.PARITY_NONE;
 
     private UsbSerialPort usbSerialPort;
     private SerialInputOutputManager usbIoManager;
@@ -61,18 +68,30 @@ public class CableSerialPort {
 
 
     private boolean connected = false;//是否处于连接状态
+    private boolean receiverRegistered = false;
 
     public CableSerialPort(Context mContext, SerialPort serialPort, int baud, OnConnectorStateChanged connectorStateChanged) {
+        this(mContext, serialPort, baud, GeneralVariables.serialDataBits,
+                GeneralVariables.serialStopBits, GeneralVariables.serialParity, connectorStateChanged);
+    }
+
+    public CableSerialPort(Context mContext, SerialPort serialPort, int baud, int dataBits,
+                           int stopBits, int parity, OnConnectorStateChanged connectorStateChanged) {
+        deviceId = serialPort.deviceId;
         vendorId = serialPort.vendorId;
+        productId = serialPort.productId;
         portNum = serialPort.portNum;
         baudRate = baud;
-        context = mContext;
+        this.dataBits = dataBits;
+        this.stopBits = stopBits;
+        this.parity = parity;
+        context = mContext.getApplicationContext();
         this.onStateChanged=connectorStateChanged;
         doBroadcast();
     }
 
     public CableSerialPort(Context mContext) {
-        context = mContext;
+        context = mContext.getApplicationContext();
         doBroadcast();
     }
 
@@ -103,8 +122,11 @@ public class CableSerialPort {
 
 
         for (UsbDevice v : usbManager.getDeviceList().values()) {
-            if (v.getVendorId() == vendorId) {
+            if ((deviceId == 0 || v.getDeviceId() == deviceId)
+                    && v.getVendorId() == vendorId
+                    && (productId == 0 || v.getProductId() == productId)) {
                 device = v;
+                break;
             }
         }
         if (device == null) {
@@ -116,7 +138,7 @@ public class CableSerialPort {
             //试着把未知的设备加入到cdc驱动上
             driver = new CdcAcmSerialDriver(device);
         }
-        if (driver.getPorts().size() < portNum) {
+        if (portNum < 0 || driver.getPorts().size() <= portNum) {
             Log.e(TAG, "串口号不存在，无法打开。");
             return false;
         }
@@ -149,10 +171,12 @@ public class CableSerialPort {
             //在android12 开始，增加了PendingIntent.FLAG_MUTABLE保护机制，所以要做版本判断
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 usbPermissionIntent = PendingIntent.getBroadcast(context, 0
-                        , new Intent(INTENT_ACTION_GRANT_USB), PendingIntent.FLAG_MUTABLE);
+                        , new Intent(INTENT_ACTION_GRANT_USB).setPackage(context.getPackageName())
+                        , PendingIntent.FLAG_MUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
             } else {
                 usbPermissionIntent = PendingIntent.getBroadcast(context, 0
-                        , new Intent(INTENT_ACTION_GRANT_USB), 0);
+                        , new Intent(INTENT_ACTION_GRANT_USB).setPackage(context.getPackageName())
+                        , PendingIntent.FLAG_UPDATE_CURRENT);
             }
 
 
@@ -162,7 +186,7 @@ public class CableSerialPort {
 
 
             usbManager.requestPermission(driver.getDevice(), usbPermissionIntent);
-            prepare();
+            return true;
         }
         if (usbConnection == null) {
             if (onStateChanged!=null){
@@ -176,11 +200,8 @@ public class CableSerialPort {
             //波特率、停止位
             //usbSerialPort.setParameters(baudRate, 8, 1, UsbSerialPort.PARITY_NONE);
             Log.d(TAG,String.format("serial:baud rate：%d,data bits:%d,stop bits:%d,parity bit:%d"
-                    ,baudRate,GeneralVariables.serialDataBits
-                    ,GeneralVariables.serialStopBits
-                    ,GeneralVariables.serialParity));
-            usbSerialPort.setParameters(baudRate, GeneralVariables.serialDataBits
-                    , GeneralVariables.serialStopBits, GeneralVariables.serialParity);
+                    ,baudRate,dataBits,stopBits,parity));
+            usbSerialPort.setParameters(baudRate, dataBits, stopBits, parity);
             usbIoManager = new SerialInputOutputManager(usbSerialPort, new SerialInputOutputManager.Listener() {
                 @Override
                 public void onNewData(byte[] data) {
@@ -252,16 +273,32 @@ public class CableSerialPort {
         } catch (IOException ignored) {
         }
         usbSerialPort = null;
+        unregisterRigSerialPort();
     }
 
     public void registerRigSerialPort(Context context) {
+        if (receiverRegistered) return;
         Log.d(TAG, "registerRigSerialPort: registered!");
-        context.registerReceiver(broadcastReceiver, new IntentFilter(INTENT_ACTION_GRANT_USB));
+        ContextCompat.registerReceiver(
+                context,
+                broadcastReceiver,
+                new IntentFilter(INTENT_ACTION_GRANT_USB),
+                ContextCompat.RECEIVER_NOT_EXPORTED);
+        receiverRegistered = true;
     }
 
     public void unregisterRigSerialPort(Activity activity) {
+        unregisterRigSerialPort();
+    }
+
+    public void unregisterRigSerialPort() {
+        if (!receiverRegistered) return;
         Log.d(TAG, "unregisterRigSerialPort: unregistered!");
-        activity.unregisterReceiver(broadcastReceiver);
+        try {
+            context.unregisterReceiver(broadcastReceiver);
+        } catch (IllegalArgumentException ignored) {
+        }
+        receiverRegistered = false;
     }
 
 
@@ -270,27 +307,33 @@ public class CableSerialPort {
      *
      * @param rts_on true：打开，false：关闭
      */
-    public void setRTS_On(boolean rts_on) {
+    public boolean setRTS_On(boolean rts_on) {
         try {
+            if (usbSerialPort == null) return false;
             EnumSet<UsbSerialPort.ControlLine> controlLines = usbSerialPort.getSupportedControlLines();
             if (controlLines.contains(UsbSerialPort.ControlLine.RTS)) {
                 usbSerialPort.setRTS(rts_on);
+                return true;
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
+        return false;
     }
 
-    public void setDTR_On(boolean dtr_on) {
+    public boolean setDTR_On(boolean dtr_on) {
         try {
+            if (usbSerialPort == null) return false;
             EnumSet<UsbSerialPort.ControlLine> controlLines = usbSerialPort.getSupportedControlLines();
             if (controlLines.contains(UsbSerialPort.ControlLine.DTR)) {
                 usbSerialPort.setDTR(dtr_on);
+                return true;
             }
         } catch (IOException e) {
             e.printStackTrace();
             Log.d(TAG, "setDTR_On: " + e.getMessage());
         }
+        return false;
     }
 
     public OnConnectorStateChanged getOnStateChanged() {
@@ -334,6 +377,7 @@ public class CableSerialPort {
     public static ArrayList<SerialPort> listSerialPorts(Context context) {
         ArrayList<SerialPort> serialPorts = new ArrayList<>();
         UsbManager usbManager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
+        if (usbManager == null) return serialPorts;
 
         for (UsbDevice device : usbManager.getDeviceList().values()) {
             UsbSerialDriver driver = UsbSerialProber.getDefaultProber().probeDevice(device);

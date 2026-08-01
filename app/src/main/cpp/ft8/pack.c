@@ -983,7 +983,11 @@ int pack77_1(const char* msg, uint8_t* b77)
 
     if (equals(tokens[0], "CQ") && count >= 3 && is_cq_modifier_token(tokens[1]))
     {
-        snprintf(call1_with_modifier, sizeof(call1_with_modifier), "CQ_%s", tokens[1]);
+        const size_t modifier_length = strlen(tokens[1]);
+        if (modifier_length > sizeof(call1_with_modifier) - 4)
+            return -1;
+        memcpy(call1_with_modifier, "CQ_", 3);
+        memcpy(call1_with_modifier + 3, tokens[1], modifier_length + 1);
         call1 = call1_with_modifier;
         call2 = tokens[2];
         if (count == 4)

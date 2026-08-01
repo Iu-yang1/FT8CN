@@ -14,22 +14,34 @@ package com.bg7yoz.ft8cn;
 
 import static com.bg7yoz.ft8cn.GeneralVariables.getStringFromResource;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.util.Log;
 
+import androidx.core.content.ContextCompat;
 import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.lifecycle.ViewModelStoreOwner;
+import androidx.fragment.app.Fragment;
 
 import com.bg7yoz.ft8cn.callsign.CallsignDatabase;
+import com.bg7yoz.ft8cn.core.FeatureAppGraph;
+import com.bg7yoz.ft8cn.core.radio.FrequencyPlan;
+import com.bg7yoz.ft8cn.core.radio.RadioMode;
+import com.bg7yoz.ft8cn.core.radio.RadioVfo;
+import com.bg7yoz.ft8cn.core.radio.SplitStrategy;
+import com.bg7yoz.ft8cn.data.settings.FeatureSettings;
+import com.bg7yoz.ft8cn.data.logbook.LegacyQsoPersistence;
 import com.bg7yoz.ft8cn.callsign.CallsignInfo;
 import com.bg7yoz.ft8cn.callsign.OnAfterQueryCallsignLocation;
 import com.bg7yoz.ft8cn.connector.BluetoothRigConnector;
@@ -43,6 +55,7 @@ import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.DatabaseOpr;
 import com.bg7yoz.ft8cn.database.OnAfterQueryFollowCallsigns;
 import com.bg7yoz.ft8cn.database.OperationBand;
+import com.bg7yoz.ft8cn.eme.EmeAssistController;
 import com.bg7yoz.ft8cn.flex.FlexRadio;
 import com.bg7yoz.ft8cn.ft8listener.FT8SignalListener;
 import com.bg7yoz.ft8cn.ft8listener.OnFt8Listen;
@@ -85,6 +98,7 @@ import com.bg7yoz.ft8cn.timer.OnUtcTimer;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.bg7yoz.ft8cn.ui.ToastMessage;
 import com.bg7yoz.ft8cn.wave.HamRecorder;
+import com.bg7yoz.ft8cn.wave.OnGetNativeVoiceDataDone;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 import com.bg7yoz.ft8cn.x6100.X6100Radio;
 import com.bg7yoz.ft8cn.pskreporter.PSKReporterManager;
@@ -94,15 +108,16 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Objects;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class MainViewModel extends ViewModel {
     String TAG = "ft8cn MainViewModel";
     public boolean configIsLoaded = false;
     private boolean resourcesReleased = false;
-
-    private static MainViewModel viewModel = null;
 
     public final ArrayList<Ft8Message> ft8Messages = new ArrayList<>();
     public UtcTimer utcTimer;
@@ -136,6 +151,9 @@ public class MainViewModel extends ViewModel {
     public MutableLiveData<String> mutableNtpServer = new MutableLiveData<>("");
     public MutableLiveData<String> mutableNtpSyncInfo = new MutableLiveData<>("");
     public MutableLiveData<Boolean> mutableNtpSyncSuccess = new MutableLiveData<>(false);
+    private static final long NTP_SYNC_INTERVAL_MS = TimeUnit.MINUTES.toMillis(15);
+    private static final long NTP_RETRY_INTERVAL_MS = TimeUnit.MINUTES.toMillis(1);
+    private volatile long nextNtpSyncElapsedMs = Long.MAX_VALUE;
     private final Observer<Integer> ntpConfigChangedObserver = new Observer<Integer>() {
         @Override
         public void onChanged(Integer integer) {
@@ -143,8 +161,22 @@ public class MainViewModel extends ViewModel {
         }
     };
 
-    private final ExecutorService getQTHThreadPool = Executors.newCachedThreadPool();
-    private final ExecutorService sendWaveDataThreadPool = Executors.newCachedThreadPool();
+    private final ExecutorService getQTHThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(16),
+            runnable -> new Thread(runnable, "ft8cn-qth"),
+            new ThreadPoolExecutor.DiscardOldestPolicy());
+    private final ExecutorService sendWaveDataThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(4),
+            runnable -> new Thread(runnable, "ft8cn-cat-audio"),
+            new ThreadPoolExecutor.AbortPolicy());
+    private final ExecutorService thirdPartyUploadThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(32),
+            runnable -> new Thread(runnable, "ft8cn-log-upload"),
+            new ThreadPoolExecutor.AbortPolicy());
+    private final ExecutorService qsoPersistenceThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(32),
+            runnable -> new Thread(runnable, "ft8cn-qso-persist"),
+            new ThreadPoolExecutor.AbortPolicy());
 
     //用于显示生成共享日志过程的变量
     public MutableLiveData<String> mutableShareInfo = new MutableLiveData<>("");
@@ -159,6 +191,7 @@ public class MainViewModel extends ViewModel {
     public SpectrumListener spectrumListener;
     public PSKReporterManager pskReporterManager;
     public PSKReporterSender pskReporterSender;
+    public final EmeAssistController emeAssistController = new EmeAssistController();
     public boolean markMessage = true;
 
     public OperationBand operationBand = null;
@@ -213,13 +246,20 @@ public class MainViewModel extends ViewModel {
     //********************************************
 
     //日志管理HTTP SERVER
-    private final LogHttpServer httpServer;
+    private LogHttpServer httpServer;
 
     public static MainViewModel getInstance(ViewModelStoreOwner owner) {
-        if (viewModel == null) {
-            viewModel = new ViewModelProvider(owner).get(MainViewModel.class);
+        Context context = null;
+        if (owner instanceof Context) {
+            context = (Context) owner;
+        } else if (owner instanceof Fragment) {
+            context = ((Fragment) owner).getContext();
         }
-        return viewModel;
+        if (context == null || !(context.getApplicationContext() instanceof Ft8cnApplication)) {
+            throw new IllegalStateException("MainViewModel requires Ft8cnApplication context");
+        }
+        Ft8cnApplication application = (Ft8cnApplication) context.getApplicationContext();
+        return new ViewModelProvider(application).get(MainViewModel.class);
     }
 
     public Ft8Message getFt8Message(int position) {
@@ -316,7 +356,11 @@ public class MainViewModel extends ViewModel {
         mutableIsDecoding.postValue(false);
 
         hamRecorder = new HamRecorder(null);
-        hamRecorder.startRecord();
+        if (ContextCompat.checkSelfPermission(
+                GeneralVariables.getMainContext(),
+                Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            hamRecorder.startRecord();
+        }
 
         mutableIsFlexRadio.setValue(false);
         mutableIsXieguRadio.setValue(false);
@@ -340,6 +384,12 @@ public class MainViewModel extends ViewModel {
                 timerSec.postValue(utc);
                 mutableIsRecording.postValue(hamRecorder.isRunning());
                 mutableHamRecordIsRunning.postValue(hamRecorder.isRunning());
+                if (GeneralVariables.ntpEnable
+                        && SystemClock.elapsedRealtime() >= nextNtpSyncElapsedMs) {
+                    // 先推迟下一次触发，避免同步任务尚未入队时被下一秒重复提交。
+                    nextNtpSyncElapsedMs = Long.MAX_VALUE;
+                    syncNtpTime();
+                }
             }
         });
         utcTimer.start();
@@ -382,7 +432,9 @@ public class MainViewModel extends ViewModel {
                     return;
                 }
 
-                if (GeneralVariables.isExperimentalCodecEnabled()) {
+                if (GeneralVariables.isExperimentalCodecEnabled()
+                        && GeneralVariables.getOperatingProfile()
+                            == GeneralVariables.OPERATING_PROFILE_NORMAL) {
                     // Experimental packets are plain-text debug frames, not FT8/FT4
                     // messages, so we stop before FT-specific auto-flow/logging code.
                     currentDecodeCount = messages.size();
@@ -441,6 +493,36 @@ public class MainViewModel extends ViewModel {
             }
 
             @Override
+            public boolean getVoiceDataAtSampleRate(int duration,
+                                                    int targetSampleRate,
+                                                    boolean afterDoneRemove,
+                                                    OnGetVoiceDataDone getVoiceDataDone) {
+                return hamRecorder.getVoiceDataAtSampleRate(
+                        duration,
+                        targetSampleRate,
+                        afterDoneRemove,
+                        getVoiceDataDone) != null;
+            }
+
+            @Override
+            public boolean getNativeVoiceDataAtSampleRate(
+                    int duration,
+                    int targetSampleRate,
+                    boolean afterDoneRemove,
+                    OnGetNativeVoiceDataDone getVoiceDataDone) {
+                return hamRecorder.getNativeVoiceDataAtSampleRate(
+                        duration,
+                        targetSampleRate,
+                        afterDoneRemove,
+                        getVoiceDataDone) != null;
+            }
+
+            @Override
+            public void cancelPendingOneShotVoiceCaptures() {
+                hamRecorder.cancelPendingOneShotVoiceCaptures();
+            }
+
+            @Override
             public int getCurrentSampleRate() {
                 return hamRecorder.getCurrentSampleRate();
             }
@@ -451,6 +533,8 @@ public class MainViewModel extends ViewModel {
         spectrumListener = new SpectrumListener(hamRecorder);
 
         ft8TransmitSignal = new FT8TransmitSignal(databaseOpr, new OnDoTransmitted() {
+            private volatile boolean currentTransmitControlledByRadioTransaction;
+
             private boolean needControlSco() {
                 if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
                     return false;
@@ -462,15 +546,81 @@ public class MainViewModel extends ViewModel {
             }
 
             @Override
-            public void onPrepareTransmit() {
+            public boolean onPrepareTransmit() {
+                FeatureAppGraph graph = FeatureAppGraph.from(GeneralVariables.getMainContext());
+                if (!graph.getRadioController().getState().getValue().getConnected()
+                        && (GeneralVariables.controlMode == ControlMode.CAT
+                        || GeneralVariables.controlMode == ControlMode.RTS
+                        || GeneralVariables.controlMode == ControlMode.DTR)) {
+                    graph.attachLegacyRig(baseRig);
+                }
+                boolean radioConnected = graph.getRadioController().getState().getValue().getConnected();
+                if (radioConnected) {
+                    FeatureSettings settings = graph.getSettings().snapshotBlocking();
+                    SplitStrategy splitStrategy;
+                    try {
+                        splitStrategy = SplitStrategy.valueOf(settings.getSplitStrategy());
+                    } catch (IllegalArgumentException ignored) {
+                        splitStrategy = SplitStrategy.NONE;
+                    }
+                    int audioOffsetHz = Math.round(GeneralVariables.getTransmitFrequency());
+                    long watchdogMs = Math.min(
+                            310_000L,
+                            Math.max(30_000L,
+                                    FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode()) + 5_000L));
+                    currentTransmitControlledByRadioTransaction = graph.getRadioTransmitBridge().beginTransmit(
+                            new FrequencyPlan(
+                                    GeneralVariables.band,
+                                    GeneralVariables.band + audioOffsetHz,
+                                    splitStrategy,
+                                    audioOffsetHz,
+                                    1_000,
+                                    2_000,
+                                    RadioMode.DATA_USB,
+                                    3_000,
+                                    RadioVfo.B),
+                            watchdogMs,
+                            Math.max(GeneralVariables.pttDelay, settings.getHamlibTxDelayMs()));
+                    if (!currentTransmitControlledByRadioTransaction) {
+                        return false;
+                    }
+                    if (needControlSco()) stopSco();
+                    return true;
+                }
+                currentTransmitControlledByRadioTransaction = false;
                 if (GeneralVariables.controlMode == ControlMode.CAT
                         || GeneralVariables.controlMode == ControlMode.RTS
                         || GeneralVariables.controlMode == ControlMode.DTR) {
-                    if (baseRig != null) {
-                        if (needControlSco()) stopSco();
-                        baseRig.setPTT(true);
-                    }
+                    return false;
                 }
+                return true;
+            }
+
+            @Override
+            public boolean onAudioReady() {
+                return !currentTransmitControlledByRadioTransaction
+                        || FeatureAppGraph.from(GeneralVariables.getMainContext())
+                        .getRadioTransmitBridge().awaitAudioReady();
+            }
+
+            @Override
+            public void onTransmitFinished() {
+                if (currentTransmitControlledByRadioTransaction) {
+                    FeatureAppGraph.from(GeneralVariables.getMainContext())
+                            .getRadioTransmitBridge().finishTransmit("发射完成");
+                    currentTransmitControlledByRadioTransaction = false;
+                }
+                if (needControlSco()) startSco();
+            }
+
+            @Override
+            public void onTransmitAborted(String reason) {
+                if (currentTransmitControlledByRadioTransaction) {
+                    FeatureAppGraph.from(GeneralVariables.getMainContext())
+                            .getRadioTransmitBridge().abortTransmit(reason);
+                    currentTransmitControlledByRadioTransaction = false;
+                }
+                if (needControlSco()) startSco();
             }
 
             @Override
@@ -486,16 +636,9 @@ public class MainViewModel extends ViewModel {
 
             @Override
             public void onAfterTransmit(Ft8Message message, int functionOder) {
-                if (GeneralVariables.controlMode == ControlMode.CAT
-                        || GeneralVariables.controlMode == ControlMode.RTS
-                        || GeneralVariables.controlMode == ControlMode.DTR) {
-                    if (baseRig != null) {
-                        baseRig.setPTT(false);
-                        if (needControlSco()) startSco();
-                    }
-                }
-
                 if (GeneralVariables.isExperimentalCodecEnabled()
+                        && GeneralVariables.getOperatingProfile()
+                            == GeneralVariables.OPERATING_PROFILE_NORMAL
                         && ft8SignalListener != null
                         && message != null) {
                     // Experimental mode is used as a local modem bring-up path,
@@ -524,7 +667,7 @@ public class MainViewModel extends ViewModel {
                 if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
                     if (baseRig != null) {
                         if (baseRig.isConnected()) {
-                            sendWaveDataThreadPool.execute(new SendWaveDataRunnable(baseRig, msg));
+                            submitWaveData(baseRig, msg);
                         }
                     }
                 }
@@ -546,25 +689,47 @@ public class MainViewModel extends ViewModel {
                 if (!supportTransmitOverCAT()) {
                     return;
                 }
-                sendWaveDataThreadPool.execute(new SendWaveDataRunnable(baseRig, msg));
+                submitWaveData(baseRig, msg);
             }
 
         }, new OnTransmitSuccess() {
             @Override
             public void doAfterTransmit(QSLRecord qslRecord) {
-                databaseOpr.addQSL_Callsign(qslRecord);
+                // 运行配置在回调到达时快照，避免后台写库时读到下一时隙的模式。
+                final int operatingProfile = GeneralVariables.getOperatingProfile();
+                try {
+                    qsoPersistenceThreadPool.execute(() -> {
+                        try {
+                            LegacyQsoPersistence.persistBlocking(
+                                    GeneralVariables.getMainContext(),
+                                    qslRecord,
+                                    operatingProfile,
+                                    null,
+                                    null);
+                        } catch (RuntimeException error) {
+                            Log.e(TAG, "Room QSO persistence failed", error);
+                        } finally {
+                            // 旧 WebUI/统计仍读取 SQLite；在完成迁移前保留兼容镜像。
+                            databaseOpr.doInsertQSLData(qslRecord, null);
+                        }
+                    });
+                } catch (RejectedExecutionException rejected) {
+                    Log.e(TAG, "QSO persistence queue is full", rejected);
+                    databaseOpr.addQSL_Callsign(qslRecord);
+                }
 
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
+                try {
+                    thirdPartyUploadThreadPool.execute(() -> {
                         if (GeneralVariables.enableCloudlog) {
                             ThirdPartyService.UploadToCloudLog(qslRecord);
                         }
                         if (GeneralVariables.enableQRZ) {
                             ThirdPartyService.UploadToQRZ(qslRecord);
                         }
-                    }
-                }).start();
+                    });
+                } catch (RejectedExecutionException rejected) {
+                    Log.w(TAG, "Third-party log upload queue is full");
+                }
 
                 if (qslRecord.getToCallsign() != null) {
                     GeneralVariables.callsignDatabase.getCallsignInformation(qslRecord.getToCallsign()
@@ -580,11 +745,21 @@ public class MainViewModel extends ViewModel {
             }
         });
 
-        httpServer = new LogHttpServer(this, LogHttpServer.DEFAULT_PORT);
-        try {
-            httpServer.start();
-        } catch (IOException e) {
-            Log.e(TAG, "http server error:" + e.getMessage());
+    }
+
+    /** 用户明确请求网页日志后才开放服务；LAN 模式每次启动都会生成新的访问令牌。 */
+    public synchronized String startLogHttpServer(boolean allowLan) throws IOException {
+        stopLogHttpServer();
+        LogHttpServer server = new LogHttpServer(this, LogHttpServer.DEFAULT_PORT, allowLan);
+        server.start();
+        httpServer = server;
+        return server.getAccessToken();
+    }
+
+    public synchronized void stopLogHttpServer() {
+        if (httpServer != null) {
+            httpServer.stop();
+            httpServer = null;
         }
     }
 
@@ -593,6 +768,7 @@ public class MainViewModel extends ViewModel {
      */
     public void syncNtpTime() {
         if (!GeneralVariables.ntpEnable) {
+            nextNtpSyncElapsedMs = Long.MAX_VALUE;
             mutableNtpSyncSuccess.postValue(false);
             mutableNtpSyncInfo.postValue("NTP 已关闭");
             return;
@@ -605,6 +781,7 @@ public class MainViewModel extends ViewModel {
      */
     public void syncNtpTime(String server) {
         if (!GeneralVariables.ntpEnable) {
+            nextNtpSyncElapsedMs = Long.MAX_VALUE;
             mutableNtpSyncSuccess.postValue(false);
             mutableNtpSyncInfo.postValue("NTP 已关闭");
             return;
@@ -623,6 +800,7 @@ public class MainViewModel extends ViewModel {
         mutableNtpServer.postValue(targetServer);
         mutableNtpSyncSuccess.postValue(false);
         mutableNtpSyncInfo.postValue("正在同步 " + targetServer + " ...");
+        nextNtpSyncElapsedMs = SystemClock.elapsedRealtime() + NTP_SYNC_INTERVAL_MS;
 
         UtcTimer.syncTime(targetServer, new UtcTimer.AfterSyncTimeDetail() {
             @Override
@@ -641,6 +819,7 @@ public class MainViewModel extends ViewModel {
                 mutableNtpSyncTime.postValue(result.syncTimeMs);
                 mutableNtpServer.postValue(result.server);
                 mutableNtpSyncSuccess.postValue(true);
+                nextNtpSyncElapsedMs = SystemClock.elapsedRealtime() + NTP_SYNC_INTERVAL_MS;
 
                 String info = "NTP同步成功  server=" + result.server
                         + "  offset=" + result.realOffsetMs + "ms"
@@ -653,6 +832,7 @@ public class MainViewModel extends ViewModel {
             @Override
             public void syncFailed(IOException e) {
                 mutableNtpSyncSuccess.postValue(false);
+                nextNtpSyncElapsedMs = SystemClock.elapsedRealtime() + NTP_RETRY_INTERVAL_MS;
                 String info = "NTP同步失败: " + e.getMessage();
                 mutableNtpSyncInfo.postValue(info);
                 GeneralVariables.mutableDebugMessage.postValue(info);
@@ -798,6 +978,15 @@ public class MainViewModel extends ViewModel {
      * 设置操作载波频率。如果电台没有连接，就有操作
      */
     public void setOperationBand() {
+        FeatureAppGraph graph = FeatureAppGraph.from(GeneralVariables.getMainContext());
+        if (!graph.getRadioController().getState().getValue().getConnected()) {
+            graph.attachLegacyRig(baseRig);
+        }
+        boolean controlledByRadioTransaction = graph.getRadioTransmitBridge()
+                .requestFrequency(GeneralVariables.band, GeneralVariables.band);
+        if (controlledByRadioTransaction) {
+            return;
+        }
         if (!isRigConnected()) {
             return;
         }
@@ -1011,6 +1200,7 @@ public class MainViewModel extends ViewModel {
      * 根据指令集创建不同型号的电台
      */
     private void connectRig() {
+        FeatureAppGraph.from(GeneralVariables.getMainContext()).detachLegacyRig();
         baseRig = null;
         switch (GeneralVariables.instructionSet) {
             case InstructionSet.ICOM:
@@ -1155,6 +1345,19 @@ public class MainViewModel extends ViewModel {
     public void refreshRecorderSampleRate() {
         if (hamRecorder != null) {
             hamRecorder.refreshCurrentAudioSource();
+            if (!hamRecorder.isRunning()
+                    && ContextCompat.checkSelfPermission(
+                    GeneralVariables.getMainContext(),
+                    Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                hamRecorder.startRecord();
+            }
+        }
+    }
+
+    /** 首次授权录音后恢复构造阶段被安全跳过的录音链路。 */
+    public void ensureAudioCaptureRunning() {
+        if (hamRecorder != null && !hamRecorder.isRunning()) {
+            hamRecorder.startRecord();
         }
     }
 
@@ -1240,17 +1443,31 @@ public class MainViewModel extends ViewModel {
         }
     }
 
+    private void submitWaveData(BaseRig rig, Ft8Message message) {
+        try {
+            sendWaveDataThreadPool.execute(new SendWaveDataRunnable(rig, message));
+        } catch (RejectedExecutionException rejected) {
+            Log.w(TAG, "CAT audio queue is full");
+            FeatureAppGraph.from(GeneralVariables.getMainContext())
+                    .getRadioTransmitBridge().abortTransmit("CAT 音频队列已满");
+        }
+    }
+
     public synchronized void releaseResources() {
         if (resourcesReleased) {
             return;
         }
         resourcesReleased = true;
+        emeAssistController.releaseEmeTracking();
         GeneralVariables.mutableNtpConfigChanged.removeObserver(ntpConfigChangedObserver);
         if (utcTimer != null) {
-            utcTimer.stop();
+            utcTimer.destroy();
         }
         if (hamRecorder != null) {
-            hamRecorder.stopRecord();
+            hamRecorder.release();
+        }
+        if (spectrumListener != null) {
+            spectrumListener.release();
         }
         if (ft8SignalListener != null) {
             ft8SignalListener.release();
@@ -1260,9 +1477,22 @@ public class MainViewModel extends ViewModel {
         }
         getQTHThreadPool.shutdownNow();
         sendWaveDataThreadPool.shutdownNow();
+        thirdPartyUploadThreadPool.shutdownNow();
+        qsoPersistenceThreadPool.shutdown();
+        try {
+            if (!qsoPersistenceThreadPool.awaitTermination(2, TimeUnit.SECONDS)) {
+                Log.w(TAG, "QSO persistence did not drain before shutdown");
+                qsoPersistenceThreadPool.shutdownNow();
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            qsoPersistenceThreadPool.shutdownNow();
+        }
         if (pskReporterSender != null) {
             pskReporterSender.stop();
         }
+        FeatureAppGraph.from(GeneralVariables.getMainContext()).detachLegacyRig();
+        stopLogHttpServer();
     }
 
     @Override

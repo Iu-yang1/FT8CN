@@ -1,298 +1,290 @@
 param(
-    [string] $OutputDir = '',
-    [string] $CMakePath = 'H:\tools\msys64\ucrt64\bin\cmake.exe',
-    [string] $NinjaPath = 'H:\tools\msys64\ucrt64\bin\ninja.exe',
-    [string] $NdkRoot = 'H:\iu_yang1\AndroidSDKLIB\ndk\23.1.7779620',
-    [string] $FlangPath = 'H:\tools\build\llvm-flang-22.1.5-clangcl\bin\flang.exe',
-    [string] $BoostHeaders = 'H:\tools\boost_headers',
-    [string] $TargetTriple = 'aarch64-linux-android21'
+    [string]$OutputDir = '',
+    [string]$CMakePath = '',
+    [string]$NinjaPath = '',
+    [string]$NdkRoot = '',
+    [string]$FlangPath = '',
+    [string]$BoostHeaders = '',
+    [string]$LlvmSourceRoot = '',
+    [ValidateSet('Debug', 'Profile', 'Release')]
+    [string]$BuildProfile = 'Release',
+    [ValidateSet('O2', 'O3')]
+    [string]$Optimization = 'O2',
+    [string]$TargetTriple = 'aarch64-linux-android21'
 )
 
 $ErrorActionPreference = 'Stop'
-if ($PSVersionTable.PSVersion.Major -ge 7) {
-    $PSNativeCommandUseErrorActionPreference = $false
-}
+Set-StrictMode -Version Latest
 
-function Assert-Path([string] $path, [string] $label) {
-    if (-not (Test-Path $path)) {
-        throw "Missing ${label}: $path"
+function Assert-ExistingPath([string]$Path, [string]$Label) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) {
+        throw "Missing $Label. Provide the corresponding script parameter or environment variable: $Path"
     }
 }
 
-function Invoke-NativeCapture([string] $command, [string[]] $arguments) {
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $output = & $command @arguments 2>&1 | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) {
-                $_.ToString()
-            } else {
-                [string] $_
-            }
-        } | Out-String
-        return [pscustomobject]@{
-            ExitCode = $LASTEXITCODE
-            Output = $output.TrimEnd()
-        }
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
+function Get-ObjectPath([string]$Source, [string]$ObjectDir, [string]$CppRoot) {
+    $relative = Get-Ft8cnRelativePath -BasePath $CppRoot -Path $Source
+    $hash = (Get-Ft8cnStringSha256 ($relative.ToLowerInvariant())).Substring(0, 16)
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($Source)
+    return Join-Path $ObjectDir ("$baseName-$hash.o")
 }
 
-function Write-LogLine([string] $path, [string] $line) {
-    Add-Content -Path $path -Value $line -Encoding UTF8
+function Get-UniqueStrings([string[]]$Values) {
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($value in $Values) {
+        if ($seen.Add($value)) { $value }
+    }
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..\..\..\..')).ProviderPath
-$hostCMakePath = Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\CMakeLists.txt'
+$cppRoot = Join-Path $repoRoot 'app\src\main\cpp'
+$toolchainCommon = Join-Path $repoRoot 'scripts\toolchain-common.ps1'
+. $toolchainCommon
+$roots = @(Get-Ft8cnCandidateRoots -RepoRoot $repoRoot)
+
+$CMakePath = Find-Ft8cnExecutable -ExplicitPath $CMakePath -CommandNames @('cmake.exe', 'cmake') `
+    -CandidateRoots $roots -RelativePatterns @('msys64\ucrt64\bin\cmake.exe', 'cmake\*\bin\cmake.exe')
+$NinjaPath = Find-Ft8cnExecutable -ExplicitPath $NinjaPath -CommandNames @('ninja.exe', 'ninja') `
+    -CandidateRoots $roots -RelativePatterns @('msys64\ucrt64\bin\ninja.exe', 'cmake\*\bin\ninja.exe')
+$FlangPath = Find-Ft8cnExecutable -ExplicitPath $FlangPath -CommandNames @('flang.exe', 'flang-new.exe') `
+    -CandidateRoots $roots -RelativePatterns @('build\llvm-flang-*\bin\flang.exe', 'llvm*\bin\flang*.exe')
+$NdkRoot = Find-Ft8cnDirectory -ExplicitPath $NdkRoot -CandidateRoots $roots `
+    -RelativePatterns @('ndk\*', 'AndroidSDKLIB\ndk\*') -RequiredChild 'build\cmake\android.toolchain.cmake'
+$BoostHeaders = Find-Ft8cnDirectory -ExplicitPath $BoostHeaders -CandidateRoots $roots `
+    -RelativePatterns @('boost_headers', 'boost*') -RequiredChild 'boost\version.hpp'
+$LlvmSourceRoot = Find-Ft8cnDirectory -ExplicitPath $LlvmSourceRoot -CandidateRoots $roots `
+    -RelativePatterns @('src\llvm-project-*.src', 'llvm-project-*.src') -RequiredChild 'runtimes\CMakeLists.txt'
+
+if (-not $OutputDir) { $OutputDir = Join-Path $scriptDir 'out\arm64-v8a' }
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+$manifestPath = Join-Path $cppRoot 'wsjtx3\wsjtx3-sources.manifest'
 $runtimeScript = Join-Path $scriptDir 'build_flang_rt_android.ps1'
-$intrinsicModuleDir = Join-Path (Split-Path -Parent (Split-Path -Parent $FlangPath)) 'include\flang'
-$ndkBin = Join-Path $NdkRoot 'toolchains\llvm\prebuilt\windows-x86_64\bin'
+$runtimePatch = Join-Path $scriptDir 'patches\flang-rt-android-time.patch'
+$intrinsicModuleDir = if ($FlangPath) { Join-Path (Split-Path -Parent (Split-Path -Parent $FlangPath)) 'include\flang' } else { '' }
+$ndkBin = if ($NdkRoot) { Join-Path $NdkRoot 'toolchains\llvm\prebuilt\windows-x86_64\bin' } else { '' }
 $clang = Join-Path $ndkBin 'clang.exe'
 $clangxx = Join-Path $ndkBin 'clang++.exe'
 $llvmAr = Join-Path $ndkBin 'llvm-ar.exe'
 
-if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-    $OutputDir = Join-Path $scriptDir 'out\arm64-v8a'
-}
+Assert-ExistingPath $CMakePath 'CMake'
+Assert-ExistingPath $NinjaPath 'Ninja'
+Assert-ExistingPath $NdkRoot 'Android NDK'
+Assert-ExistingPath $FlangPath 'Flang'
+Assert-ExistingPath $BoostHeaders 'Boost headers'
+Assert-ExistingPath $LlvmSourceRoot 'LLVM source root'
+Assert-ExistingPath $intrinsicModuleDir 'Flang intrinsic modules'
+Assert-ExistingPath $clang 'Android clang'
+Assert-ExistingPath $clangxx 'Android clang++'
+Assert-ExistingPath $llvmAr 'Android llvm-ar'
+Assert-ExistingPath $manifestPath 'WSJT-X source manifest'
+Assert-ExistingPath $runtimeScript 'flang-rt build script'
+Assert-ExistingPath $runtimePatch 'flang-rt Android patch'
 
-$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
-$runtimeBuildDir = Join-Path $OutputDir 'flang_rt_build'
-$objDir = Join-Path $OutputDir 'obj'
-$modDir = Join-Path $OutputDir 'mod'
-$logDir = Join-Path $OutputDir 'logs'
-$probeDir = Join-Path $OutputDir 'probe'
-$runtimeArchive = Join-Path $OutputDir 'libflang_rt.runtime.a'
-$coreArchive = Join-Path $OutputDir 'libwsjtx3_official_core.a'
-$compileLog = Join-Path $logDir 'compile.log'
-$linkLog = Join-Path $logDir 'link.log'
-
-Assert-Path $repoRoot 'FT8CN repo root'
-Assert-Path $hostCMakePath 'WSJT-X host whitelist'
-Assert-Path $runtimeScript 'flang-rt build script'
-Assert-Path $FlangPath 'Flang'
-Assert-Path $intrinsicModuleDir 'Flang intrinsic modules'
-Assert-Path $NdkRoot 'Android NDK'
-Assert-Path $BoostHeaders 'Boost headers'
-Assert-Path $clang 'Android clang'
-Assert-Path $clangxx 'Android clang++'
-Assert-Path $llvmAr 'Android llvm-ar'
-
-New-Item -ItemType Directory -Force -Path $OutputDir, $runtimeBuildDir, $objDir, $modDir, $logDir, $probeDir | Out-Null
-Remove-Item $compileLog, $linkLog -ErrorAction SilentlyContinue
-
-& $runtimeScript -OutputDir $OutputDir -BuildDir $runtimeBuildDir -CMakePath $CMakePath -NinjaPath $NinjaPath -NdkRoot $NdkRoot -FlangPath $FlangPath -TargetTriple $TargetTriple
-if ($LASTEXITCODE -ne 0) {
-    throw 'flang-rt build script failed'
-}
-Assert-Path $runtimeArchive 'Android flang-rt archive'
-
-$vendorFortranSources = New-Object System.Collections.Generic.List[string]
-$vendorCppSources = New-Object System.Collections.Generic.List[string]
-$hostSupportFortranSources = @(
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\wsjtx3_host_support.f90'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\wsjtx3_bridge.f90')
+$openmpLookup = Invoke-Ft8cnNativeCapture -Path $clang -Arguments @(
+    '-target', $TargetTriple, '-fopenmp', '--print-file-name=libomp.a'
 )
-$hostSupportCSources = @(
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host\shmem_stub.c'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\android\fftw3f_kiss_shim.c'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\android\complex_math_shim.c'),
-    (Join-Path $repoRoot 'app\src\main\cpp\fft\kiss_fft.c'),
-    (Join-Path $repoRoot 'app\src\main\cpp\fft\kiss_fftr.c')
-)
-
-foreach ($line in Get-Content $hostCMakePath) {
-    if ($line -match '\$\{WSJTX3_VENDOR_LIB\}/(.+?\.f90)') {
-        $vendorFortranSources.Add((Join-Path $repoRoot ('app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\' + $matches[1].Replace('/', '\'))))
-    }
-    if ($line -match '\$\{WSJTX3_VENDOR_LIB\}/(.+?\.cpp)') {
-        $vendorCppSources.Add((Join-Path $repoRoot ('app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\' + $matches[1].Replace('/', '\'))))
-    }
+if ($openmpLookup.ExitCode -ne 0) {
+    throw "Unable to locate the Android OpenMP runtime:`n$($openmpLookup.Output)"
 }
+$openmpArchive = $openmpLookup.Output.Trim()
+Assert-ExistingPath $openmpArchive 'Android OpenMP runtime'
 
 $fortranSources = New-Object System.Collections.Generic.List[string]
-$vendorFortranSources | ForEach-Object { $fortranSources.Add($_) }
-$hostSupportFortranSources | ForEach-Object { $fortranSources.Add($_) }
+$cSources = New-Object System.Collections.Generic.List[string]
+$cxxSources = New-Object System.Collections.Generic.List[string]
+foreach ($line in Get-Content $manifestPath -Encoding UTF8) {
+    $trimmed = $line.Trim()
+    if (-not $trimmed -or $trimmed.StartsWith('#')) { continue }
+    $fields = $trimmed -split '\|', 2
+    if ($fields.Count -ne 2) { throw "Invalid source manifest line: $line" }
+    $source = Join-Path $cppRoot $fields[1].Replace('/', '\')
+    Assert-ExistingPath $source 'manifest source'
+    switch ($fields[0]) {
+        'vendor-fortran' { $fortranSources.Add($source) }
+        'bridge-fortran' { $fortranSources.Add($source) }
+        'vendor-c' { $cSources.Add($source) }
+        'bridge-c' { $cSources.Add($source) }
+        'android-c' { $cSources.Add($source) }
+        'vendor-cxx' { $cxxSources.Add($source) }
+        default { throw "Unknown source kind in manifest: $($fields[0])" }
+    }
+}
+$fortranSources = @(Get-UniqueStrings $fortranSources)
+$cSources = @(Get-UniqueStrings $cSources)
+$cxxSources = @(Get-UniqueStrings $cxxSources)
+$allSources = @($fortranSources + $cSources + $cxxSources)
+
+$profileFlags = switch ($BuildProfile) {
+    'Debug' { @('-O0', '-g') }
+    'Profile' { @('-O2', '-g', '-DNDEBUG') }
+    default { @("-$Optimization", '-DNDEBUG') }
+}
+$fingerprintFiles = @($allSources + @($manifestPath, $runtimeScript, $runtimePatch,
+        $openmpArchive, $PSCommandPath, $toolchainCommon)) | Sort-Object -Unique
+$fingerprintLines = New-Object System.Collections.Generic.List[string]
+$fingerprintLines.Add("profile=$BuildProfile")
+$fingerprintLines.Add("flags=$($profileFlags -join ' ')")
+$fingerprintLines.Add("target=$TargetTriple")
+$fingerprintLines.Add('flang=' + (Get-Ft8cnCommandVersion $FlangPath @('--version')))
+$fingerprintLines.Add('clang=' + (Get-Ft8cnCommandVersion $clang @('--version')))
+$fingerprintLines.Add('ar=' + (Get-Ft8cnCommandVersion $llvmAr @('--version')))
+foreach ($file in $fingerprintFiles) {
+    $fingerprintLines.Add("file=$(Get-Ft8cnRelativePath $repoRoot $file)|$(Get-Ft8cnFileSha256 $file)")
+}
+$fingerprint = Get-Ft8cnStringSha256 ($fingerprintLines -join "`n")
+$coreArchive = Join-Path $OutputDir 'libwsjtx3_official_core.a'
+$runtimeArchive = Join-Path $OutputDir 'libflang_rt.runtime.a'
+$fingerprintFile = Join-Path $OutputDir 'wsjtx3-core.fingerprint'
+
+& $runtimeScript -OutputDir $OutputDir -CMakePath $CMakePath `
+    -NinjaPath $NinjaPath -NdkRoot $NdkRoot -FlangPath $FlangPath -LlvmSourceRoot $LlvmSourceRoot `
+    -BuildProfile $BuildProfile -Optimization $Optimization -TargetTriple $TargetTriple
+if (-not $?) { throw 'flang-rt build script failed' }
+Assert-ExistingPath $runtimeArchive 'Android flang-rt archive'
+
+if ((Test-Path $coreArchive) -and (Test-Path $fingerprintFile) -and
+        ((Get-Content $fingerprintFile -Raw).Trim() -eq $fingerprint)) {
+    Write-Host "Official WSJT-X Android core is current: $coreArchive"
+    exit 0
+}
+
+$workDir = Join-Path $OutputDir (Join-Path 'work' $fingerprint.Substring(0, 16))
+$objDir = Join-Path $workDir 'obj'
+$modDir = Join-Path $workDir 'mod'
+$probeDir = Join-Path $workDir 'probe'
+$logDir = Join-Path $workDir 'logs'
+New-Item -ItemType Directory -Force -Path $OutputDir, $objDir, $modDir, $probeDir, $logDir | Out-Null
+$compileLog = Join-Path $logDir 'compile.log'
 
 $fortranIncludeDirs = @(
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\77bit'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\ft8'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\ft4'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib\ft8var'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3')
+    (Join-Path $cppRoot 'wsjtx3\vendor\wsjtx-3.0.0\lib'),
+    (Join-Path $cppRoot 'wsjtx3\vendor\wsjtx-3.0.0\lib\77bit'),
+    (Join-Path $cppRoot 'wsjtx3\vendor\wsjtx-3.0.0\lib\ft8'),
+    (Join-Path $cppRoot 'wsjtx3\vendor\wsjtx-3.0.0\lib\ft4'),
+    (Join-Path $cppRoot 'wsjtx3\vendor\wsjtx-3.0.0\lib\ft8var'),
+    (Join-Path $cppRoot 'wsjtx3\vendor\wsjtx-3.0.0\lib\qra\q65'),
+    (Join-Path $cppRoot 'wsjtx3')
 )
 $nativeIncludeDirs = @(
-    (Join-Path $repoRoot 'app\src\main\cpp'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\vendor\wsjtx-3.0.0\lib'),
-    (Join-Path $repoRoot 'app\src\main\cpp\wsjtx3\host'),
+    $cppRoot,
+    (Join-Path $cppRoot 'wsjtx3\vendor\wsjtx-3.0.0\lib'),
+    (Join-Path $cppRoot 'wsjtx3\vendor\wsjtx-3.0.0\lib\qra\q65'),
+    (Join-Path $cppRoot 'wsjtx3\host'),
     $BoostHeaders
 )
 
 $pending = New-Object System.Collections.Generic.List[string]
 $fortranSources | ForEach-Object { $pending.Add($_) }
-$compiledObjects = New-Object System.Collections.Generic.List[string]
+$objects = New-Object System.Collections.Generic.List[string]
 $pass = 0
-
 while ($pending.Count -gt 0) {
     $pass++
     $progress = 0
     $next = New-Object System.Collections.Generic.List[string]
-    Write-LogLine $compileLog "PASS $pass pending=$($pending.Count)"
-
-    foreach ($src in $pending) {
-        $name = [System.IO.Path]::GetFileNameWithoutExtension($src)
-        $objPath = Join-Path $objDir ($name + '.o')
-        $cmdArgs = @(
-            '-target', $TargetTriple,
-            '-fPIC',
+    Add-Content -LiteralPath $compileLog -Value "PASS $pass pending=$($pending.Count)" -Encoding UTF8
+    foreach ($source in $pending) {
+        $object = Get-ObjectPath $source $objDir $cppRoot
+        $arguments = @('-target', $TargetTriple, '-fPIC') + $profileFlags + @(
             '-fintrinsic-modules-path', $intrinsicModuleDir,
             '-module-dir', $modDir
         )
-        foreach ($includeDir in $fortranIncludeDirs) {
-            $cmdArgs += @('-I', $includeDir)
+        if ($source.EndsWith("\ft8\sync8.f90", [StringComparison]::OrdinalIgnoreCase)) {
+            $arguments += '-fopenmp'
         }
-        $cmdArgs += @('-c', $src, '-o', $objPath)
-        $result = Invoke-NativeCapture -command $FlangPath -arguments $cmdArgs
-
+        foreach ($include in $fortranIncludeDirs) { $arguments += @('-I', $include) }
+        $arguments += @('-c', $source, '-o', $object)
+        $result = Invoke-Ft8cnNativeCapture -Path $FlangPath -Arguments $arguments
         if ($result.ExitCode -eq 0) {
-            $compiledObjects.Add($objPath)
+            $objects.Add($object)
             $progress++
-            Write-LogLine $compileLog ('  OK  ' + $src)
         } else {
-            $next.Add($src)
-            Write-LogLine $compileLog ('  WAIT ' + $src)
-            if ($result.Output) {
-                Write-LogLine $compileLog $result.Output
-            }
+            $next.Add($source)
+            Add-Content -LiteralPath $compileLog -Value ("WAIT $source`n$($result.Output)") -Encoding UTF8
         }
     }
-
     if ($progress -eq 0) {
-        Get-Content $compileLog | Write-Host
-        throw 'Official WSJT-X Fortran core made no compile progress'
+        throw "Official WSJT-X Fortran core made no compile progress. See $compileLog"
     }
     $pending = $next
 }
 
-foreach ($src in $vendorCppSources) {
-    $name = [System.IO.Path]::GetFileNameWithoutExtension($src)
-    $objPath = Join-Path $objDir ($name + '.obj')
-    $cmdArgs = @(
-        '-target', $TargetTriple,
-        '-fPIC',
-        '-c',
-        '-std=c++17'
-    )
-    foreach ($includeDir in $nativeIncludeDirs) {
-        $cmdArgs += @('-I', $includeDir)
-    }
-    $cmdArgs += @($src, '-o', $objPath)
-    $result = Invoke-NativeCapture -command $clangxx -arguments $cmdArgs
-    if ($result.ExitCode -ne 0) {
-        if ($result.Output) {
-            Write-Host $result.Output
-        }
-        throw "Official C++ helper compile failed: $src"
-    }
-    $compiledObjects.Add($objPath)
+foreach ($source in $cxxSources) {
+    $object = Get-ObjectPath $source $objDir $cppRoot
+    $arguments = @('-target', $TargetTriple, '-fPIC', '-std=c++17') + $profileFlags
+    foreach ($include in $nativeIncludeDirs) { $arguments += @('-I', $include) }
+    $arguments += @('-c', $source, '-o', $object)
+    $result = Invoke-Ft8cnNativeCapture -Path $clangxx -Arguments $arguments
+    if ($result.ExitCode -ne 0) { throw "Official C++ helper compile failed: $source`n$($result.Output)" }
+    $objects.Add($object)
+}
+foreach ($source in $cSources) {
+    $object = Get-ObjectPath $source $objDir $cppRoot
+    $arguments = @('-target', $TargetTriple, '-fPIC', '-std=c11') + $profileFlags
+    if ($source -notmatch '\\vendor\\') { $arguments += @('-Wall', '-Wextra', '-Werror') }
+    foreach ($include in $nativeIncludeDirs) { $arguments += @('-I', $include) }
+    $arguments += @('-c', $source, '-o', $object)
+    $result = Invoke-Ft8cnNativeCapture -Path $clang -Arguments $arguments
+    if ($result.ExitCode -ne 0) { throw "Official C helper compile failed: $source`n$($result.Output)" }
+    $objects.Add($object)
 }
 
-foreach ($src in $hostSupportCSources) {
-    $name = [System.IO.Path]::GetFileNameWithoutExtension($src)
-    $objPath = Join-Path $objDir ($name + '.obj')
-    $cmdArgs = @(
-        '-target', $TargetTriple,
-        '-fPIC',
-        '-c',
-        '-std=c11'
-    )
-    foreach ($includeDir in $nativeIncludeDirs) {
-        $cmdArgs += @('-I', $includeDir)
-    }
-    $cmdArgs += @($src, '-o', $objPath)
-    $result = Invoke-NativeCapture -command $clang -arguments $cmdArgs
-    if ($result.ExitCode -ne 0) {
-        if ($result.Output) {
-            Write-Host $result.Output
-        }
-        throw "Official C helper compile failed: $src"
-    }
-    $compiledObjects.Add($objPath)
+$candidateArchive = Join-Path $workDir 'libwsjtx3_official_core.candidate.a'
+if (Test-Path -LiteralPath $candidateArchive) {
+    Remove-Item -LiteralPath $candidateArchive -Force
 }
-
-Remove-Item $coreArchive -ErrorAction SilentlyContinue
-& $llvmAr rcs $coreArchive @($compiledObjects.ToArray())
-if ($LASTEXITCODE -ne 0) {
-    throw "Official WSJT-X archive creation failed: $coreArchive"
-}
+$archiveResult = Invoke-Ft8cnNativeCapture -Path $llvmAr -Arguments (@('rcs', $candidateArchive) + @($objects))
+if ($archiveResult.ExitCode -ne 0) { throw "Official core archive creation failed:`n$($archiveResult.Output)" }
 
 $probeSource = Join-Path $probeDir 'android_link_probe.c'
-$probeObj = Join-Path $probeDir 'android_link_probe.obj'
-$probeSo = Join-Path $probeDir 'libandroid_wsjtx3_probe.so'
-
+$probeObject = Join-Path $probeDir 'android_link_probe.o'
+$probeLibrary = Join-Path $probeDir 'libandroid_wsjtx3_probe.so'
 @'
 #include "app/src/main/cpp/wsjtx3/wsjtx3_bridge.h"
-int wsjtx3_android_probe(int handle, const float *samples, int count) {
+
+int wsjtx3_android_probe(const float *samples, int count) {
     wsjtx3_bridge_decode_result_t result;
-    int created = wsjtx3_bridge_create(1, 12000, count, 0);
-    wsjtx3_bridge_process_float(handle, samples, count);
-    wsjtx3_bridge_get_result(created, 0, &result);
+    int created;
+    int processed;
+    int available;
+    int got_result = 1;
+
+    if (samples == 0 || count <= 0) return -1;
+    created = wsjtx3_bridge_create(0, 12000, count, 0);
+    if (created <= 0) return -2;
+    wsjtx3_bridge_set_options(created, 1, 1, 1, 1, 0, 0, 20);
+    wsjtx3_bridge_set_qso_frequencies(created, 1000, 1000);
+    processed = wsjtx3_bridge_process_float(created, samples, count);
+    if (processed < 0) {
+        wsjtx3_bridge_destroy(created);
+        return -3;
+    }
+    available = wsjtx3_bridge_get_result_count(created);
+    if (available != processed) {
+        wsjtx3_bridge_destroy(created);
+        return -4;
+    }
+    if (available > 0) got_result = wsjtx3_bridge_get_result(created, 0, &result);
     wsjtx3_bridge_destroy(created);
-    return result.snr;
+    return got_result ? available : -5;
 }
-'@ | Set-Content -Path $probeSource -Encoding ASCII
+'@ | Set-Content -LiteralPath $probeSource -Encoding ASCII
 
-$probeCompileCommands = @(
-    [pscustomobject]@{
-        Command = $clang
-        Arguments = @(
-        '-target', $TargetTriple,
-        '-fPIC',
-        '-c',
-        '-std=c11',
-        '-I', $repoRoot,
-        $probeSource,
-        '-o', $probeObj
-    )
-    }
+$probeCompile = Invoke-Ft8cnNativeCapture -Path $clang -Arguments @(
+    '-target', $TargetTriple, '-fPIC', '-std=c11', '-Wall', '-Wextra', '-Werror',
+    '-I', $repoRoot, '-c', $probeSource, '-o', $probeObject
 )
-
-foreach ($command in $probeCompileCommands) {
-    $result = Invoke-NativeCapture -command $command.Command -arguments $command.Arguments
-    if ($result.ExitCode -ne 0) {
-        if ($result.Output) {
-            Write-Host $result.Output
-        }
-        throw 'Android link probe compile failed'
-    }
-}
-
-$linkArgs = @(
-    '-target', $TargetTriple,
-    '-shared',
-    '-fPIC',
-    '-Wl,-soname,libandroid_wsjtx3_probe.so',
-    '-o', $probeSo,
-    '-Wl,--no-undefined',
-    $probeObj,
-    '-Wl,--whole-archive',
-    $coreArchive,
-    '-Wl,--no-whole-archive',
-    $runtimeArchive,
-    '-lm',
-    '-lc',
-    '-ldl'
+if ($probeCompile.ExitCode -ne 0) { throw "Android link probe compile failed:`n$($probeCompile.Output)" }
+$linkArguments = @(
+    '-target', $TargetTriple, '-shared', '-fPIC', '-Wl,-soname,libandroid_wsjtx3_probe.so',
+    '-Wl,--no-undefined', '-o', $probeLibrary, $probeObject,
+    '-Wl,--whole-archive', $candidateArchive, '-Wl,--no-whole-archive',
+    $runtimeArchive, $openmpArchive, '-lm', '-lc', '-ldl'
 )
-$linkResult = Invoke-NativeCapture -command $clangxx -arguments $linkArgs
-if ($linkResult.ExitCode -ne 0) {
-    if ($linkResult.Output) {
-        Set-Content -Path $linkLog -Value $linkResult.Output -Encoding UTF8
-        Get-Content $linkLog | Write-Host
-    }
-    throw 'Official WSJT-X Android core link validation failed'
-}
+$link = Invoke-Ft8cnNativeCapture -Path $clangxx -Arguments $linkArguments
+if ($link.ExitCode -ne 0) { throw "Official WSJT-X Android core link validation failed:`n$($link.Output)" }
 
+Move-Item -LiteralPath $candidateArchive -Destination $coreArchive -Force
+Set-Content -LiteralPath $fingerprintFile -Value $fingerprint -Encoding ASCII
 Write-Host "Official WSJT-X Android core ready: $coreArchive"
 Write-Host "Official flang runtime ready: $runtimeArchive"

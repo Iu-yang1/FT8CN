@@ -1,5 +1,6 @@
 subroutine sync8(dd,npts,nfa,nfb,syncmin,nfqso,maxcand,candidate,ncand,sbase)
 
+  use iso_c_binding, only: c_int
   include 'ft8_params.f90'
   parameter (MAXPRECAND=1000)
 ! Maximum sync correlation lag +/- 2.5s relative to 0.5s TX start time. 
@@ -7,7 +8,6 @@ subroutine sync8(dd,npts,nfa,nfb,syncmin,nfqso,maxcand,candidate,ncand,sbase)
   parameter (JZ=62)                        
   complex cx(0:NH1)
   real s(NH1,NHSYM)
-  real savg(NH1)
   real sbase(NH1)
   real x(NFFT1+2)
   real sync2d(NH1,-JZ:JZ)
@@ -22,12 +22,19 @@ subroutine sync8(dd,npts,nfa,nfb,syncmin,nfqso,maxcand,candidate,ncand,sbase)
   integer indx2(NH1)
   integer ii(1)
   integer icos7(0:6)
+  integer(c_int) nthreads
+  real tone_sum(NHSYM)
+  interface
+     integer(c_int) function wsjtx3_ft8_sync_thread_count() &
+          bind(C,name='wsjtx3_ft8_sync_thread_count')
+       import :: c_int
+     end function wsjtx3_ft8_sync_thread_count
+  end interface
   data icos7/3,1,4,0,6,5,2/                   !Costas 7x7 tone pattern
   equivalence (x,cx)
-  save cx,s,savg,x,sync2d,red,red2,candidate0,jpeak,jpeak2,indx,indx2,ii,icos7
+  save cx,s,x,sync2d,red,red2,candidate0,jpeak,jpeak2,indx,indx2,ii,icos7
 
 ! Compute symbol spectra, stepping by NSTEP steps.  
-  savg=0.
   tstep=NSTEP/12000.0                         
   df=12000.0/NFFT1                            !3.125 Hz
   fac=1.0/300.0
@@ -40,7 +47,6 @@ subroutine sync8(dd,npts,nfa,nfb,syncmin,nfqso,maxcand,candidate,ncand,sbase)
      do i=1,NH1
         s(i,j)=real(cx(i))**2 + aimag(cx(i))**2
      enddo
-     savg=savg + s(1:NH1,j)                   !Average spectrum
   enddo
   call get_spectrum_baseline(dd,nfa,nfb,sbase)
 
@@ -52,7 +58,14 @@ subroutine sync8(dd,npts,nfa,nfb,syncmin,nfqso,maxcand,candidate,ncand,sbase)
   candidate0=0.
   k=0
 
+  ! 按频率行静态切块；运行时根据性能核拓扑选择一或两个线程。
+  nthreads=wsjtx3_ft8_sync_thread_count()
+!$omp parallel do default(shared) schedule(static) num_threads(nthreads) &
+!$omp private(i,j,ta,tb,tc,t0a,t0b,t0c,n,m,t,t0,sync_abc,sync_bc,tone_sum)
   do i=ia,ib
+     do m=1,NHSYM
+        tone_sum(m)=sum(s(i:i+nfos*6:nfos,m))
+     enddo
      do j=-JZ,+JZ
         ta=0.
         tb=0.
@@ -64,13 +77,13 @@ subroutine sync8(dd,npts,nfa,nfb,syncmin,nfqso,maxcand,candidate,ncand,sbase)
            m=j+jstrt+nssy*n
            if(m.ge.1.and.m.le.NHSYM) then
               ta=ta + s(i+nfos*icos7(n),m)
-              t0a=t0a + sum(s(i:i+nfos*6:nfos,m))
+              t0a=t0a + tone_sum(m)
            endif
            tb=tb + s(i+nfos*icos7(n),m+nssy*36)
-           t0b=t0b + sum(s(i:i+nfos*6:nfos,m+nssy*36))
+           t0b=t0b + tone_sum(m+nssy*36)
            if(m+nssy*72.le.NHSYM) then
               tc=tc + s(i+nfos*icos7(n),m+nssy*72)
-              t0c=t0c + sum(s(i:i+nfos*6:nfos,m+nssy*72))
+              t0c=t0c + tone_sum(m+nssy*72)
            endif
         enddo
         t=ta+tb+tc
@@ -84,6 +97,7 @@ subroutine sync8(dd,npts,nfa,nfb,syncmin,nfqso,maxcand,candidate,ncand,sbase)
         sync2d(i,j)=max(sync_abc,sync_bc)
      enddo
   enddo
+!$omp end parallel do
 
   red=0.
   red2=0.

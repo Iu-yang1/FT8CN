@@ -10,19 +10,19 @@
 #undef cabs
 #endif
 double cabs(double _Complex value) {
-    return hypot(creal(value), cimag(value));
+    return hypot(__real__ value, __imag__ value);
 }
 
 #ifdef cabsf
 #undef cabsf
 #endif
 float cabsf(float _Complex value) {
-    return hypotf(crealf(value), cimagf(value));
+    return hypotf(__real__ value, __imag__ value);
 }
 
 #ifdef cabsl
 #undef cabsl
 #endif
 long double cabsl(long double _Complex value) {
-    return hypotl(creall(value), cimagl(value));
+    return hypotl(__real__ value, __imag__ value);
 }

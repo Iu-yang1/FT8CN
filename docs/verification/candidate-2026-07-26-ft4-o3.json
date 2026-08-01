@@ -1,0 +1,78 @@
+﻿{
+    "mode":  "FT4",
+    "sample_path":  ".tmp_wsjtx\\samples\\FT4\\000000_000002.wav",
+    "sample_sha256":  "d9e91fa04ba138a7b9f41b4103823c77ca1c3a9775101f6b14d60935bcd3813b",
+    "warmup_count":  1,
+    "iteration_count":  5,
+    "options":  {
+                    "passes":  3,
+                    "rounds":  3,
+                    "decode_sensitivity":  2,
+                    "qso_sensitivity":  2,
+                    "ldpc_iterations":  200,
+                    "early_decode":  true,
+                    "wideband_dx":  true
+                },
+    "result_counts":  [
+                          16,
+                          16,
+                          16,
+                          16,
+                          16
+                      ],
+    "result_sha256":  [
+                          "06a38063d8a52496ff342765dd31e8eb82dd576c4a50f0fe8b463ef058d62974"
+                      ],
+    "p50_ms":  341.056,
+    "p95_ms":  352.364,
+    "peak_working_set_bytes":  16453632,
+    "peak_paged_memory_bytes":  68976640,
+    "private_memory_bytes":  68976640,
+    "runs":  [
+                 {
+                     "warmup":  false,
+                     "elapsed_ms":  352.364,
+                     "results":  16,
+                     "result_sha256":  "06a38063d8a52496ff342765dd31e8eb82dd576c4a50f0fe8b463ef058d62974",
+                     "peak_working_set_bytes":  16404480,
+                     "peak_paged_memory_bytes":  68952064,
+                     "private_memory_bytes":  68952064
+                 },
+                 {
+                     "warmup":  false,
+                     "elapsed_ms":  343.219,
+                     "results":  16,
+                     "result_sha256":  "06a38063d8a52496ff342765dd31e8eb82dd576c4a50f0fe8b463ef058d62974",
+                     "peak_working_set_bytes":  16437248,
+                     "peak_paged_memory_bytes":  68964352,
+                     "private_memory_bytes":  68964352
+                 },
+                 {
+                     "warmup":  false,
+                     "elapsed_ms":  340.506,
+                     "results":  16,
+                     "result_sha256":  "06a38063d8a52496ff342765dd31e8eb82dd576c4a50f0fe8b463ef058d62974",
+                     "peak_working_set_bytes":  16453632,
+                     "peak_paged_memory_bytes":  68976640,
+                     "private_memory_bytes":  68976640
+                 },
+                 {
+                     "warmup":  false,
+                     "elapsed_ms":  341.056,
+                     "results":  16,
+                     "result_sha256":  "06a38063d8a52496ff342765dd31e8eb82dd576c4a50f0fe8b463ef058d62974",
+                     "peak_working_set_bytes":  16420864,
+                     "peak_paged_memory_bytes":  68972544,
+                     "private_memory_bytes":  68972544
+                 },
+                 {
+                     "warmup":  false,
+                     "elapsed_ms":  339.007,
+                     "results":  16,
+                     "result_sha256":  "06a38063d8a52496ff342765dd31e8eb82dd576c4a50f0fe8b463ef058d62974",
+                     "peak_working_set_bytes":  16183296,
+                     "peak_paged_memory_bytes":  68939776,
+                     "private_memory_bytes":  68939776
+                 }
+             ]
+}

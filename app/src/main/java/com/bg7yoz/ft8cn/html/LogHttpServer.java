@@ -10,7 +10,7 @@ import static com.bg7yoz.ft8cn.html.HtmlContext.HTML_STRING;
 
 import android.annotation.SuppressLint;
 import android.database.Cursor;
-import android.util.Log;
+import android.net.Uri;
 
 import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
@@ -22,18 +22,34 @@ import com.bg7yoz.ft8cn.database.AfterInsertQSLData;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.RigNameList;
 import com.bg7yoz.ft8cn.log.LogFileImport;
+import com.bg7yoz.ft8cn.data.logbook.LegacyQsoPersistence;
 import com.bg7yoz.ft8cn.log.QSLRecord;
 import com.bg7yoz.ft8cn.maidenhead.MaidenheadGrid;
 import com.bg7yoz.ft8cn.rigs.BaseRigOperation;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 
 import java.io.IOException;
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import fi.iki.elonen.NanoHTTPD;
 
@@ -41,31 +57,164 @@ import fi.iki.elonen.NanoHTTPD;
 public class LogHttpServer extends NanoHTTPD {
     private final MainViewModel mainViewModel;
     public static int DEFAULT_PORT = 7060;
-    private static final String TAG = "LOG HTTP";
+    private static final int MAXIMUM_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
+    private static final int REQUESTS_PER_MINUTE = 120;
+    private static final String SESSION_COOKIE = "FT8CN_LOG_SESSION";
+    private static final Set<String> MUTATING_ENDPOINTS = Collections.unmodifiableSet(
+            new HashSet<>(Arrays.asList(
+                    "DELFOLLOW", "DELQSL", "DELQSLCALLSIGN", "CANCELTASK", "IMPORTLOGDATA")));
 
     private final ImportTaskList importTaskList = new ImportTaskList();//导如日志的任务列表
+    private final String accessToken;
+    private final String csrfToken;
+    private final AtomicLong rateWindowStartedMs = new AtomicLong(System.currentTimeMillis());
+    private final AtomicInteger rateWindowRequests = new AtomicInteger(0);
+    private final ThreadPoolExecutor importExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(4),
+            runnable -> new Thread(runnable, "ft8cn-log-import"),
+            new ThreadPoolExecutor.AbortPolicy());
 
-
-    public LogHttpServer(MainViewModel viewModel, int port) {
-        super(port);
+    public LogHttpServer(MainViewModel viewModel, int port, boolean allowLan) {
+        super(allowLan ? "0.0.0.0" : "127.0.0.1", port);
         this.mainViewModel = viewModel;
+        this.accessToken = randomToken();
+        this.csrfToken = randomToken();
+        setAsyncRunner(new BoundedAsyncRunner());
+    }
 
+    public String getAccessToken() {
+        return accessToken;
+    }
+
+    public String getCsrfToken() {
+        return csrfToken;
+    }
+
+    @Override
+    public void stop() {
+        importExecutor.shutdownNow();
+        super.stop();
+    }
+
+    private boolean consumeRateLimit() {
+        long now = System.currentTimeMillis();
+        long windowStart = rateWindowStartedMs.get();
+        if (now - windowStart >= TimeUnit.MINUTES.toMillis(1)
+                && rateWindowStartedMs.compareAndSet(windowStart, now)) {
+            rateWindowRequests.set(0);
+        }
+        return rateWindowRequests.incrementAndGet() <= REQUESTS_PER_MINUTE;
+    }
+
+    private static int parseContentLength(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return 0;
+        }
+        try {
+            long parsed = Long.parseLong(value.trim());
+            if (parsed < 0L || parsed > Integer.MAX_VALUE) {
+                return Integer.MAX_VALUE;
+            }
+            return (int) parsed;
+        } catch (NumberFormatException ignored) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    private boolean isAuthorized(IHTTPSession session) {
+        String supplied = session.getParms().get("token");
+        String authorization = session.getHeaders().get("authorization");
+        if (authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            supplied = authorization.substring(7).trim();
+        }
+        if (supplied == null) {
+            supplied = session.getCookies().read(SESSION_COOKIE);
+        }
+        boolean authorized = constantTimeEquals(accessToken, supplied);
+        if (authorized && constantTimeEquals(accessToken, session.getParms().get("token"))) {
+            session.getCookies().set(SESSION_COOKIE, accessToken, 1);
+        }
+        return authorized;
+    }
+
+    private boolean isCsrfValid(IHTTPSession session) {
+        String supplied = session.getParms().get("csrf");
+        if (supplied == null) {
+            supplied = session.getHeaders().get("x-ft8cn-csrf");
+        }
+        return constantTimeEquals(csrfToken, supplied);
+    }
+
+    private static boolean constantTimeEquals(String expected, String supplied) {
+        if (expected == null || supplied == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                supplied.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String randomToken() {
+        byte[] bytes = new byte[32];
+        new SecureRandom().nextBytes(bytes);
+        StringBuilder token = new StringBuilder(bytes.length * 2);
+        for (byte value : bytes) {
+            token.append(String.format(java.util.Locale.ROOT, "%02x", value & 0xff));
+        }
+        return token.toString();
+    }
+
+    private String postButton(String path, String label) {
+        String action = path + (path.contains("?") ? "&" : "?") + "csrf=" + csrfToken;
+        return "<form method=\"post\" action=\"" + htmlEscape(action)
+                + "\" style=\"display:inline\"><button type=\"submit\">"
+                + htmlEscape(label) + "</button></form>";
+    }
+
+    private static String htmlEscape(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("&", "&amp;")
+                .replace("\"", "&quot;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
     }
 
     @Override
     public Response serve(IHTTPSession session) {
+        if (!consumeRateLimit()) {
+            return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "rate limit exceeded");
+        }
+        int contentLength = parseContentLength(session.getHeaders().get("content-length"));
+        if (contentLength > MAXIMUM_REQUEST_BODY_BYTES) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "request body too large");
+        }
+        if (!isAuthorized(session)) {
+            return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "authentication required");
+        }
         String[] uriList = session.getUri().split("/");
         String uri = "";
         String msg;
-        Log.i(TAG, "serve uri: " + session.getUri());
 
         if (uriList.length >= 2) {
             uri = uriList[1];
         }
 
-        if (uri.equalsIgnoreCase("CONFIG")) {//查配置信息
-            msg = HTML_STRING(getConfig());
-        } else if (uri.equalsIgnoreCase("showQSLCallsigns")) {//显示通联过的呼号，包括最后的时间
+        String normalizedUri = uri.toUpperCase(java.util.Locale.ROOT);
+        if ("CONFIG".equals(normalizedUri)) {
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "not found");
+        }
+        if (MUTATING_ENDPOINTS.contains(normalizedUri)) {
+            if (session.getMethod() != Method.POST) {
+                return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "POST required");
+            }
+            if (!isCsrfValid(session)) {
+                return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "invalid CSRF token");
+            }
+        }
+
+        if (uri.equalsIgnoreCase("showQSLCallsigns")) {//显示通联过的呼号，包括最后的时间
             msg = HTML_STRING(showQslCallsigns(session));
         } else if (uri.equalsIgnoreCase("DEBUG")) {//查通联过的呼号
             msg = HTML_STRING(showDebug());
@@ -160,35 +309,30 @@ public class LogHttpServer extends NanoHTTPD {
     @SuppressLint("DefaultLocale")
     private String doImportLogFile(IHTTPSession session) {
         //判断是不是POST日志文件
-        if (session.getMethod().equals(Method.POST)
-                || session.getMethod().equals(Method.PUT)) {
+        if (session.getMethod().equals(Method.POST)) {
             Map<String, String> files = new HashMap<>();
-            //Map<String, String> header = session.getHeaders();
             try {
                 session.parseBody(files);
+                String param = files.get("file1");
+                if (param == null) {
+                    return GeneralVariables.getStringFromResource(R.string.html_illegal_command);
+                }
+                File upload = new File(param);
+                if (!upload.isFile() || upload.length() <= 0L
+                        || upload.length() > MAXIMUM_REQUEST_BODY_BYTES) {
+                    return GeneralVariables.getStringFromResource(R.string.html_illegal_command);
+                }
 
-                Log.e(TAG, "doImportLogFile: information:" + files.toString());
-                String param = files.get("file1");//这个是post或put文件的key
-
-                ImportTaskList.ImportTask task = importTaskList.addTask(param.hashCode());//生成一个新的任务
+                ImportTaskList.ImportTask task = importTaskList.addTask(param.hashCode());
 
                 LogFileImport logFileImport = new LogFileImport(task, param);
-
-
-                //把提交的数据放到一个独立的线程运行，防止WEB页面停留太久
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        doImportADI(task, logFileImport);
-                    }
-                }).start();
+                importExecutor.execute(() -> doImportADI(task, logFileImport));
 
                 //重定向,跳转到实时导入信息界面
                 return String.format("<head>\n<meta http-equiv=\"Refresh\" content=\"0; URL=getImportTask?session=%d\" /></head><body></body>"
                         , param.hashCode());
 
-            } catch (IOException | ResponseException e) {
-                e.printStackTrace();
+            } catch (IOException | ResponseException | RejectedExecutionException e) {
                 return String.format(GeneralVariables.getStringFromResource(R.string.html_import_failed)
                         , e.getMessage());
             }
@@ -212,7 +356,7 @@ public class LogHttpServer extends NanoHTTPD {
             if (!importTaskList.checkTaskIsRunning(id)) {//如果任务停止，就没有必要刷新了
                 script = "";
             }
-            return script + importTaskList.getTaskHTML(id);
+            return script + importTaskList.getTaskHTML(id, csrfToken);
         }
 
         return script;
@@ -221,7 +365,6 @@ public class LogHttpServer extends NanoHTTPD {
     @SuppressLint("DefaultLocale")
     private String doCancelImport(IHTTPSession session) {
         Map<String, String> pars = session.getParms();
-        Log.e(TAG, "doCancelImport: " + pars.toString());
         if (pars.get("session") != null) {
             String s = Objects.requireNonNull(pars.get("session"));
             int id = Integer.parseInt(s);
@@ -243,6 +386,15 @@ public class LogHttpServer extends NanoHTTPD {
 
             QSLRecord qslRecord = new QSLRecord(record);
             task.processCount++;
+            if (!qslRecord.isInvalid) {
+                try {
+                    LegacyQsoPersistence.importFieldsBlocking(
+                            GeneralVariables.getMainContext(), record);
+                } catch (RuntimeException error) {
+                    task.invalidCount++;
+                    continue;
+                }
+            }
             if (mainViewModel.databaseOpr.doInsertQSLData(qslRecord, new AfterInsertQSLData() {
                 @Override
                 public void doAfterInsert(boolean isInvalid, boolean isNewQSL) {
@@ -288,12 +440,6 @@ public class LogHttpServer extends NanoHTTPD {
      *
      * @return config表内容
      */
-    private String getConfig() {
-        Cursor cursor = mainViewModel.databaseOpr.getDb()
-                .rawQuery("select KeyName,Value from config", null);
-        return HtmlContext.ListTableContext(cursor, true, 4, false);
-    }
-
     /**
      * 获取通联过的呼号，包括：呼号、最后时间、频段，波长、网格
      *
@@ -423,8 +569,7 @@ public class LogHttpServer extends NanoHTTPD {
             for (int i = 0; i < cursor.getColumnCount(); i++) {
                 HtmlContext.tableCell(result
                         , cursor.getString(i)
-                        , String.format("<a href=/delfollow/%s>%s</a>"
-                                , cursor.getString(i).replace("/", "_")
+                        , postButton("/delfollow/" + Uri.encode(cursor.getString(i).replace("/", "_"))
                                 , GeneralVariables.getStringFromResource(R.string.html_delete))
                 ).append("\n");
             }
@@ -496,8 +641,8 @@ public class LogHttpServer extends NanoHTTPD {
                     , (cursor.getInt(cursor.getColumnIndex("isLotW_import")) == 1)
                             ? GeneralVariables.getStringFromResource(R.string.html_qsl_import_data_from_external)
                             : GeneralVariables.getStringFromResource(R.string.html_qsl_native_data)
-                    , String.format("<a href=/delQslCallsign/%s>%s</a>"
-                            , cursor.getString(cursor.getColumnIndex("ID"))
+                    , postButton("/delQslCallsign/"
+                                    + Uri.encode(cursor.getString(cursor.getColumnIndex("ID")))
                             , GeneralVariables.getStringFromResource(R.string.html_delete))).append("\n");
             HtmlContext.tableRowEnd(result).append("\n");
             order++;
@@ -1749,7 +1894,8 @@ public class LogHttpServer extends NanoHTTPD {
         HtmlContext.tableRowEnd(result).append("\n");
         HtmlContext.tableRowBegin(result).append("\n");
 
-        result.append("<td class=\"default\"><br><form action=\"importLogData\" method=\"post\"\n" +
+        result.append("<td class=\"default\"><br><form action=\"importLogData?csrf=" + csrfToken
+                + "\" method=\"post\"\n" +
                 "            enctype=\"multipart/form-data\">\n" +
                 "            <input type=\"file\" name=\"file1\" id=\"file1\" title=\"select ADI file\" accept=\".adi,.txt\" />\n" +
                 "            <input type=\"submit\" value=\"上传\" />\n" +
@@ -1803,8 +1949,8 @@ public class LogHttpServer extends NanoHTTPD {
         HtmlContext.tableCell(result, String.format("<a href=\"/downQslNoQSL/%s\">%s</a>"
                 , UtcTimer.getYYYYMMDD(UtcTimer.getSystemTime())
                 , GeneralVariables.getStringFromResource(R.string.html_download_unconfirmed)));
-        HtmlContext.tableCell(result, String.format("<a href=\"/delQsl/%s\">%s</a>"
-                , UtcTimer.getYYYYMMDD(UtcTimer.getSystemTime())
+        HtmlContext.tableCell(result, postButton("/delQsl/"
+                        + UtcTimer.getYYYYMMDD(UtcTimer.getSystemTime())
                 , GeneralVariables.getStringFromResource(R.string.html_delete))).append("\n");
 
         HtmlContext.tableRowEnd(result).append("\n");
@@ -1829,8 +1975,8 @@ public class LogHttpServer extends NanoHTTPD {
             HtmlContext.tableCell(result, String.format("<a href=\"/downQslNoQSL/%s\">%s</a>"
                     , cursor.getString(cursor.getColumnIndex("a"))
                     , GeneralVariables.getStringFromResource(R.string.html_download_unconfirmed)));
-            HtmlContext.tableCell(result, String.format("<a href=\"/delQsl/%s\">%s</a>"
-                    , cursor.getString(cursor.getColumnIndex("a"))
+            HtmlContext.tableCell(result, postButton("/delQsl/"
+                            + Uri.encode(cursor.getString(cursor.getColumnIndex("a")))
                     , GeneralVariables.getStringFromResource(R.string.html_delete))).append("\n");
 
             HtmlContext.tableRowEnd(result).append("\n");
@@ -1988,5 +2134,37 @@ public class LogHttpServer extends NanoHTTPD {
 //        return logStr.toString();
 //    }
 
+    private final class BoundedAsyncRunner implements AsyncRunner {
+        private final Set<ClientHandler> clients = ConcurrentHashMap.newKeySet();
+        private final ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                2, 4, 30L, TimeUnit.SECONDS, new ArrayBlockingQueue<>(16),
+                runnable -> new Thread(runnable, "ft8cn-log-http"),
+                new ThreadPoolExecutor.AbortPolicy());
+
+        @Override
+        public void closeAll() {
+            for (ClientHandler client : clients.toArray(new ClientHandler[0])) {
+                client.close();
+            }
+            clients.clear();
+            executor.shutdownNow();
+        }
+
+        @Override
+        public void closed(ClientHandler clientHandler) {
+            clients.remove(clientHandler);
+        }
+
+        @Override
+        public void exec(ClientHandler clientHandler) {
+            clients.add(clientHandler);
+            try {
+                executor.execute(clientHandler);
+            } catch (RejectedExecutionException rejected) {
+                clients.remove(clientHandler);
+                clientHandler.close();
+            }
+        }
+    }
 }
 

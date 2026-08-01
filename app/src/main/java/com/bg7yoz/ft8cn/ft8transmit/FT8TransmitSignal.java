@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.lifecycle.MutableLiveData;
@@ -18,6 +19,11 @@ import com.bg7yoz.ft8cn.auto.AutoSessionState;
 import com.bg7yoz.ft8cn.auto.AutoSessionType;
 import com.bg7yoz.ft8cn.auto.AutoSessionUiPolicy;
 import com.bg7yoz.ft8cn.connector.ConnectMode;
+import com.bg7yoz.ft8cn.core.automation.OperatingAutomationController;
+import com.bg7yoz.ft8cn.core.automation.Q65AutomationController;
+import com.bg7yoz.ft8cn.core.automation.Q65AutomationState;
+import com.bg7yoz.ft8cn.core.time.AutomaticTransmitMode;
+import com.bg7yoz.ft8cn.core.time.DisciplinedClockRegistry;
 import com.bg7yoz.ft8cn.cq.CallQueueManager;
 import com.bg7yoz.ft8cn.cq.CqCallEntry;
 import com.bg7yoz.ft8cn.database.ControlMode;
@@ -31,12 +37,18 @@ import com.bg7yoz.ft8cn.ui.ToastMessage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+import kotlinx.coroutines.flow.StateFlow;
 
 /**
- * 发射控制与自动通联流程。
+ * Transmit controller and automatic QSO flow.
  */
 public class FT8TransmitSignal {
     private static final String TAG = "FT8TransmitSignal";
@@ -58,14 +70,27 @@ public class FT8TransmitSignal {
     public MutableLiveData<Integer> mutableSequential = new MutableLiveData<>();
     private boolean isTransmitting = false;
     private final Object transmitStateLock = new Object();
+    private final OperatingAutomationController automationController =
+            new OperatingAutomationController();
+    private final Q65AutomationController q65AutomationController =
+            new Q65AutomationController();
+    private volatile String q65TransmitMessage = "";
+    private long lastQ65AutomationSlot = Long.MIN_VALUE;
+    private volatile boolean q65CurrentTransmitSucceeded = false;
+    private Ft8Message lastAutoIncomingMessage = null;
+    private long lastAutomationTransmitSlot = Long.MIN_VALUE;
+    private int lastAutomationTransmitMode = -1;
+    private long lastAutomationTransmitBand = -1L;
+    private long lastAutomationSessionGeneration = -1L;
     private int lastTransmittedFunctionOrder = -1;
     private Ft8Message lastTransmittedMessage = null;
     private MultiSlotTransmitPlan lastTransmitPlan = null;
-    //防止立即发射时序竞争：记录上次发射尝试的周期索引，避免同一周期重复触发
+    // Prevent duplicate immediate TX triggers within the same slot sequence.
     private long lastTransmitAttemptSequence = -1;
     // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
-    // 避免重复点击导致实验模式单次发射被触发两次。
+    // Ignore duplicated manual one-shot triggers caused by repeated click dispatch.
     private long lastManualTransmitRequestMs = 0L;
+    private long lastClockBlockedNoticeMs = 0L;
     private volatile long lastDecodeMessageUpdateMs = 0L;
     public MutableLiveData<Boolean> mutableIsTransmitting = new MutableLiveData<>();
     public MutableLiveData<String> mutableTransmittingMessage = new MutableLiveData<>();
@@ -93,13 +118,28 @@ public class FT8TransmitSignal {
     private AudioAttributes attributes = null;
     private AudioFormat myFormat = null;
     private AudioTrack audioTrack = null;
+    private volatile boolean q65StreamCancelled = false;
     public UtcTimer utcTimer;
     public ArrayList<FunctionOfTransmit> functionList = new ArrayList<>();
     public MutableLiveData<ArrayList<FunctionOfTransmit>> mutableFunctions = new MutableLiveData<>();
     private final CallQueueManager callQueueManager = new CallQueueManager();
     public MutableLiveData<ArrayList<CqCallEntry>> mutableCqQueue = new MutableLiveData<>();
     private final OnDoTransmitted onDoTransmitted;
-    private final ExecutorService doTransmitThreadPool = Executors.newCachedThreadPool();
+    private final ExecutorService doTransmitThreadPool = new ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(1),
+            runnable -> {
+                Thread thread = new Thread(runnable, "ft8cn-transmit");
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.AbortPolicy());
+    private final AtomicLong transmitGeneration = new AtomicLong(0L);
+    private final AtomicBoolean released = new AtomicBoolean(false);
+    private volatile String lastTransmitStatusSummary = "";
     private final Observer<Float> volumePercentObserver = new Observer<Float>() {
         @Override
         public void onChanged(Float aFloat) {
@@ -138,23 +178,100 @@ public class FT8TransmitSignal {
 
     private boolean isDxpeditionHoundAutoEnabled() {
         return GeneralVariables.autoDxpeditionHound
-                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && AutoSessionUiPolicy.supportsDxpedition(GeneralVariables.getSignalMode())
                 && !transmitFreeText
                 && !isExperimentalManualTxMode();
     }
 
     private boolean isManualDxpeditionHoundEnabled() {
         return GeneralVariables.manualDxpeditionHoundMode
-                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && AutoSessionUiPolicy.supportsDxpedition(GeneralVariables.getSignalMode())
                 && !transmitFreeText
                 && !isExperimentalManualTxMode();
     }
 
     private boolean isManualDxpeditionFoxEnabled() {
         return GeneralVariables.manualDxpeditionFoxMode
-                && GeneralVariables.getSignalMode() == FT8Common.FT8_MODE
+                && AutoSessionUiPolicy.supportsDxpedition(GeneralVariables.getSignalMode())
                 && !transmitFreeText
                 && !isExperimentalManualTxMode();
+    }
+
+    public String getLastTransmitStatusSummary() {
+        return lastTransmitStatusSummary;
+    }
+
+    public StateFlow<Q65AutomationState> getQ65AutomationState() {
+        return q65AutomationController.getState();
+    }
+
+    /** 切换为 Q65 仅接收时先撤销任何 FT8/FT4 自动发射状态。 */
+    public void prepareQ65ReceiveOnly() {
+        setActivated(false);
+        q65TransmitMessage = "";
+        q65AutomationController.receiveOnly(
+                GeneralVariables.getQ65Submode(),
+                GeneralVariables.getQ65TrPeriodSeconds());
+    }
+
+    /**
+     * 显式建立独立 Q65 T/R 序列；不会进入 FT8/FT4 CQ 队列或自动应答控制器。
+     */
+    public boolean armQ65Sequence(String message, int txSequence, boolean repeat) {
+        if (GeneralVariables.getSignalMode() != FT8Common.Q65_MODE) {
+            Log.w(TAG, "armQ65Sequence rejected: current mode is not Q65");
+            return false;
+        }
+        if (!q65AutomationController.arm(
+                message,
+                txSequence,
+                repeat,
+                GeneralVariables.getQ65Submode(),
+                GeneralVariables.getQ65TrPeriodSeconds())) {
+            return false;
+        }
+
+        Q65AutomationState state = q65AutomationController.getState().getValue();
+        q65TransmitMessage = state.getMessage();
+        int targetSequential = (txSequence + 1) % 2;
+        int i3 = GenerateFT8.checkI3ByCallsign(GeneralVariables.myCallsign);
+        setTransmit(
+                new TransmitCallsign(FT8Common.Q65_MODE, i3, 0, "CQ", targetSequential),
+                6,
+                "");
+        sequential = txSequence;
+        mutableSequential.postValue(sequential);
+        q65CurrentTransmitSucceeded = false;
+        setActivated(true);
+        return true;
+    }
+
+    /**
+     * 根据已解码的 Q65 报文建立回复序列。回复固定使用对方时隙的相反序列，
+     * 不进入 FT8/FT4 的定向 CQ、CQ 队列或 DXpedition 状态机。
+     */
+    public boolean armQ65Reply(Ft8Message decodedMessage, boolean repeat) {
+        if (decodedMessage == null || GeneralVariables.getSignalMode() != FT8Common.Q65_MODE) {
+            return false;
+        }
+        String target = decodedMessage.getCallsignFrom();
+        if (target == null || target.trim().isEmpty() || "<...>".equals(target)) {
+            return false;
+        }
+        String message = target.trim().toUpperCase()
+                + " " + GeneralVariables.myCallsign.trim().toUpperCase()
+                + " " + GeneralVariables.getMyMaidenhead4Grid().trim().toUpperCase();
+        int txSequence = (decodedMessage.getSequence() + 1) % 2;
+        return armQ65Sequence(message, txSequence, repeat);
+    }
+
+    public void stopQ65Sequence(String reason) {
+        setActivated(false);
+        q65AutomationController.stop(reason);
+    }
+
+    private void updateLastTransmitStatus(String status) {
+        lastTransmitStatusSummary = status == null ? "" : status;
     }
 
     private static final class DxpeditionFoxCandidate {
@@ -416,6 +533,9 @@ public class FT8TransmitSignal {
     }
 
     private AutoSessionType resolveBoundSessionType(TransmitCallsign transmitCallsign) {
+        if (!AutoSessionUiPolicy.supportsAutomaticQso(GeneralVariables.getSignalMode())) {
+            return AutoSessionType.STANDARD;
+        }
         if (transmitCallsign == null) {
             return AutoSessionType.STANDARD;
         }
@@ -463,6 +583,9 @@ public class FT8TransmitSignal {
     }
 
     public void restartByCurrentMode() {
+        if (released.get()) {
+            return;
+        }
         boolean running = utcTimer != null && utcTimer.isRunning();
         if (utcTimer != null) {
             utcTimer.destroy();
@@ -475,12 +598,20 @@ public class FT8TransmitSignal {
     }
 
     public void release() {
+        if (!released.compareAndSet(false, true)) {
+            return;
+        }
+        transmitGeneration.incrementAndGet();
+        q65StreamCancelled = true;
         GeneralVariables.mutableVolumePercent.removeObserver(volumePercentObserver);
         if (utcTimer != null) {
             utcTimer.destroy();
         }
         setActivated(false);
         doTransmitThreadPool.shutdownNow();
+        if (onDoTransmitted != null) {
+            onDoTransmitted.onTransmitAborted("发射控制器释放");
+        }
         if (audioTrack != null) {
             audioTrack.release();
             audioTrack = null;
@@ -506,7 +637,7 @@ public class FT8TransmitSignal {
                 return;
             }
             lastManualTransmitRequestMs = now;
-            doTransmit();
+            doTransmit(true);
             return;
         }
 
@@ -516,7 +647,7 @@ public class FT8TransmitSignal {
 
         resetTargetReport();
 
-        // 立即发射时添加去重检查，防止周期边界重复触发
+        // De-duplicate immediate TX around slot boundaries.
         int currentSeq = UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM());
         long currentFullSeq = UtcTimer.getSystemTime() / FT8Common.getSlotTimeMillisecond(GeneralVariables.getSignalMode());
 
@@ -525,13 +656,20 @@ public class FT8TransmitSignal {
                     < FT8Common.getImmediateTxWindowMs(GeneralVariables.getSignalMode())) {
                 lastTransmitAttemptSequence = currentFullSeq;
                 setTransmitting(false);
-                doTransmit();
+                doTransmit(true);
             }
         }
     }
 
 
     public void doTransmit() {
+        doTransmit(false);
+    }
+
+    private void doTransmit(boolean manualRequest) {
+        if (released.get()) {
+            return;
+        }
         if (!activated && !isExperimentalManualTxMode()) {
             return;
         }
@@ -540,6 +678,7 @@ public class FT8TransmitSignal {
             return;
         }
 
+        final int transmitMode = GeneralVariables.getSignalMode();
         if (BaseRigOperation.checkIsWSPR2(
                 GeneralVariables.band + Math.round(GeneralVariables.getBaseFrequency()))) {
             ToastMessage.show(String.format(GeneralVariables.getStringFromResource(R.string.use_wspr2_error)
@@ -547,7 +686,10 @@ public class FT8TransmitSignal {
             setActivated(false);
             return;
         }
-        boolean reserveBeforeQueue = isExperimentalManualTxMode();
+        if (!checkClockForTransmit(manualRequest, true, transmitMode)) {
+            return;
+        }
+        boolean reserveBeforeQueue = true;
         synchronized (transmitStateLock) {
             if (isTransmitting) {
                 Log.w(TAG, "doTransmit ignored: transmit already in progress");
@@ -556,22 +698,117 @@ public class FT8TransmitSignal {
             if (reserveBeforeQueue) {
                 // For manual experimental TX we reserve the state before queueing
                 // to prevent duplicate click events from dispatching two jobs.
-                // 实验手动发射在入队前先占位，避免重复点击并发入队。
+                // Reserve state before queueing to avoid duplicate manual TX jobs.
                 isTransmitting = true;
                 mutableIsTransmitting.postValue(true);
             }
         }
+
+        int automationMode = transmitMode;
+        long automationSlot = getCurrentFullSlot(automationMode);
+        long automationBand = GeneralVariables.band;
+        String automationTarget = getAutomationTarget();
+        long automationSessionGeneration = -1L;
+        if (!manualRequest && isAutomaticFtxMode(automationMode)) {
+            if (!automationController.tryClaimTransmit(
+                    automationMode,
+                    automationSlot,
+                    functionOrder,
+                    automationBand)) {
+                Log.d(TAG, "doTransmit ignored: automatic action already claimed for slot "
+                        + automationSlot);
+                updateTransmittingState(false);
+                return;
+            }
+            automationSessionGeneration = automationController.currentSessionGeneration();
+            lastAutomationTransmitMode = automationMode;
+            lastAutomationTransmitSlot = automationSlot;
+            lastAutomationTransmitBand = automationBand;
+            lastAutomationSessionGeneration = automationSessionGeneration;
+        } else if (!manualRequest && automationMode == FT8Common.Q65_MODE) {
+            int currentSequence = UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM());
+            if (!q65AutomationController.tryClaim(automationSlot, currentSequence)) {
+                Log.d(TAG, "doTransmit ignored: Q65 sequence is not armed for slot "
+                        + automationSlot);
+                updateTransmittingState(false);
+                return;
+            }
+            lastQ65AutomationSlot = automationSlot;
+            q65CurrentTransmitSucceeded = false;
+        }
         Log.d(TAG, "doTransmit: start transmit");
+        long generation = transmitGeneration.incrementAndGet();
         try {
-            doTransmitThreadPool.execute(new DoTransmitRunnable(this));
+            doTransmitThreadPool.execute(new DoTransmitRunnable(
+                    this,
+                    manualRequest,
+                    generation,
+                    transmitMode,
+                    automationBand,
+                    automationTarget,
+                    automationSessionGeneration));
         } catch (RejectedExecutionException e) {
             Log.e(TAG, "doTransmit rejected: " + e.getMessage());
+            if (!manualRequest && isAutomaticFtxMode(automationMode)) {
+                automationController.markTransmitFinished(
+                        automationMode,
+                        automationSlot,
+                        functionOrder,
+                        false,
+                        automationBand,
+                        automationSessionGeneration);
+                lastAutomationTransmitSlot = Long.MIN_VALUE;
+                lastAutomationTransmitMode = -1;
+                lastAutomationTransmitBand = -1L;
+                lastAutomationSessionGeneration = -1L;
+            } else if (!manualRequest
+                    && automationMode == FT8Common.Q65_MODE
+                    && lastQ65AutomationSlot != Long.MIN_VALUE) {
+                q65AutomationController.markTransmitFinished(
+                        lastQ65AutomationSlot,
+                        false,
+                        "Q65 发射任务无法进入执行队列");
+                lastQ65AutomationSlot = Long.MIN_VALUE;
+            }
             if (reserveBeforeQueue) {
                 updateTransmittingState(false);
             }
             return;
         }
         mutableFunctions.postValue(functionList);
+    }
+
+    private boolean checkClockForTransmit(boolean manualRequest, boolean notifyUser, int signalMode) {
+        AutomaticTransmitMode clockMode = toAutomaticTransmitMode(signalMode);
+        if (DisciplinedClockRegistry.isAutomaticTransmitAllowed(clockMode)) {
+            return true;
+        }
+        String reason = DisciplinedClockRegistry.automaticTransmitBlockReason(clockMode);
+        if (manualRequest) {
+            if (notifyUser) {
+                ToastMessage.show("时间状态不健康，手动发射仍继续：" + reason);
+            }
+            return true;
+        }
+
+        updateLastTransmitStatus("自动发射已阻止：" + reason);
+        long nowMs = System.currentTimeMillis();
+        if (notifyUser && nowMs - lastClockBlockedNoticeMs >= 30_000L) {
+            lastClockBlockedNoticeMs = nowMs;
+            ToastMessage.show("自动发射已阻止：" + reason);
+        }
+        Log.w(TAG, "automatic transmit blocked: " + reason);
+        return false;
+    }
+
+    private static AutomaticTransmitMode toAutomaticTransmitMode(int signalMode) {
+        if (signalMode == FT8Common.FT4_MODE) {
+            return AutomaticTransmitMode.FT4;
+        }
+        if (signalMode == FT8Common.Q65_MODE) {
+            return AutomaticTransmitMode.Q65;
+        }
+        return AutomaticTransmitMode.FT8;
     }
 
     @SuppressLint("DefaultLocale")
@@ -590,7 +827,8 @@ public class FT8TransmitSignal {
         mutableToCallsign.postValue(transmitCallsign);
         toCallsign = transmitCallsign;
 
-        if (functionOrder == -1) {//说明是回复消息
+        if (functionOrder == -1) {
+            // Reply mode: infer the next function order from received extra info.
             this.functionOrder = normalizeFunctionOrder(
                     GeneralVariables.checkFunOrderByExtraInfo(toMaidenheadGrid) + 1);
             if (this.functionOrder == 6) {
@@ -621,6 +859,7 @@ public class FT8TransmitSignal {
         mutableSequential.postValue(sequential);
         generateFun();
         mutableFunctionOrder.postValue(this.functionOrder);
+        synchronizeAutomationSession();
     }
 
     private int normalizeFunctionOrder(int order) {
@@ -648,7 +887,7 @@ public class FT8TransmitSignal {
     }
 
     private void setRuntimeBaseFrequency(float freq) {
-        GeneralVariables.setBaseFrequency(freq);
+        GeneralVariables.setRuntimeTransmitFrequency(freq);
     }
 
     private void resetDxpeditionCountersForNewTarget(AutoSessionType sessionType,
@@ -767,7 +1006,7 @@ public class FT8TransmitSignal {
                 resetTargetReport();
                 Ft8Message msg = new Ft8Message(currentMode, 1, 0, "CQ", GeneralVariables.myCallsign
                         , GeneralVariables.getMyMaidenhead4Grid());
-                msg.modifier = GeneralVariables.toModifier;
+                msg.modifier = getRuntimeCqModifier();
                 return msg;
         }
 
@@ -779,7 +1018,9 @@ public class FT8TransmitSignal {
         autoSession.resetNoReplyCount();
         syncNoReplyCount();
         functionList.clear();
+        int currentMode = GeneralVariables.getSignalMode();
         int sanitizedOrder = AutoSessionUiPolicy.sanitizeFunctionOrder(
+                currentMode,
                 autoSession.getSessionType(),
                 functionOrder,
                 functionOrder
@@ -788,6 +1029,7 @@ public class FT8TransmitSignal {
             functionOrder = sanitizedOrder;
         }
         int[] availableOrders = AutoSessionUiPolicy.getAvailableFunctionOrders(
+                currentMode,
                 autoSession.getSessionType(),
                 functionOrder
         );
@@ -812,6 +1054,224 @@ public class FT8TransmitSignal {
         return temp;
     }
 
+    private String buildBufferStats(float[] buffer, int sampleRate) {
+        if (buffer == null || buffer.length == 0) {
+            return "samples=0, durationMs=0.0, peak=0.000000, rms=0.000000";
+        }
+        float peak = 0.0f;
+        double energy = 0.0;
+        for (float sample : buffer) {
+            float abs = Math.abs(sample);
+            if (abs > peak) {
+                peak = abs;
+            }
+            energy += sample * sample;
+        }
+        double rms = Math.sqrt(energy / buffer.length);
+        float durationMs = sampleRate > 0 ? buffer.length * 1000.0f / sampleRate : 0.0f;
+        return String.format(java.util.Locale.US,
+                "samples=%d, durationMs=%.1f, peak=%.6f, rms=%.6f",
+                buffer.length,
+                durationMs,
+                peak,
+                rms);
+    }
+
+    private int writeAudioTrackFully(AudioTrack track, float[] buffer) {
+        return writeAudioTrackFully(track, buffer, buffer == null ? 0 : buffer.length);
+    }
+
+    private int writeAudioTrackFully(AudioTrack track, float[] buffer, int sampleCount) {
+        if (track == null || buffer == null) {
+            return AudioTrack.ERROR_BAD_VALUE;
+        }
+        int boundedCount = Math.max(0, Math.min(sampleCount, buffer.length));
+        int totalWritten = 0;
+        while (totalWritten < boundedCount) {
+            int written = track.write(
+                    buffer,
+                    totalWritten,
+                    boundedCount - totalWritten,
+                    AudioTrack.WRITE_BLOCKING
+            );
+            if (written <= 0) {
+                Log.e(TAG, String.format(java.util.Locale.US,
+                        "audio float write stopped: offset=%d, remaining=%d, result=%d",
+                        totalWritten,
+                        boundedCount - totalWritten,
+                        written));
+                return written;
+            }
+            totalWritten += written;
+        }
+        return totalWritten;
+    }
+
+    private int writeAudioTrackFully(AudioTrack track, short[] buffer) {
+        return writeAudioTrackFully(track, buffer, buffer == null ? 0 : buffer.length);
+    }
+
+    private int writeAudioTrackFully(AudioTrack track, short[] buffer, int sampleCount) {
+        if (track == null || buffer == null) {
+            return AudioTrack.ERROR_BAD_VALUE;
+        }
+        int boundedCount = Math.max(0, Math.min(sampleCount, buffer.length));
+        int totalWritten = 0;
+        while (totalWritten < boundedCount) {
+            int written = track.write(
+                    buffer,
+                    totalWritten,
+                    boundedCount - totalWritten,
+                    AudioTrack.WRITE_BLOCKING
+            );
+            if (written <= 0) {
+                Log.e(TAG, String.format(java.util.Locale.US,
+                        "audio short write stopped: offset=%d, remaining=%d, result=%d",
+                        totalWritten,
+                        boundedCount - totalWritten,
+                        written));
+                return written;
+            }
+            totalWritten += written;
+        }
+        return totalWritten;
+    }
+
+    private int convertFloatChunkToShort(float[] input, short[] output, int sampleCount) {
+        int boundedCount = Math.min(sampleCount, Math.min(input.length, output.length));
+        for (int index = 0; index < boundedCount; index++) {
+            float sample = Math.max(-1.0f, Math.min(1.0f, input[index]));
+            output[index] = (short) (sample * 32767.0f);
+        }
+        return boundedCount;
+    }
+
+    private Q65PlaybackDrain.Result waitForQ65PlaybackDrain(long generatedSamples, int sampleRate) {
+        if (audioTrack == null || generatedSamples <= 0L || sampleRate <= 0) {
+            return Q65PlaybackDrain.Result.INVALID_INPUT;
+        }
+        return Q65PlaybackDrain.await(
+                generatedSamples,
+                sampleRate,
+                () -> Integer.toUnsignedLong(audioTrack.getPlaybackHeadPosition()),
+                () -> q65StreamCancelled,
+                SystemClock::elapsedRealtime,
+                Thread::sleep);
+    }
+
+    /**
+     * Q65 使用有背压的流式播放；Java 与 JNI 均只持有一个固定小块。
+     */
+    private void playQ65Streaming(MultiSlotTransmitItem item,
+                                  int sampleRate,
+                                  int q65Submode,
+                                  int q65TrPeriodSeconds) {
+        final int chunkSamples = 4096;
+        final int frameBytes = GeneralVariables.audioOutput32Bit ? 4 : 2;
+        final int encoding = GeneralVariables.audioOutput32Bit
+                ? AudioFormat.ENCODING_PCM_FLOAT
+                : AudioFormat.ENCODING_PCM_16BIT;
+        final int minimumBufferBytes = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                encoding);
+        final int streamBufferBytes = Math.max(
+                minimumBufferBytes > 0 ? minimumBufferBytes : 0,
+                chunkSamples * frameBytes * 2);
+        q65StreamCancelled = false;
+
+        attributes = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build();
+        myFormat = new AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setEncoding(encoding)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build();
+        audioTrack = new AudioTrack(
+                attributes,
+                myFormat,
+                streamBufferBytes,
+                AudioTrack.MODE_STREAM,
+                0);
+        if (audioTrack.getState() != AudioTrack.STATE_INITIALIZED) {
+            updateLastTransmitStatus("lastTx mode=Q65 stage=audio-init failureReason=audio-track-uninitialized");
+            afterPlayAudio();
+            return;
+        }
+
+        float[] floatChunk = new float[chunkSamples];
+        short[] shortChunk = GeneralVariables.audioOutput32Bit
+                ? null
+                : new short[chunkSamples];
+        long generated = 0L;
+        double energy = 0.0;
+        float peak = 0.0f;
+        String failureReason = "none";
+        try (Q65WaveStream stream = new Q65WaveStream(
+                item.message.getMessageText(),
+                item.frequencyHz,
+                sampleRate,
+                q65Submode,
+                q65TrPeriodSeconds)) {
+            audioTrack.setVolume(GeneralVariables.volumePercent);
+            audioTrack.play();
+            while (!q65StreamCancelled && !Thread.currentThread().isInterrupted()) {
+                int count = stream.read(floatChunk, 0, floatChunk.length);
+                if (count == 0) {
+                    break;
+                }
+                for (int index = 0; index < count; index++) {
+                    float sample = floatChunk[index];
+                    peak = Math.max(peak, Math.abs(sample));
+                    energy += (double) sample * sample;
+                }
+                int written;
+                if (GeneralVariables.audioOutput32Bit) {
+                    written = writeAudioTrackFully(audioTrack, floatChunk, count);
+                } else {
+                    int converted = convertFloatChunkToShort(floatChunk, shortChunk, count);
+                    written = writeAudioTrackFully(audioTrack, shortChunk, converted);
+                }
+                if (written != count) {
+                    failureReason = "audio-write-failed:" + written;
+                    break;
+                }
+                generated += count;
+            }
+            if (q65StreamCancelled || Thread.currentThread().isInterrupted()) {
+                failureReason = "cancelled";
+            } else if (generated != stream.getTotalSamples()) {
+                failureReason = "short-generation:" + generated + "/" + stream.getTotalSamples();
+            } else {
+                Q65PlaybackDrain.Result drainResult = waitForQ65PlaybackDrain(generated, sampleRate);
+                if (drainResult == Q65PlaybackDrain.Result.DRAINED) {
+                    q65CurrentTransmitSucceeded = true;
+                } else {
+                    failureReason = drainResult.failureReason;
+                }
+            }
+            double rms = generated > 0L ? Math.sqrt(energy / generated) : 0.0;
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "lastTx mode=Q65 stage=stream samples=%d peak=%.6f rms=%.6f underruns=%d failureReason=%s",
+                    generated,
+                    peak,
+                    rms,
+                    audioTrack.getUnderrunCount(),
+                    failureReason));
+        } catch (RuntimeException error) {
+            failureReason = "stream-exception:" + error.getClass().getSimpleName();
+            updateLastTransmitStatus("lastTx mode=Q65 stage=stream failureReason=" + failureReason);
+            Log.e(TAG, "Q65 streaming TX failed", error);
+        } finally {
+            Log.i(TAG, "Q65 streaming TX finished: samples=" + generated
+                    + ", bufferSamples=" + chunkSamples
+                    + ", failureReason=" + failureReason);
+            afterPlayAudio();
+        }
+    }
+
     private void updateMessageStartTimeForOrder(int order) {
         if (order == 1 || order == 2) {
             messageStartTime = UtcTimer.getSystemTime();
@@ -823,7 +1283,15 @@ public class FT8TransmitSignal {
 
     private Ft8Message buildTransmitMessage(int order) {
         Ft8Message msg;
-        if (hasPendingDxpeditionMacro()) {
+        if (GeneralVariables.getSignalMode() == FT8Common.Q65_MODE
+                && q65TransmitMessage != null
+                && !q65TransmitMessage.trim().isEmpty()) {
+            msg = new Ft8Message(FT8Common.Q65_MODE, "CQ",
+                    GeneralVariables.myCallsign, q65TransmitMessage);
+            msg.setTransmitRawText(q65TransmitMessage);
+            msg.i3 = 0;
+            msg.n3 = 0;
+        } else if (hasPendingDxpeditionMacro()) {
             msg = buildPendingDxpeditionMacroMessage();
         } else if (transmitFreeText) {
             msg = new Ft8Message(GeneralVariables.getSignalMode(), "CQ",
@@ -834,9 +1302,14 @@ public class FT8TransmitSignal {
         } else {
             msg = getFunctionCommand(order);
         }
-        msg.modifier = GeneralVariables.toModifier;
+        msg.modifier = getRuntimeCqModifier();
         msg.signalFormat = GeneralVariables.getSignalMode();
         return msg;
+    }
+
+    /** 卫星 FT4 暂停定向 CQ，但绝不修改用户持久化的定向 CQ 配置。 */
+    private String getRuntimeCqModifier() {
+        return GeneralVariables.isSatelliteOperatingProfile() ? null : GeneralVariables.toModifier;
     }
 
     private boolean hasPendingDxpeditionMacro() {
@@ -1076,8 +1549,22 @@ public class FT8TransmitSignal {
         final int currentMode = plan.getSignalMode();
         final int currentSlotMs = FT8Common.getSlotTimeMillisecond(currentMode);
         final int currentSampleRate = GeneralVariables.audioSampleRate;
+        final int q65Submode = GeneralVariables.getQ65Submode();
+        final int q65TrPeriodSeconds = GeneralVariables.getQ65TrPeriodSeconds();
         final MultiSlotTransmitItem primaryItem = plan.getPrimaryItem();
         final Ft8Message primaryMessage = primaryItem.message;
+
+        if (currentMode == FT8Common.Q65_MODE
+                && (GeneralVariables.connectMode == ConnectMode.NETWORK
+                || (GeneralVariables.controlMode == ControlMode.CAT
+                && onDoTransmitted != null
+                && onDoTransmitted.supportTransmitOverCAT()))) {
+            updateLastTransmitStatus(
+                    "lastTx mode=Q65 stage=transport failureReason=external-streaming-unsupported");
+            Log.e(TAG, "Q65 external wave transport rejected: bounded streaming protocol unavailable");
+            afterPlayAudio();
+            return;
+        }
 
         if (GeneralVariables.connectMode == ConnectMode.NETWORK) {
             Log.d(TAG, "playFT8Signal: start network audio transmit");
@@ -1116,12 +1603,72 @@ public class FT8TransmitSignal {
             }
         }
 
-        //进入声卡模式
+        if (currentMode == FT8Common.Q65_MODE) {
+            if (plan.size() != 1) {
+                Log.e(TAG, "Q65 streaming TX requires a single message");
+                afterPlayAudio();
+                return;
+            }
+            playQ65Streaming(
+                    primaryItem,
+                    currentSampleRate,
+                    q65Submode,
+                    q65TrPeriodSeconds);
+            return;
+        }
+
+        // Build local sound-card audio for VOX playback.
+        Log.d(TAG, String.format(java.util.Locale.US,
+                "playTransmitPlan build-wave start: mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, slots=%d, freq=%.1f, text=%s",
+                FT8Common.modeToString(currentMode),
+                FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                GeneralVariables.getQ65TrPeriodSeconds(),
+                currentSampleRate,
+                plan.size(),
+                primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                primaryMessage == null ? "" : primaryMessage.getMessageText()));
+        updateLastTransmitStatus(String.format(java.util.Locale.US,
+                "lastTx mode=%s stage=build submode=%s trPeriod=%d sampleRate=%d audioFrequency=%.1f message=%s failureReason=pending",
+                FT8Common.modeToString(currentMode),
+                FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                GeneralVariables.getQ65TrPeriodSeconds(),
+                currentSampleRate,
+                primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                primaryMessage == null ? "" : primaryMessage.getMessageText()));
         float[] buffer = MultiSlotAudioMixer.build(plan, GeneralVariables.audioSampleRate);
         if (buffer == null) {
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "lastTx mode=%s stage=mixer samples=0 durationMs=0.0 peak=0.000000 rms=0.000000 submode=%s trPeriod=%d sampleRate=%d audioFrequency=%.1f message=%s failureReason=mixer-returned-null",
+                    FT8Common.modeToString(currentMode),
+                    FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                    GeneralVariables.getQ65TrPeriodSeconds(),
+                    currentSampleRate,
+                    primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                    primaryMessage == null ? "" : primaryMessage.getMessageText()));
+            Log.e(TAG, String.format(java.util.Locale.US,
+                    "playTransmitPlan failed: reason=mixer-returned-null, mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, freq=%.1f, text=%s",
+                    FT8Common.modeToString(currentMode),
+                    FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                    GeneralVariables.getQ65TrPeriodSeconds(),
+                    currentSampleRate,
+                    primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                    primaryMessage == null ? "" : primaryMessage.getMessageText()));
             afterPlayAudio();
             return;
         }
+        Log.d(TAG, String.format(java.util.Locale.US,
+                "playTransmitPlan buffer ready: mode=%s, submode=%s, trPeriod=%d, sampleRate=%d, freq=%.1f, volume=%.2f, %s",
+                FT8Common.modeToString(currentMode),
+                FT8Common.getQ65SubmodeLabel(GeneralVariables.getQ65Submode()),
+                GeneralVariables.getQ65TrPeriodSeconds(),
+                currentSampleRate,
+                primaryItem == null ? 0.0f : primaryItem.frequencyHz,
+                GeneralVariables.volumePercent,
+                buildBufferStats(buffer, currentSampleRate)));
+        updateLastTransmitStatus(String.format(java.util.Locale.US,
+                "lastTx mode=%s stage=wave %s failureReason=none",
+                FT8Common.modeToString(currentMode),
+                buildBufferStats(buffer, currentSampleRate)));
 
         Log.d(TAG, String.format("playFT8Signal: prepare audio playback, mode=%s, format=%s, sampleRate=%d",
                 FT8Common.modeToString(currentMode),
@@ -1150,25 +1697,56 @@ public class FT8TransmitSignal {
                 bufferSize,
                 AudioTrack.MODE_STATIC,
                 mySession);
+        if (audioTrack.getState() == AudioTrack.STATE_UNINITIALIZED) {
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "lastTx mode=%s stage=audio-init sampleRate=%d trackState=%d %s failureReason=audio-track-uninitialized",
+                    FT8Common.modeToString(currentMode),
+                    currentSampleRate,
+                    audioTrack.getState(),
+                    buildBufferStats(buffer, currentSampleRate)));
+            Log.e(TAG, String.format(java.util.Locale.US,
+                    "audio track init failed: mode=%s, format=%s, sampleRate=%d, trackState=%d, bufferBytes=%d, %s",
+                    FT8Common.modeToString(currentMode),
+                    GeneralVariables.audioOutput32Bit ? "Float32" : "Int16",
+                    currentSampleRate,
+                    audioTrack.getState(),
+                    bufferSize,
+                    buildBufferStats(buffer, currentSampleRate)));
+            afterPlayAudio();
+            return;
+        }
 
 
         int writeResult;
         if (GeneralVariables.audioOutput32Bit) {
-            writeResult = audioTrack.write(buffer, 0, buffer.length, AudioTrack.WRITE_NON_BLOCKING);
+            writeResult = writeAudioTrackFully(audioTrack, buffer);
         } else {
             short[] audio_data = float2Short(buffer);
-            writeResult = audioTrack.write(audio_data, 0, audio_data.length, AudioTrack.WRITE_NON_BLOCKING);
+            writeResult = writeAudioTrackFully(audioTrack, audio_data);
         }
 
         if (buffer.length > writeResult) {
             Log.e(TAG, String.format("audio write truncated: %d -> %d", buffer.length, writeResult));
         }
+        Log.d(TAG, String.format(java.util.Locale.US,
+                "audio write result: mode=%s, format=%s, sampleRate=%d, trackState=%d, writeResult=%d, requestedSamples=%d",
+                FT8Common.modeToString(currentMode),
+                GeneralVariables.audioOutput32Bit ? "Float32" : "Int16",
+                currentSampleRate,
+                audioTrack.getState(),
+                writeResult,
+                buffer.length));
 
 
         if (writeResult == AudioTrack.ERROR_INVALID_OPERATION
                 || writeResult == AudioTrack.ERROR_BAD_VALUE
                 || writeResult == AudioTrack.ERROR_DEAD_OBJECT
                 || writeResult == AudioTrack.ERROR) {
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "lastTx mode=%s stage=audio-write writeResult=%d %s failureReason=audio-write-failed",
+                    FT8Common.modeToString(currentMode),
+                    writeResult,
+                    buildBufferStats(buffer, currentSampleRate)));
             Log.e(TAG, String.format("audio write failed: %d", writeResult));
             afterPlayAudio();
             return;
@@ -1187,19 +1765,49 @@ public class FT8TransmitSignal {
         });
 
         if (audioTrack != null) {
+            audioTrack.setVolume(GeneralVariables.volumePercent);
             audioTrack.play();
-            audioTrack.setVolume(GeneralVariables.volumePercent);//设置播放的音量
+            updateLastTransmitStatus(String.format(java.util.Locale.US,
+                    "lastTx mode=%s stage=playing sampleRate=%d volume=%.2f %s failureReason=none",
+                    FT8Common.modeToString(currentMode),
+                    currentSampleRate,
+                    GeneralVariables.volumePercent,
+                    buildBufferStats(buffer, currentSampleRate)));
+            Log.d(TAG, String.format(java.util.Locale.US,
+                    "audio playback started: mode=%s, playState=%d, marker=%d, volume=%.2f",
+                    FT8Common.modeToString(currentMode),
+                    audioTrack.getPlayState(),
+                    buffer.length,
+                    GeneralVariables.volumePercent));
         }
     }
 
     /**
-     * 【优化】播放完成后的清理工作
-     * 改进点：立即释放 AudioTrack 资源，避免长时间运行时资源累积
+     * Clean up playback resources after one transmit frame finishes.
+     * AudioTrack is released before state updates so the next frame starts cleanly.
      */
     private void afterPlayAudio() {
+        // 先撤销 PTT 并恢复电台，再执行日志和自动化回调，避免数据库工作延长发射。
+        if (onDoTransmitted != null) {
+            onDoTransmitted.onTransmitFinished();
+        }
         int transmittedOrder = lastTransmittedFunctionOrder > 0
                 ? lastTransmittedFunctionOrder
                 : functionOrder;
+        if (lastAutomationTransmitSlot != Long.MIN_VALUE
+                && isAutomaticFtxMode(lastAutomationTransmitMode)) {
+            automationController.markTransmitFinished(
+                    lastAutomationTransmitMode,
+                    lastAutomationTransmitSlot,
+                    transmittedOrder,
+                    transmittedOrder == 5,
+                    lastAutomationTransmitBand,
+                    lastAutomationSessionGeneration);
+            lastAutomationTransmitSlot = Long.MIN_VALUE;
+            lastAutomationTransmitMode = -1;
+            lastAutomationTransmitBand = -1L;
+            lastAutomationSessionGeneration = -1L;
+        }
         notifyAfterTransmit(transmittedOrder);
         ArrayList<DxpeditionFoxSlotScheduler.CompletedContact> completedContacts =
                 foxSlotScheduler.markTransmitted(lastTransmitPlan);
@@ -1209,23 +1817,37 @@ public class FT8TransmitSignal {
         updateDxpeditionFoxSlotStatus();
         clearPendingDxpeditionMacro();
 
-        // 【优化】先释放音频资源再更新状态，确保资源及时回收
+        // Release the current AudioTrack before publishing transmit completion state.
         if (audioTrack != null) {
             try {
-                audioTrack.stop();     // 停止播放
-                audioTrack.release();   // 释放资源
+                audioTrack.stop();
+                audioTrack.release();
             } catch (Exception e) {
                 Log.w(TAG, "Error releasing AudioTrack: " + e.getMessage());
             } finally {
-                audioTrack = null;      // 清空引用
+                audioTrack = null;
             }
         }
 
         updateTransmittingState(false);
 
+        if (lastQ65AutomationSlot != Long.MIN_VALUE) {
+            long completedSlot = lastQ65AutomationSlot;
+            lastQ65AutomationSlot = Long.MIN_VALUE;
+            q65AutomationController.markTransmitFinished(
+                    completedSlot,
+                    q65CurrentTransmitSucceeded,
+                    q65CurrentTransmitSucceeded ? null : getLastTransmitStatusSummary());
+            q65CurrentTransmitSucceeded = false;
+            if (!q65AutomationController.getState().getValue().getArmed()) {
+                activated = false;
+                mutableIsActivated.postValue(false);
+            }
+        }
+
         if (isExperimentalManualTxMode() && activated) {
             // Experimental chain uses one-shot manual TX: stop right after each frame.
-            // 实验链路是一帧一发，发完立即停止。
+            // Manual experimental TX is one-shot and stops after each frame.
             setActivated(false);
         }
 
@@ -1313,6 +1935,7 @@ public class FT8TransmitSignal {
 
     public void setCurrentFunctionOrder(int order) {
         order = AutoSessionUiPolicy.sanitizeFunctionOrder(
+                GeneralVariables.getSignalMode(),
                 autoSession.getSessionType(),
                 functionOrder,
                 order
@@ -1351,6 +1974,9 @@ public class FT8TransmitSignal {
     }
 
     public String getAutoSessionStatusText() {
+        if (!AutoSessionUiPolicy.supportsAutomaticQso(GeneralVariables.getSignalMode())) {
+            return GeneralVariables.getStringFromResource(R.string.q65_manual_only_status);
+        }
         if (isManualDxpeditionFoxEnabled()) {
             return GeneralVariables.getStringFromResource(R.string.dxpedition_fox_status)
                     + " / " + foxSlotScheduler.getStatusText();
@@ -1358,7 +1984,7 @@ public class FT8TransmitSignal {
         if (toCallsign == null || !toCallsign.haveTargetCallsign()) {
             int cqQueueSize = callQueueManager.size();
             if (GeneralVariables.cqQueueEnabled && cqQueueSize > 0) {
-                return String.format("CQ队列 %d", cqQueueSize);
+                return String.format(java.util.Locale.US, "CQ queue %d", cqQueueSize);
             }
             return "";
         }
@@ -1422,8 +2048,9 @@ public class FT8TransmitSignal {
     }
 
     public void refreshSessionModeByCurrentTarget() {
+        int currentMode = GeneralVariables.getSignalMode();
         if (toCallsign == null) {
-            autoSession.resetToCq(GeneralVariables.getSignalMode(), GeneralVariables.band);
+            autoSession.resetToCq(currentMode, GeneralVariables.band);
             foxSlotScheduler.clear();
             updateDxpeditionFoxSlotStatus();
             resetDxpeditionCountersForNewTarget(AutoSessionType.STANDARD, null, 6);
@@ -1433,9 +2060,24 @@ public class FT8TransmitSignal {
             return;
         }
 
+        if (!AutoSessionUiPolicy.supportsAutomaticQso(currentMode)) {
+            autoSession.bindTarget(
+                    toCallsign.callsign,
+                    currentMode,
+                    GeneralVariables.band,
+                    AutoSessionType.STANDARD
+            );
+            foxSlotScheduler.clear();
+            updateDxpeditionFoxSlotStatus();
+            resetDxpeditionCountersForNewTarget(AutoSessionType.STANDARD, toCallsign, functionOrder);
+            generateFun();
+            mutableFunctionOrder.postValue(functionOrder);
+            return;
+        }
+
         autoSession.bindTarget(
                 toCallsign.callsign,
-                GeneralVariables.getSignalMode(),
+                currentMode,
                 GeneralVariables.band,
                 resolveBoundSessionType(toCallsign)
         );
@@ -1482,6 +2124,7 @@ public class FT8TransmitSignal {
     }
 
     private int checkFunctionOrdFromMessages(ArrayList<Ft8Message> messages) {
+        lastAutoIncomingMessage = null;
         if (toCallsign == null) {
             return -1;
         }
@@ -1532,6 +2175,7 @@ public class FT8TransmitSignal {
         if (bestMessage == null) {
             return -1;
         }
+        lastAutoIncomingMessage = bestMessage;
 
         autoSession.setSessionType(AutoFlowMessageAnalyzer.resolveSessionType(
                 bestMessage,
@@ -1600,7 +2244,9 @@ public class FT8TransmitSignal {
         callQueueManager.configure(
                 GeneralVariables.cqMaxQueueSize,
                 GeneralVariables.cqRankMethod,
-                GeneralVariables.cqDirectedCqPrefixes
+                GeneralVariables.isSatelliteOperatingProfile()
+                        ? ""
+                        : GeneralVariables.cqDirectedCqPrefixes
         );
         publishCqQueue();
     }
@@ -2007,6 +2653,9 @@ public class FT8TransmitSignal {
         if (isExperimentalManualTxMode()) {
             return;
         }
+        if (!AutoSessionUiPolicy.supportsAutomaticQso(GeneralVariables.getSignalMode())) {
+            return;
+        }
         if (GeneralVariables.myCallsign.length() < 3) {
             return;
         }
@@ -2057,6 +2706,18 @@ public class FT8TransmitSignal {
         ingestCqQueue(messages);
 
         int newOrder = checkFunctionOrdFromMessages(messages);
+        if (newOrder != -1 && activated && isAutomaticFtxMode(GeneralVariables.getSignalMode())) {
+            Ft8Message acceptedMessage = lastAutoIncomingMessage;
+            if (acceptedMessage == null || !automationController.tryAcceptIncoming(
+                    acceptedMessage.signalFormat,
+                    acceptedMessage.getFullSequenceIndex(),
+                    newOrder,
+                    getAutomationTarget(),
+                    autoSession.getBand())) {
+                Log.d(TAG, "parseMessageToFunction ignored: duplicate or stale automatic transition");
+                return;
+            }
+        }
         if (newOrder != -1) {
             autoSession.resetNoReplyCount();
             syncNoReplyCount();
@@ -2205,6 +2866,12 @@ public class FT8TransmitSignal {
         lastNoReplySequenceIndex = sequenceIndex;
         lastNoReplySessionKey = sessionKey;
         autoSession.increaseNoReplyCount();
+        if (activated && isAutomaticFtxMode(autoSession.getSignalFormat())) {
+            automationController.recordNoReplySlot(
+                    autoSession.getSignalFormat(),
+                    sequenceIndex,
+                    autoSession.getBand());
+        }
         syncNoReplyCount();
     }
 
@@ -2218,7 +2885,7 @@ public class FT8TransmitSignal {
             if (!ft8Message.isAutoFlowRelevant()) continue;
             if (ft8Message.signalFormat != GeneralVariables.getSignalMode()) continue;
             // Only enforce band match when decoded message carries a valid RF band.
-            // 仅在解码消息带有有效频段时才做频段一致性约束。
+            // Only enforce band match when decoded message carries a valid RF band.
             if (ft8Message.band > 0 && ft8Message.band != GeneralVariables.band) continue;
             if (!ft8Message.checkIsCQ()) continue;
 
@@ -2249,7 +2916,20 @@ public class FT8TransmitSignal {
 
     public void setActivated(boolean activated) {
         this.activated = activated;
-        if (!this.activated) {
+        if (this.activated) {
+            synchronizeAutomationSession();
+        } else {
+            // 使正在 late-decode 等待或尚未生成音频的旧任务立即失效。
+            transmitGeneration.incrementAndGet();
+            q65StreamCancelled = true;
+            automationController.stopSession("自动通联已停止");
+            if (q65AutomationController.getState().getValue().getArmed()) {
+                q65AutomationController.stop("Q65 自动序列已停止");
+            }
+            lastAutomationTransmitSlot = Long.MIN_VALUE;
+            lastAutomationTransmitMode = -1;
+            lastAutomationTransmitBand = -1L;
+            lastAutomationSessionGeneration = -1L;
             clearPendingDxpeditionMacro();
             deactivateAfterManualDxpeditionMacro = false;
             setTransmitting(false);
@@ -2268,6 +2948,7 @@ public class FT8TransmitSignal {
         }
 
         if (!transmitting) {
+            q65StreamCancelled = true;
             if (audioTrack != null) {
                 if (audioTrack.getState() != AudioTrack.STATE_UNINITIALIZED) {
                     audioTrack.pause();
@@ -2316,6 +2997,69 @@ public class FT8TransmitSignal {
             mutableToCallsign.postValue(toCallsign);
             generateFun();
         }
+        if (activated && isAutomaticFtxMode(GeneralVariables.getSignalMode())) {
+            automationController.resetToCq(
+                    GeneralVariables.getSignalMode(),
+                    getCurrentFullSlot(GeneralVariables.getSignalMode()),
+                    GeneralVariables.band);
+        }
+    }
+
+    private void abortTransmitAttempt(String reason) {
+        q65StreamCancelled = true;
+        if (onDoTransmitted != null) {
+            onDoTransmitted.onTransmitAborted(reason);
+        }
+        if (audioTrack != null) {
+            try {
+                audioTrack.pause();
+                audioTrack.flush();
+                audioTrack.release();
+            } catch (RuntimeException error) {
+                Log.w(TAG, "abort audio cleanup failed: " + error.getMessage());
+            } finally {
+                audioTrack = null;
+            }
+        }
+        if (lastAutomationTransmitSlot != Long.MIN_VALUE
+                && isAutomaticFtxMode(lastAutomationTransmitMode)) {
+            automationController.markTransmitFinished(
+                    lastAutomationTransmitMode,
+                    lastAutomationTransmitSlot,
+                    functionOrder,
+                    false,
+                    lastAutomationTransmitBand,
+                    lastAutomationSessionGeneration);
+            lastAutomationTransmitSlot = Long.MIN_VALUE;
+            lastAutomationTransmitMode = -1;
+            lastAutomationTransmitBand = -1L;
+            lastAutomationSessionGeneration = -1L;
+        }
+        if (lastQ65AutomationSlot != Long.MIN_VALUE) {
+            q65AutomationController.markTransmitFinished(lastQ65AutomationSlot, false, reason);
+            lastQ65AutomationSlot = Long.MIN_VALUE;
+        }
+        updateLastTransmitStatus("lastTx stage=aborted failureReason=" + reason);
+        updateTransmittingState(false);
+    }
+
+    private boolean isGenerationActive(long generation) {
+        return !released.get()
+                && generation == transmitGeneration.get()
+                && !Thread.currentThread().isInterrupted();
+    }
+
+    private boolean isAutomationSessionCurrent(int signalMode,
+                                               long bandHz,
+                                               String targetCall,
+                                               long sessionGeneration) {
+        return GeneralVariables.getSignalMode() == signalMode
+                && GeneralVariables.band == bandHz
+                && automationController.isSessionCurrent(
+                signalMode,
+                targetCall,
+                bandHz,
+                sessionGeneration);
     }
 
     public void setTimer_sec(int sec) {
@@ -2347,11 +3091,36 @@ public class FT8TransmitSignal {
     }
 
     private boolean isExperimentalManualTxMode() {
-        return GeneralVariables.isExperimentalCodecEnabled();
+        return GeneralVariables.isExperimentalCodecEnabled()
+                && GeneralVariables.getSignalMode() != FT8Common.Q65_MODE;
     }
 
-    private long calculateLateDecodeHoldMs() {
+    private boolean isAutomaticFtxMode(int mode) {
+        return mode == FT8Common.FT8_MODE || mode == FT8Common.FT4_MODE;
+    }
+
+    private long getCurrentFullSlot(int mode) {
+        return UtcTimer.getSystemTime() / FT8Common.getSlotTimeMillisecond(mode);
+    }
+
+    private String getAutomationTarget() {
+        return toCallsign == null ? "CQ" : toCallsign.callsign;
+    }
+
+    private void synchronizeAutomationSession() {
         int mode = GeneralVariables.getSignalMode();
+        if (!activated || !isAutomaticFtxMode(mode)) {
+            return;
+        }
+        automationController.armSession(
+                mode,
+                getAutomationTarget(),
+                getCurrentFullSlot(mode),
+                functionOrder,
+                GeneralVariables.band);
+    }
+
+    private long calculateLateDecodeHoldMs(int mode) {
         int slotMs = FT8Common.getSlotTimeMillisecond(mode);
         long nowMs = UtcTimer.getSystemTime();
         long elapsedInSlotMs = nowMs % slotMs;
@@ -2366,7 +3135,7 @@ public class FT8TransmitSignal {
         );
 
         // Late-decode override is only enabled for a short time after fresh decode updates.
-        // 只有在“刚收到新解码”的短窗口里，才允许晚到解码覆盖发射内容。
+        // Late-decode override is only enabled shortly after fresh decode updates.
         if (lastDecodeMessageUpdateMs > 0L) {
             long sinceDecodeMs = nowMs - lastDecodeMessageUpdateMs;
             if (sinceDecodeMs >= 0
@@ -2384,29 +3153,75 @@ public class FT8TransmitSignal {
     }
 
     private static class DoTransmitRunnable implements Runnable {
-        FT8TransmitSignal transmitSignal;
+        private final FT8TransmitSignal transmitSignal;
+        private final boolean manualRequest;
+        private final long generation;
+        private final int signalMode;
+        private final long automationBand;
+        private final String automationTarget;
+        private final long automationSessionGeneration;
 
-        public DoTransmitRunnable(FT8TransmitSignal transmitSignal) {
+        public DoTransmitRunnable(FT8TransmitSignal transmitSignal,
+                                   boolean manualRequest,
+                                   long generation,
+                                   int signalMode,
+                                   long automationBand,
+                                   String automationTarget,
+                                   long automationSessionGeneration) {
             this.transmitSignal = transmitSignal;
+            this.manualRequest = manualRequest;
+            this.generation = generation;
+            this.signalMode = signalMode;
+            this.automationBand = automationBand;
+            this.automationTarget = automationTarget;
+            this.automationSessionGeneration = automationSessionGeneration;
         }
 
         @SuppressLint("DefaultLocale")
         @Override
         public void run() {
+            if (!transmitSignal.isGenerationActive(generation)) {
+                transmitSignal.abortTransmitAttempt("发射任务已取消");
+                return;
+            }
+            if (!hasCurrentAutomationSession()) {
+                transmitSignal.abortTransmitAttempt("自动通联会话已变更");
+                return;
+            }
+            if (!transmitSignal.checkClockForTransmit(manualRequest, false, signalMode)) {
+                transmitSignal.abortTransmitAttempt("时间状态不允许自动发射");
+                return;
+            }
             if (transmitSignal.onDoTransmitted != null) {
-                transmitSignal.onDoTransmitted.onPrepareTransmit();
+                if (!transmitSignal.onDoTransmitted.onPrepareTransmit()) {
+                    transmitSignal.abortTransmitAttempt("CAT/PTT 准备失败");
+                    return;
+                }
             }
 
-            if (!transmitSignal.isExperimentalManualTxMode()) {
-                transmitSignal.updateTransmittingState(true);
-            }
-            long holdWindowMs = transmitSignal.calculateLateDecodeHoldMs();
+            long holdWindowMs = transmitSignal.calculateLateDecodeHoldMs(signalMode);
             if (holdWindowMs > 0L) {
                 try {
                     Thread.sleep(holdWindowMs);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    transmitSignal.abortTransmitAttempt("late-decode 等待被取消");
+                    return;
                 }
+            }
+
+            if (!transmitSignal.isGenerationActive(generation)) {
+                transmitSignal.abortTransmitAttempt("发射 generation 已失效");
+                return;
+            }
+            if (!hasCurrentAutomationSession()) {
+                transmitSignal.abortTransmitAttempt("late-decode 等待期间会话已变更");
+                return;
+            }
+            // 等待 late-decode 窗口期间时间源可能失效，真正生成/播放前再做一次自动门禁。
+            if (!transmitSignal.checkClockForTransmit(manualRequest, true, signalMode)) {
+                transmitSignal.abortTransmitAttempt("等待期间时间状态失效");
+                return;
             }
 
             int transmitOrder = transmitSignal.functionOrder;
@@ -2421,10 +3236,33 @@ public class FT8TransmitSignal {
                 transmitSignal.postTransmittingMessage(plan);
             } catch (RuntimeException e) {
                 Log.e(TAG, "DoTransmitRunnable: failed to build final transmit message", e);
-                transmitSignal.afterPlayAudio();
+                transmitSignal.abortTransmitAttempt("生成发射消息失败");
+                return;
+            }
+            if (transmitSignal.onDoTransmitted != null
+                    && !transmitSignal.onDoTransmitted.onAudioReady()) {
+                transmitSignal.abortTransmitAttempt("音频启动前 PTT 复核失败");
+                return;
+            }
+            if (!transmitSignal.isGenerationActive(generation)) {
+                transmitSignal.abortTransmitAttempt("音频启动前任务已取消");
+                return;
+            }
+            if (!hasCurrentAutomationSession()) {
+                transmitSignal.abortTransmitAttempt("音频启动前自动通联会话已变更");
                 return;
             }
             transmitSignal.playTransmitPlan(plan);
+        }
+
+        private boolean hasCurrentAutomationSession() {
+            return manualRequest
+                    || !transmitSignal.isAutomaticFtxMode(signalMode)
+                    || transmitSignal.isAutomationSessionCurrent(
+                    signalMode,
+                    automationBand,
+                    automationTarget,
+                    automationSessionGeneration);
         }
     }
 }
