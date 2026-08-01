@@ -11,6 +11,7 @@ import androidx.work.workDataOf
 import com.bg7yoz.ft8cn.data.local.LotwUploadDao
 import com.bg7yoz.ft8cn.data.local.LotwUploadJobEntity
 import java.io.InputStream
+import java.io.Writer
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.Flow
 
@@ -99,6 +100,48 @@ class LotwWorkflow(
         return AdifCodec.export(records)
     }
 
+    /**
+     * 将全部待签名记录分页写入目标。页面上只展示最近记录，不得因此截断导出范围。
+     * 状态先转为 PENDING_SIGN；写入中断后再次导出仍会包含这些记录。
+     */
+    suspend fun writeAllForExternalSigning(output: Writer, pageSize: Int = 256): Int {
+        require(pageSize in 1..1_000) { "导出分页数量必须在 1..1000" }
+        AdifCodec.writeHeader(output)
+        var offset = 0
+        var exported = 0
+        while (true) {
+            val page = qsoRepository.listExportPage(offset, pageSize)
+            if (page.isEmpty()) break
+            page.forEach { record ->
+                if (!record.isExternalSigningCandidate()) return@forEach
+                if (record.lotwStatus != LotwStatus.PENDING_SIGN) {
+                    qsoRepository.updateLotwStatus(
+                        listOf(record.stableId),
+                        LotwStatus.PENDING_SIGN,
+                        updatedUtcMillis = nowMillis(),
+                    )
+                }
+                AdifCodec.writeRecord(output, record)
+                exported++
+            }
+            offset += page.size
+        }
+        require(exported > 0) { "没有可导出的 QSO" }
+        output.flush()
+        return exported
+    }
+
+    suspend fun hasExternalSigningCandidates(pageSize: Int = 256): Boolean {
+        require(pageSize in 1..1_000) { "查询分页数量必须在 1..1000" }
+        var offset = 0
+        while (true) {
+            val page = qsoRepository.listExportPage(offset, pageSize)
+            if (page.isEmpty()) return false
+            if (page.any(QsoRecord::isExternalSigningCandidate)) return true
+            offset += page.size
+        }
+    }
+
     suspend fun importSignedTq8AndSchedule(input: InputStream): LotwQueueResult {
         val artifact = artifactStore.import(input)
         val existing = uploadDao.findByIdempotencyKey(artifact.sha256)
@@ -164,6 +207,9 @@ class LotwWorkflow(
         return LotwQueueResult(saved.id, artifact.sha256, records.size, inserted <= 0)
     }
 }
+
+private fun QsoRecord.isExternalSigningCandidate(): Boolean =
+    lotwStatus == LotwStatus.LOCAL || lotwStatus == LotwStatus.REJECTED || lotwStatus == LotwStatus.PENDING_SIGN
 
 fun LotwUploadJobEntity.decodeStableIds(): List<String> =
     qsoStableIds.lineSequence().map(String::trim).filter(String::isNotEmpty).distinct().toList()

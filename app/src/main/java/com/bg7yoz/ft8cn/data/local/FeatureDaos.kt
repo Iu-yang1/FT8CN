@@ -19,6 +19,12 @@ interface QsoDao {
     @Query("SELECT * FROM qso_records ORDER BY startedUtcMillis DESC")
     suspend fun listAll(): List<QsoEntity>
 
+    @Query(
+        "SELECT * FROM qso_records ORDER BY startedUtcMillis ASC, stableId ASC " +
+            "LIMIT :limit OFFSET :offset",
+    )
+    suspend fun listExportPage(offset: Int, limit: Int): List<QsoEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(record: QsoEntity): Long
 

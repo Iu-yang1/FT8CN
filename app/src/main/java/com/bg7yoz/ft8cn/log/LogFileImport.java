@@ -8,6 +8,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Locale;
 
 /**
  * 日志文件导入。
@@ -34,10 +35,9 @@ public class LogFileImport {
      */
     public LogFileImport(ImportTaskList.ImportTask task, String logFileName) throws IOException {
         importTask=task;
-        FileInputStream logFileStream = new FileInputStream(logFileName);
-        byte[] bytes = new byte[logFileStream.available()];
-        logFileStream.read(bytes);
-        fileContext = new String(bytes);
+        try (FileInputStream logFileStream = new FileInputStream(logFileName)) {
+            fileContext = BoundedAdifReader.readUtf8(logFileStream);
+        }
     }
 
     /**
@@ -50,12 +50,8 @@ public class LogFileImport {
     }
 
     public String getLogBody() {
-        String[] temp = fileContext.split("[<][Ee][Oo][Hh][>]");
-        if (temp.length > 1) {
-            return temp[temp.length - 1];
-        } else {
-            return "";
-        }
+        int marker = fileContext.toUpperCase(Locale.US).lastIndexOf("<EOH>");
+        return marker >= 0 ? fileContext.substring(marker + 5) : fileContext;
     }
 
     /**
@@ -64,49 +60,13 @@ public class LogFileImport {
      * @return 记录列表。ArrayList
      */
     public ArrayList<HashMap<String, String>> getLogRecords() {
-        String[] temp = getLogBody().split("[<][Ee][Oo][Rr][>]");//拆解出每个记录的原始内容
-        ArrayList<HashMap<String, String>> records = new ArrayList<>();
-        int count=0;//解析计数器
-        for (String s : temp) {//对每一个原始记录内容做拆解
-            count++;
-            if (!s.contains("<")) {
-                continue;
-            }//说明没有标签，不做拆解
-            try {
-                HashMap<String, String> record = new HashMap<>();//创建一个记录
-                String[] fields = s.split("<");//拆解记录的每一个字段
-
-                for (String field : fields) {//对每一个原始记录做拆解
-
-                    if (field.length() > 1) {//如果是可拆解的
-                        String[] values = field.split(">");//拆解记录的字段名和值
-
-                        if (values.length > 1) {//如果是可拆解的
-                            if (values[0].contains(":")) {//拆解字段名和字段的长度，冒号前的字段名，后面是长度
-                                String[] ttt = values[0].split(":");
-                                if (ttt.length > 1) {
-                                    String name = ttt[0];//字段名
-                                    int valueLen = Integer.parseInt(ttt[1]);//字段长度
-                                    if (valueLen > 0) {
-                                        if (values[1].length() < valueLen) {
-                                            valueLen = values[1].length();
-                                        }
-                                        String value = values[1].substring(0, valueLen);//字段值
-                                        record.put(name.toUpperCase(), value);//保存字段,key要大写
-                                    }
-                                }
-
-                            }
-                        }
-                    }
-                }
-                records.add(record);//保存记录
-            }catch (Exception e){
-                errorLines.put(count,s.replace("<","&lt;"));//把错误的内容保存下来。
-                importTask.readErrorCount=errorLines.size();
-            }
+        try {
+            return BoundedAdifReader.parseRecords(fileContext);
+        } catch (RuntimeException error) {
+            errorLines.put(1, error.getMessage() == null ? "ADIF 解析失败" : error.getMessage());
+            importTask.readErrorCount = errorLines.size();
+            return new ArrayList<>();
         }
-        return records;
     }
     public int getErrorCount(){
         return errorLines.size();

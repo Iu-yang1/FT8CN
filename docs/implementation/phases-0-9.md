@@ -1,186 +1,89 @@
 # FT8CN 阶段 0-9 实施台账
 
-## 2026-08-01 加固接续
-
-- 本轮起始本地/远程 SHA：`4cae0d5b7a071a7404a674dcb6e43ec81ed25a7c`
-- 仓库外备份：`H:/tools/ft8cn-backups/20260801-160056`
-- 本地备份分支：`backup/wsjtx-hardening-20260801-160056-4cae0d5`
-- 起始工作区：1679 tracked / 6 modified / 0 staged / 0 untracked / 66 ignored
-- 当前用户资产：`versionName b4 -> b5` 与五处 UI 文案/测试调整；不还原，按语义归入阶段 8/9。
-
-| 加固阶段 | 状态 | 本轮门禁 | 提交 SHA |
-|---|---|---|---|
-| 0 Git 安全、临时文件、工具链与基线 | 完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、第三方/仓库卫生 PASS；`BLOCKED_SANITIZER` | `91ea3f35` |
-| 1 native 生命周期、PTT 与安全 | 完成 | decoder release、PTT rollback、HTTP/Manifest、Gradle、oracle、device PASS；`BLOCKED_SANITIZER` | `c7172367` |
-| 2 NTP/GNSS 纪律化 UTC | 完成 | 时钟/slot/SNTP/GNSS、Gradle、oracle、Debug/Release device PASS；`BLOCKED_SANITIZER` | `13b16f20` |
-| 3 Hamlib/Split/Fake It 事务 | 完成 | 全局事务、backend 互斥、legacy fallback、EME/卫星 lease、APK/ELF、oracle/device PASS；硬件与 sanitizer 阻塞 | `1f8721b8` |
-| 4 Q65 流式内存与 EME | 完成 | native-owned 12 kHz slot、4096-sample RX/TX、A-E、oracle/device PASS；高精度 EME oracle 与 sanitizer 阻塞 | `02faa29a` |
-| 5 卫星与 Doppler | 完成 | 逐条 TLE、绝对 age、过境缓存、纪律化 UTC、oracle/device PASS；硬件与 sanitizer 阻塞 | 本阶段提交 |
-| 6 QSO/LoTW/导入/HTTP | 待开始 | 待执行 | 待提交 |
-| 7 FT8/FT4 呼叫与自动化 | 待开始 | 待执行 | 待提交 |
-| 8 Compose/深色模式/性能 | 待开始 | 待执行 | 待提交 |
-| 9 最终门禁、文档与推送 | 待开始 | 待执行 | 待提交 |
-
-本轮基线证据见 `docs/verification/hardening-baseline-2026-08-01.md`。以下内容保留
-2026-07-26 至 2026-07-29 原始阶段历史，不能用本轮结果改写历史测量。
-
-### 2026-08-01 阶段 1 加固记录
-
-- decoder 关闭顺序固定为停止提交、取消队列、等待 JNI、获取 batch/handle 锁并释放句柄；关闭后不再回调 UI。
-- PTT 事务加入 generation、CAT/PTT 读回、发射延迟、动态 watchdog 与全状态回滚；Q65 watchdog 可覆盖 300 秒时隙。
-- 网页日志默认关闭，仅用户点击后开启；LAN 访问使用随机令牌，修改接口要求 POST/CSRF，导入采用 2 MiB 上限和有界队列。
-- 录音订阅、时隙定时器和后台上传均有幂等释放；三个 `UtcTimer` 共享单一 10 ms 调度器，SNTP 同步串行化。
-- 完整门禁：`HOST_RC_PASS`、`DEVICE_RELEASE_PASS`；官方 `jt9` FT8 20/20、FT4 16/16；Q65 4 条固定哈希不变；仅 sanitizer runtime 缺失为 `BLOCKED_SANITIZER`。
-- Host O2 p50/p95：FT8 539.516/552.104 ms，FT4 264.245/267.227 ms，Q65A/60 241.351/249.857 ms；FT8/FT4 均满足历史 p95 3% 门槛。
-
-### 2026-08-01 阶段 2 加固记录
-
-- 高频 slot 读取改为只计算单调 UTC，Clock `StateFlow` 由唯一 `UtcTimer` 心跳每秒刷新，移除独立 clock scheduler 和 10 ms UI 状态推送。
-- 自动 TX 不确定度按模式区分：FT4 250 ms、FT8 500 ms、Q65 1000 ms；模式在发射任务入队时快照，late-decode 等待前后使用同一门禁。
-- SNTP 样本保存 RTT 与多源共识数；单个大偏差样本继续拒绝，连续三次一致的多源/GNSS 样本允许重捕获，向后校准期间 UTC 不回退且自动 TX 保持阻断。
-- NTP 启用后每 15 分钟周期同步，失败 1 分钟后重试；UDP 客户端准确命名为 SNTP，不宣称具备 NTS。
-- Host O2 p50/p95：FT8 530.045/542.151 ms，FT4 264.777/265.058 ms，Q65A/60 227.832/230.470 ms；固定结果哈希与官方 `jt9` 20/20、16/16 均不变。
-- 真机 Debug/Release 12/24/48 kHz 共 18 个 case 通过，结果数和 Debug/Release 哈希一致；Q65 300 秒 RX/TX 均证明使用 4096-sample 有界 chunk。
-- 修复设备门禁在 instrumentation 结束后立即读取 logcat 的竞态，改为最多 5 秒等待内存证据；测试数量与判定条件未放宽。
-
-### 2026-08-01 阶段 3 加固记录
-
-- Hamlib backend 选择、连接、断开、轮询和命令使用外层 mutex；切换 backend 前先撤销 PTT。
-- Hamlib 始终优先；旧 BaseRig 仅作为已连接 transport 的兼容 fallback，并和 Hamlib 共用 Application 级 `RadioTransactionCoordinator`。
-- `MainViewModel`、Radio PTT 测试、手动调频、EME 与卫星 Doppler 不再直接操作 PTT/频率，全部具备读回、互斥和失败回滚。
-- Debug/Release APK 均包含动态 LGPL `libhamlib.so`，CMake 支持显式 rigctld-only；非 Windows 构建不再静默改变 native Hamlib 能力。
-- Host O2 p50/p95：FT8 523.449/527.804 ms，FT4 260.707/271.663 ms，Q65A/60 221.370/229.083 ms；固定结果哈希和官方 `jt9` 20/20、16/16 不变。
-- 真机 Debug/Release、12/24/48 kHz 与 Q65 4096-sample 流式门禁通过；实体电台、安全假负载和 sanitizer 分别保持明确阻塞。
-
-### 2026-08-01 阶段 4 加固记录
-
-- Q65 24/48 kHz 实时录音以 4096-sample chunk 直接写入 native-owned 12 kHz slot；生产链路不再创建完整源数组或最终 Java `float[]`。
-- 300 秒、48 kHz 真机门禁确认最终输出 3,600,000 samples，Debug/Release 的 native heap 增量约 14.6/14.7 MB；旧模型约 57.6 MB 源数组加 14.4 MB Java 输出的双持有已消除。
-- Q65 A-E TX 保持 `AudioTrack.MODE_STREAM` 和 4096-sample 有界块；drain 超时、取消或初始化失败不再伪报成功。周期只接受 15/30/60/120/300 秒，Q65F 保持诊断限定。
-- EME 自动 CAT 只在高精度天文实现通过 oracle 后才允许；当前显示级 `MoonEphemeris` 明确保持 `BLOCKED_EME_EPHEMERIS_ORACLE`。
-- Host O2 p50/p95：FT8 527.540/536.749 ms，FT4 262.565/270.460 ms，Q65A/60 231.910/241.937 ms；固定哈希和官方 `jt9` FT8 20/20、FT4 16/16 不变。
-- 完整门禁为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`；详见 `docs/verification/q65-eme-hardening-2026-08-01.md`。
-
-### 2026-08-01 阶段 5 加固记录
-
-- TLE 目录改为逐条容错，异常未来 epoch 被拒绝；stale age 使用纪律化 UTC 的绝对差。
-- 24 小时过境和极坐标轨迹按完整 TLE/观察站缓存 15 分钟或至当前 pass 结束，实时 observation 与 Doppler 保持 1 秒更新。
-- 页面倒计时、目录刷新、导入和 CAT target age 均统一使用 `DisciplinedClockRegistry`；CAT 继续通过 radio transaction 且永不触发 PTT。
-- 完整 host/oracle/Gradle/真机门禁通过。FT8/FT4 p50/p95 为 527.928/534.156、262.298/267.334 ms；Q65 追加 15 次复测为 228.076/235.666 ms，固定哈希均不变。
-- 外部实体电台和 sanitizer 分别保持 `BLOCKED_HARDWARE_RIG`、`BLOCKED_SANITIZER`；详见 `docs/verification/satellite-hardening-2026-08-01.md`。
+## 本轮基线
 
 - 仓库：`H:/iu_yang1/study/FT8CN/ft8cn`
 - 产品分支：`wsjtx-ft8ft4-core-port`
-- 开始 SHA：`10b2c62e4c75021eb559825c3da85f77b10a052d`
-- 开始远程 SHA：`10b2c62e4c75021eb559825c3da85f77b10a052d`
-- 用户工作区资产：`app/build.gradle` 的 `versionName b2 -> b3`，不纳入阶段提交
-- 仓库外备份：`H:/tools/ft8cn-backups/20260726-182508-10b2c62`
+- 起始 SHA：`4cae0d5b7a071a7404a674dcb6e43ec81ed25a7c`
+- 起始远程 SHA：`4cae0d5b7a071a7404a674dcb6e43ec81ed25a7c`
+- 仓库外备份：`H:/tools/ft8cn-backups/20260801-160056`
+- 本地备份分支：`backup/wsjtx-hardening-20260801-160056-4cae0d5`
+- 起始工作区：1679 tracked / 6 modified / 0 staged / 0 untracked / 66 ignored
+- 用户资产：`app/build.gradle` 的 `versionName b4 -> b5` 以及设置/UI 测试调整；不还原，按语义归入阶段 8/9。
 
-| 阶段 | 状态 | 主要门禁 | 提交 SHA |
+## 当前进度
+
+| 阶段 | 状态 | 核心门禁 | 提交 |
 |---|---|---|---|
-| 0 仓库、基线、联合审查、工具链和合规 | 完成 | Host/oracle/Gradle PASS；`BLOCKED_DEVICE`、`BLOCKED_SANITIZER`、`BLOCKED_Q65_STREAMING` | `a4aa090a` |
-| 1 Kotlin 功能架构和数据基础 | 完成 | JVM/迁移/导航、Debug/Release、DSP 回归 PASS；`BLOCKED_DEVICE_LEAK` | `888738a6` |
-| 2 NTP/GNSS 时间纪律和 slot 调度 | 完成 | fake clock、本地 NTP mock、GNSS 转换、slot、DSP/oracle PASS；`BLOCKED_DEVICE` | `fac3c4c0` |
-| 3 Hamlib 电台控制、split/Fake It、Doppler 底座 | 完成 | API 28 AArch64 ELF、fake rig/rigctld、PTT 安全、device FT8 PASS；`BLOCKED_HARDWARE_RIG` | `dab521a4` |
-| 4 FT8/FT4 呼叫页、FT4 收发和自动化 | 完成 | oracle、状态机、纯噪声、Debug/Release 真机矩阵 PASS；`BLOCKED_HARDWARE_TX` | `68cf7b29` |
-| 5 Q65-EME 页面和生产流式内存 | 完成 | 300 秒 RX/TX、averaging、内存、host/oracle/Debug/Release 真机回归 PASS；`BLOCKED_SANITIZER` | `16e4a26c` |
-| 6 卫星页面、轨道预测和双向 Doppler | 完成 | SGP4/Skyfield golden、pass、fake rig、离线缓存、Debug/Release/device/DSP PASS；`BLOCKED_HARDWARE_RIG` | `2bd9b82e` |
-| 7 本地日志、ADIF 和 LoTW | 完成 | Room v4、ADIF 3.1.5、签名 TQ8、幂等上传与 mock PASS；`BLOCKED_TQSL_EMBEDDED_SIGNING`、`BLOCKED_LOTW_ACCOUNT` | `11f8d86b` |
-| 8 Kotlin/Compose Material 3 UI 和全局优化 | 部分完成 | DSP/device PASS；`BLOCKED_DEVICE_UI_UNLOCK`、`BLOCKED_COMPLETE_COMPOSE_MIGRATION`、`BLOCKED_BASELINE_PROFILE_GENERATION` | `dae3b4e3` |
-| 9 集成验收、发布门禁和最终交付 | 本机可执行项完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`；严格 lint/ELF/SBOM/secret PASS；`BLOCKED_SANITIZER` 及外部条件见阻塞报告 | 本阶段提交 |
+| 0 Git 安全、临时文件、工具链与基线 | 完成 | Host/oracle/Gradle/device PASS；sanitizer 阻塞 | `91ea3f35` |
+| 1 native 生命周期、PTT 与安全 | 完成 | release/PTT/HTTP/Manifest/oracle/device PASS | `c7172367` |
+| 2 NTP/GNSS 纪律化 UTC | 完成 | clock/slot/SNTP/GNSS/oracle/device PASS | `13b16f20` |
+| 3 Hamlib、Split 与 Fake It | 完成 | radio transaction/APK/ELF/oracle/device PASS | `1f8721b8` |
+| 4 Q65 流式内存与 EME 门禁 | 完成 | 300 秒 RX/TX、A-E、oracle/device PASS | `02faa29a` |
+| 5 卫星与 Doppler | 完成 | TLE/pass/cache/UTC/oracle/device PASS | `94ce7da6` |
+| 6 QSO、LoTW、导入与 HTTP | 完成，待提交 | Room 主写、旧库兼容镜像、全库分页导出、受限导入、oracle/device PASS | 本阶段提交 |
+| 7 FT8/FT4 呼叫与自动化 | 待开始 | 待执行 | - |
+| 8 Compose、深色模式与性能 | 待开始 | 待执行 | - |
+| 9 最终门禁、文档与推送 | 待开始 | 待执行 | - |
 
-状态只能在该阶段实现和门禁完成后改为“完成”。外部硬件、账户或平台工具缺失时，记录精确的 `BLOCKED_*`，并保留已完成的 fake、离线或 host 证据。
+## 固定正确性基线
 
-## 阶段 0 记录
+| 模式 | 结果数 | 完整结果 SHA256 |
+|---|---:|---|
+| FT8 | 20 | `de6b3e97a8d3d07aa0b40d1ce9f5a82012a99e28ee6268ad4e0c486328970cc3` |
+| FT4 | 16 | `877dd38b0d05c754d31c7dd3b0610e61489f86d1cb316123012b9b8c148d1d14` |
+| Q65A/60 | 4 | `76d34ece748e5889f7fab5bd78d05c34baa206bd55de926e53cf3a403ed7b9de` |
 
-- 严格 O2 host CTest、FT8/FT4/Q65 固定语料与哈希、官方 `jt9` 逐条 oracle、Gradle unit/debug/release/androidTest APK：PASS。
-- 1 次预热后连续 20 次：FT8 513.474/516.580 ms，FT4 258.967/266.237 ms，Q65A/60 212.572/222.730 ms；结果哈希无变化。
-- 完成 FT8AF 联合内存审查、12 个第三方组件登记、许可证矩阵、CycloneDX 1.5 SBOM 和工具链锁定。
-- 当前无授权 ADB 设备；设备冷启动、前后台和 live 20-slot 不伪报。Q65 生产流式留给阶段 5 完成。
+## 阶段记录
 
-## 阶段 1 记录
+### 阶段 0
 
-- 以渐进方式加入 Kotlin 1.8.10、Coroutines、Compose、Room、DataStore 和 WorkManager；旧 `MainActivity`、SQLite 与 JNI/DSP 路径保持默认且不改行为。
-- 建立 `DisciplinedClock`、`DecoderCoordinator`、`RadioController`、`DopplerEngine`、`QsoLogRepository`、`AutomationController` 接口及 fake；PCM 通过按块 source 传递，不进入 `FeatureState`。
-- Room schema v1/v2 和 `MIGRATION_1_2` 已生成并通过旧 QSO 数据保留测试；DataStore schema migration、六个导航目的地和 fake 边界通过 JVM 测试。
-- 阶段门禁：28 项 Debug JVM 测试和 Release JVM 测试通过；Debug/Release/androidTest APK 构建通过；Compose 外壳 `exported=false`，旧 `MainActivity` 仍为 launcher。
-- O2 固定语料：FT8 20 条、`de6b3e97...70cc3`、513.474/516.580 → 512.641/518.284 ms；FT4 16 条、`877dd38b...d1d14`、258.967/266.237 → 258.788/260.523 ms；Q65 4 条、`76d34ece...b9de`、212.572/222.730 → 224.072/227.042 ms。FT8/FT4 均在 3% 门槛内，且本阶段未改 native。
-- 官方 `jt9` 仍为 FT8 20/20、FT4 16/16 严格匹配。当前无 ADB 设备，页面反复进入/退出的真机 LeakCanary 门禁记为 `BLOCKED_DEVICE_LEAK`，不冒充 PASS。
+- 建立仓库外事故备份、备份分支、临时目录门禁、工具链锁、第三方许可证矩阵与 SBOM。
+- 严格 O2 host CTest、官方 `jt9`、Gradle Debug/Release 和真机门禁通过。
+- 证据：`docs/verification/hardening-baseline-2026-08-01.md`。
 
-## 阶段 2 记录
+### 阶段 1
 
-- 应用 UTC 已改为单调时钟锚定；NTP/GNSS 样本携带 uncertainty、age、source 和 drift，系统 wall clock 跳变不再直接改变正在运行的 slot。
-- NTP 完成四时间戳、响应身份、KoD/stratum/leap/root dispersion 校验，多服务器稳健融合及指数退避；GNSS 只接受非 mock fix、完整 bias/leap 的 measurement，且不记录坐标。
-- FT8/FT4/Q65 统一 slot 边界算法。自动 TX 在不健康时间下阻止，手动 TX 明确警告后仍可继续；RX 不受影响。
-- Debug/Release JVM、APK 和 lintVital PASS；O2 固定语料与官方 `jt9` 哈希/结果完全不变。FT8/FT4/Q65 p50/p95 为 514.634/526.629、261.300/265.155、216.610/226.977 ms。
-- 无授权 ADB 与 sanitizer runtime，分别保留 `BLOCKED_DEVICE`、`BLOCKED_SANITIZER`；详见 `docs/verification/time-discipline-2026-07-26.md`。
+- decoder 关闭顺序固定为停止提交、取消队列、等待 JNI、获取固定锁序并释放句柄。
+- PTT 事务加入 generation、CAT/PTT 读回、动态 watchdog 和完整回滚。
+- 本地日志服务默认关闭；LAN 模式使用令牌，修改接口要求 POST/CSRF。
 
-## 阶段 3 记录
+### 阶段 2
 
-- 建立统一 `RadioController`、rigctld 和既有 USB/Bluetooth/network adapter，加入频率、模式、VFO、split、PTT、功率读回与错误状态。
-- `RadioTransactionCoordinator` 实现 NONE/RIG_SPLIT/FAKE_IT、armed、全局 stop、PTT watchdog 和失败恢复；Doppler 目标具有 age、最小间隔和步长限制。
-- Hamlib 固定在 `c7fb0fa1482ee836e57fa0247773ad4d4c2dd54e`，arm64 API 28 O2 构建和 ELF 依赖检查通过；应用最低版本按用户决定统一到 API 28。
-- 8 项 radio JVM 测试、Debug/Release、第三方清单、host O2 与官方 jt9 通过；FT8/FT4/Q65 哈希不变，p95 均在阶段门槛内。
-- 真机 Debug FT8 在 12/24/48 kHz 均稳定得到 20 条且哈希一致。实体电台低功率/PTT 与 Android USB fd 机型矩阵记为 `BLOCKED_HARDWARE_RIG`，不伪报硬件 PASS。
-- 详见 `docs/verification/radio-control-2026-07-26.md`。
+- FT8/FT4/Q65 使用单调时钟锚定的 UTC；自动 TX 阈值按模式区分。
+- SNTP 保存 RTT/共识并支持多源重新捕获；GNSS 不记录位置隐私。
 
-## 阶段 4 记录
+### 阶段 3
 
-- Call 页面只保留 FT8/FT4；Q65/EME 控件保留实现但隐藏，等待独立 EME 页面接管。
-- 新增自动 QSO 确定性门禁，同一 slot 的 early/full/deep 重复回调只推进一次，同一 slot 最多认领一次自动 TX；模式切换和 stop 会隔离旧会话。
-- 6 项状态机测试、完整 Debug/Release JVM 与 APK、官方 `jt9` FT8 20/20、FT4 16/16、各 200 个纯噪声时隙 0 假解码均通过。
-- 真机 Debug/Release 在 12/24/48 kHz 下：FT8 均为 20 条且哈希一致，FT4 均为 16 条并保持既有每采样率哈希；Release p95 详见阶段报告。
-- Host native 未修改。20 次 FT8 最终 p95 相对阶段 3 增加 2.503%；严格脚本对较早历史参考的一次波动失败已保留，阶段 9 在稳定环境重测，不以降低灵敏度掩盖。
-- 详见 `docs/verification/ft8-ft4-operating-workflow-2026-07-26.md`。
+- Hamlib 优先，旧 transport 仅作已连接设备兼容层；全部 PTT/调频进入全局 radio transaction。
+- Debug/Release 均包含动态 LGPL `libhamlib.so`，rigctld-only 能力显式可选。
 
-## 阶段 5 记录
+### 阶段 4
 
-- Q65 24/48 kHz RX 改为录音 chunk 直接写入最终 12 kHz slot；300 秒 48 kHz 不再同时持有约 57.6 MB 源数组和 14.4 MB 输出数组。
-- Q65 A-E TX 改为官方 tone 一次生成、连续相位 JNI 分块合成和 `AudioTrack.MODE_STREAM`；Java/native/PCM chunk 均固定为 4096 samples，Q65F 保持诊断限定。
-- 独立 EME Compose 页面展示 A-E、周期、grids、averaging 和三种 WSJT-X Doppler 组合；Call 页仍不混入 Q65。
-- Host FT8/FT4/Q65 哈希不变，官方 `jt9` FT8/FT4 严格一致；Debug/Release 真机 12/24/48 kHz 结果一致，Q65 流式 instrumentation 各 7 项通过。
-- 完整门禁状态为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`。高精度月面天文 oracle 与外部 wave transport 流式协议分别记录为 `BLOCKED_EME_EPHEMERIS_ORACLE`、`BLOCKED_Q65_EXTERNAL_STREAMING`，不伪报完成。
-- 详见 `docs/verification/q65-eme-streaming-2026-07-28.md`。
+- Q65 24/48 kHz 实时录音以 4096-sample chunk 写入 native-owned 12 kHz slot。
+- Q65 A-E TX 使用 `AudioTrack.MODE_STREAM`；F 保持诊断限定。
+- 高精度 EME oracle 尚未满足，自动 CAT 保持 `BLOCKED_EME_EPHEMERIS_ORACLE`。
 
-## 阶段 6 记录
+### 阶段 5
 
-- 以 clean-room 边界引入固定版本、Unlicense 的 Java SGP4；Look4Sat 只参考功能范围，未复制 GPL-3.0 源码或资源。
-- 完成严格 TLE、SGP4/TEME、站心观测、过境、地面/极坐标轨迹、上下行 Doppler、反向线性转发器和可回滚 CAT 跟踪；跟踪永不自动 PTT。
-- CelesTrak/SatNOGS 使用 HTTPS、条件请求、响应上限、最短刷新间隔和 Room v3 离线元数据；官方仓库外快照与 Skyfield 1.54 golden PASS。
-- 全量 host/oracle/Gradle/真机门禁 PASS，FT8/FT4/Q65 结果哈希不变，host p95 相对阶段 0 均在 3% 内；sanitizer runtime 仍为 `BLOCKED_SANITIZER`。
-- 详见 `docs/verification/satellite-doppler-2026-07-28.md`。
+- TLE 逐条容错、绝对 age、未来 epoch 拒绝；24 小时 pass/轨迹使用有界缓存。
+- 实时 observation/Doppler 为 1 秒周期，统一读取纪律化 UTC，不在 PTT 中调频。
 
-## 阶段 7 记录
+### 阶段 6
 
-- 新日志仓库使用 Room v4 保留 FT8/FT4/Q65、卫星/EME、频率、网格、报告和 LoTW 审计状态；旧 SQLite 日志没有删除或覆盖。
-- ADIF 3.1.5 编解码按官方模式枚举导出，输入长度、字段和记录数量均有边界；重复 QSO 通过稳定 SHA256 合并。
-- LoTW 只允许外部 TQSL 数字签名的 `.tq8`：结构校验、私有 no-backup 存储、文件 SHA256、WorkManager 唯一任务、指数退避和官方 HTTPS 响应解析均已接线。
-- TrustedQSL 2.8.6 已在 `H:/tools` 做许可证与依赖审查，但未进入 APK；内置签名和真实账户上传分别记录为 `BLOCKED_TQSL_EMBEDDED_SIGNING`、`BLOCKED_LOTW_ACCOUNT`。
-- 完整发布回归状态为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`；官方 `jt9` 对 FT8 20 条、FT4 16 条逐条多重集合匹配，Q65 4 条固定结果保持不变。
-- Host O2 的 FT8/FT4/Q65 p50/p95 分别为 522.145/548.953、261.002/269.214、221.922/233.311 ms；FT8、FT4 相对历史 p95 为 +1.075%、-0.096%，均未超过 3% 门槛。
-- 详见 `docs/verification/logbook-lotw-2026-07-28.md`。
+- 实际自动通联记录先写 Room，再在专用有界 executor 中镜像旧 SQLite，保留 WebUI/统计兼容。
+- 外部 ADIF 经同一解析结果同时写 Room 与兼容库；不再依赖 `InputStream.available()`、单次读取或无界正则拆分。
+- LoTW 外部签名导出按稳定顺序分页扫描全库并直写目标，不再受 UI 最近 250 条限制。
+- 305 条分页导出、稳定 ID、FT4/Q65 映射、超限与损坏 UTF-8 单测通过。
+- 统一验证：`HOST_RC_PASS,BLOCKED_SANITIZER,DEVICE_RELEASE_PASS`。
+- 阶段 6 O2 p50/p95：FT8 517.488/527.289 ms，FT4 260.095/264.990 ms，Q65A/60 218.837/225.336 ms。
 
-## 阶段 8 记录
+## 外部阻塞
 
-- Material 3 工作台提供 Call、EME、Satellite、Logbook、Radio、Settings 六入口；Call 只包含
-  FT8/FT4，手机抽屉和宽屏 NavigationRail 使用同一稳定路由。
-- 修复 AudioRecord 快速停止/重启竞态，monitor 热路径不再逐 block 复制列表；频谱固定复用
-  640-bin、`Rect[]` 和 bitmap，并在 View 生命周期边界释放/重建。
-- Debug/Release 各 88 项 JVM、APK、lint、host CTest、官方 `jt9` 和真机 Debug/Release
-  12/24/48 kHz 门禁通过；FT8/FT4/Q65 哈希保持不变。
-- Host O2 FT8/FT4/Q65 p50/p95 为 523.227/530.964、260.421/271.920、
-  218.259/218.943 ms；FT8/FT4 p95 相对阶段 7为 -3.277%/+1.005%。
-- 安全锁屏和 Oplus 后台 Activity 门禁阻止 Compose 真机交互/宏基准；默认入口仍保留完整兼容
-  操作台，分别记录 `BLOCKED_DEVICE_UI_UNLOCK`、`BLOCKED_COMPLETE_COMPOSE_MIGRATION` 和
-  `BLOCKED_BASELINE_PROFILE_GENERATION`，不伪报完成。
-- 详见 `docs/verification/compose-memory-2026-07-29.md`。
+- `BLOCKED_SANITIZER`：当前 MSYS2 未发现与 host 构建兼容的 ASan/UBSan runtime；其余门禁不冒充 sanitizer PASS。
+- `BLOCKED_HARDWARE_RIG`：未在安全假负载条件下操作实体电台；dummy/事务回滚测试已完成。
+- `BLOCKED_EME_EPHEMERIS_ORACLE`：当前月面星历仅显示级，未解除自动 CAT。
+- `BLOCKED_TQSL_EMBEDDED_SIGNING`：APK 不保存证书私钥或密码，采用外部 TQSL `.tq8` 流程。
+- `BLOCKED_LOTW_ACCOUNT`：未使用真实账户凭据执行上传。
 
-## 阶段 9 记录
-
-- 严格 Release `-O2 -DNDEBUG` CTest、FT8/FT4/Q65 固定语料、官方 `jt9` 逐条多重集合、Debug/Release APK、完整 Android 真机矩阵和 Q65 300 秒流式门禁通过；最终状态为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`。
-- Host FT8/FT4/Q65 p50/p95 为 522.124/525.649、260.357/261.714、220.772/227.075 ms；相对阶段 0 的 p95 为 +1.756%、-1.699%、+1.951%，均未超过 3%。完整结果 SHA256 保持不变。
-- 真机为 Android 16、arm64-v8a、8 logical CPU；FT8 sync 使用 2 线程。Debug/Release 在 12/24/48 kHz 的结果数和结果哈希逐 case 一致，Q65 300 秒 RX/TX 均使用 4096-sample 有界块。
-- 扩展信道门禁使用各 200 个 FT8/FT4 纯噪声时隙，CRC-valid 误解码均为 0；OSD 参考/优化实现覆盖 1000 个确定性随机种子和边界矩阵。
-- 完整 Debug/Release lint 通过。仅对默认中文 `strings.xml` 的既有翻译债务和固定上游 SGP4 文件做路径级例外，其他路径仍严格检查。
-- `libft8cn.so` 为 AArch64，动态依赖仅为 `liblog.so`、`libm.so`、`libc++_shared.so`、`libdl.so`、`libc.so`；第三方 15 组件、87 个 WSJT-X build input、CycloneDX 1.5 和仓库卫生检查通过。
-- 详细证据见 `docs/verification/feature-release-2026-07-29.md`、`performance-2026-07-29.md` 与 `blocked-2026-07-29.md`。整体功能仍受报告中的真实外部阻塞约束，未把这些项目冒充为 PASS。
+历史实现细节与原始测量保留在 `docs/verification/` 和 Git 历史中；本台账不改写既有测量结果。

@@ -27,13 +27,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.bg7yoz.ft8cn.R
 import com.bg7yoz.ft8cn.core.FeatureAppGraph
-import com.bg7yoz.ft8cn.data.logbook.AdifCodec
 import com.bg7yoz.ft8cn.data.logbook.LotwStatus
 import com.bg7yoz.ft8cn.data.logbook.QsoRecord
 import com.bg7yoz.ft8cn.data.local.LotwUploadJobEntity
 import com.bg7yoz.ft8cn.feature.shell.Ft8cnPageHeader
 import com.bg7yoz.ft8cn.feature.shell.Ft8cnPanel
 import com.bg7yoz.ft8cn.feature.shell.LegacyDestinationHost
+import com.bg7yoz.ft8cn.log.BoundedAdifReader
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -52,22 +52,19 @@ fun LogbookScreen() {
     var showLocalRecords by rememberSaveable { mutableStateOf(true) }
     var legacyHostGeneration by rememberSaveable { mutableStateOf(0) }
     var statusText by remember { mutableStateOf("本地日志就绪") }
-    var pendingExport by remember { mutableStateOf<String?>(null) }
 
     val createAdif = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/x-adif"),
     ) { uri ->
-        val content = pendingExport
-        pendingExport = null
-        if (uri != null && content != null) {
+        if (uri != null) {
             scope.launch {
                 statusText = runCatching {
-                    withContext(Dispatchers.IO) {
+                    val exported = withContext(Dispatchers.IO) {
                         context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.US_ASCII)?.use {
-                            it.write(content)
+                            workflow.writeAllForExternalSigning(it)
                         } ?: error("无法打开导出文件")
                     }
-                    "已导出 ${records.size} 条 ADIF 记录；请使用 TQSL 签名为 .tq8"
+                    "已导出 $exported 条 ADIF 记录；请使用 TQSL 签名为 .tq8"
                 }.getOrElse { "导出失败：${it.message}" }
             }
         }
@@ -129,12 +126,7 @@ fun LogbookScreen() {
                 exportAdif = {
                     scope.launch {
                         statusText = runCatching {
-                            val candidates = records.filter {
-                                it.lotwStatus == LotwStatus.LOCAL ||
-                                    it.lotwStatus == LotwStatus.REJECTED ||
-                                    it.lotwStatus == LotwStatus.PENDING_SIGN
-                            }
-                            pendingExport = workflow.exportForExternalSigning(candidates.map { it.stableId })
+                            require(workflow.hasExternalSigningCandidates()) { "没有可导出的 QSO" }
                             createAdif.launch("FT8CN-${System.currentTimeMillis()}.adi")
                             "等待选择导出位置"
                         }.getOrElse { "导出准备失败：${it.message}" }
@@ -205,15 +197,7 @@ private fun SectionButton(selected: Boolean, text: String, modifier: Modifier, o
 }
 
 private fun readBoundedAdif(input: java.io.InputStream): String {
-    val output = java.io.ByteArrayOutputStream()
-    val buffer = ByteArray(16 * 1024)
-    while (true) {
-        val count = input.read(buffer)
-        if (count < 0) break
-        require(output.size() + count <= AdifCodec.MAX_INPUT_CHARACTERS) { "ADIF 文件超过 32 MiB 上限" }
-        output.write(buffer, 0, count)
-    }
-    return output.toString(Charsets.UTF_8.name())
+    return BoundedAdifReader.readUtf8(input)
 }
 
 private fun formatUtc(utcMillis: Long): String = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'")

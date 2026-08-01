@@ -22,6 +22,7 @@ import com.bg7yoz.ft8cn.database.AfterInsertQSLData;
 import com.bg7yoz.ft8cn.database.ControlMode;
 import com.bg7yoz.ft8cn.database.RigNameList;
 import com.bg7yoz.ft8cn.log.LogFileImport;
+import com.bg7yoz.ft8cn.data.logbook.LegacyQsoPersistence;
 import com.bg7yoz.ft8cn.log.QSLRecord;
 import com.bg7yoz.ft8cn.maidenhead.MaidenheadGrid;
 import com.bg7yoz.ft8cn.rigs.BaseRigOperation;
@@ -385,6 +386,15 @@ public class LogHttpServer extends NanoHTTPD {
 
             QSLRecord qslRecord = new QSLRecord(record);
             task.processCount++;
+            if (!qslRecord.isInvalid) {
+                try {
+                    LegacyQsoPersistence.importFieldsBlocking(
+                            GeneralVariables.getMainContext(), record);
+                } catch (RuntimeException error) {
+                    task.invalidCount++;
+                    continue;
+                }
+            }
             if (mainViewModel.databaseOpr.doInsertQSLData(qslRecord, new AfterInsertQSLData() {
                 @Override
                 public void doAfterInsert(boolean isInvalid, boolean isNewQSL) {

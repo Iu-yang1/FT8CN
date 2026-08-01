@@ -41,6 +41,7 @@ import com.bg7yoz.ft8cn.core.radio.RadioMode;
 import com.bg7yoz.ft8cn.core.radio.RadioVfo;
 import com.bg7yoz.ft8cn.core.radio.SplitStrategy;
 import com.bg7yoz.ft8cn.data.settings.FeatureSettings;
+import com.bg7yoz.ft8cn.data.logbook.LegacyQsoPersistence;
 import com.bg7yoz.ft8cn.callsign.CallsignInfo;
 import com.bg7yoz.ft8cn.callsign.OnAfterQueryCallsignLocation;
 import com.bg7yoz.ft8cn.connector.BluetoothRigConnector;
@@ -171,6 +172,10 @@ public class MainViewModel extends ViewModel {
     private final ExecutorService thirdPartyUploadThreadPool = new ThreadPoolExecutor(
             1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(32),
             runnable -> new Thread(runnable, "ft8cn-log-upload"),
+            new ThreadPoolExecutor.AbortPolicy());
+    private final ExecutorService qsoPersistenceThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(32),
+            runnable -> new Thread(runnable, "ft8cn-qso-persist"),
             new ThreadPoolExecutor.AbortPolicy());
 
     //用于显示生成共享日志过程的变量
@@ -690,7 +695,28 @@ public class MainViewModel extends ViewModel {
         }, new OnTransmitSuccess() {
             @Override
             public void doAfterTransmit(QSLRecord qslRecord) {
-                databaseOpr.addQSL_Callsign(qslRecord);
+                // 运行配置在回调到达时快照，避免后台写库时读到下一时隙的模式。
+                final int operatingProfile = GeneralVariables.getOperatingProfile();
+                try {
+                    qsoPersistenceThreadPool.execute(() -> {
+                        try {
+                            LegacyQsoPersistence.persistBlocking(
+                                    GeneralVariables.getMainContext(),
+                                    qslRecord,
+                                    operatingProfile,
+                                    null,
+                                    null);
+                        } catch (RuntimeException error) {
+                            Log.e(TAG, "Room QSO persistence failed", error);
+                        } finally {
+                            // 旧 WebUI/统计仍读取 SQLite；在完成迁移前保留兼容镜像。
+                            databaseOpr.doInsertQSLData(qslRecord, null);
+                        }
+                    });
+                } catch (RejectedExecutionException rejected) {
+                    Log.e(TAG, "QSO persistence queue is full", rejected);
+                    databaseOpr.addQSL_Callsign(qslRecord);
+                }
 
                 try {
                     thirdPartyUploadThreadPool.execute(() -> {
@@ -1446,6 +1472,16 @@ public class MainViewModel extends ViewModel {
         getQTHThreadPool.shutdownNow();
         sendWaveDataThreadPool.shutdownNow();
         thirdPartyUploadThreadPool.shutdownNow();
+        qsoPersistenceThreadPool.shutdown();
+        try {
+            if (!qsoPersistenceThreadPool.awaitTermination(2, TimeUnit.SECONDS)) {
+                Log.w(TAG, "QSO persistence did not drain before shutdown");
+                qsoPersistenceThreadPool.shutdownNow();
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            qsoPersistenceThreadPool.shutdownNow();
+        }
         if (pskReporterSender != null) {
             pskReporterSender.stop();
         }

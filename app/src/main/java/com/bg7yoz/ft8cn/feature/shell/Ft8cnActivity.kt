@@ -31,7 +31,9 @@ import com.bg7yoz.ft8cn.ui.ToastMessage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private data class RuntimeModeSettings(
     val emeModeEnabled: Boolean,
@@ -295,8 +297,11 @@ class Ft8cnActivity : AppCompatActivity() {
             return
         }
         mainViewModel.mutableImportShareRunning.postValue(true)
-        runCatching {
-            ImportSharedLogs(mainViewModel).doImport(input, object : OnShareLogEvents {
+        lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    input.use {
+                        ImportSharedLogs(mainViewModel).doImport(it, object : OnShareLogEvents {
                 override fun onPreparing(info: String) {
                     mainViewModel.mutableShareInfo.postValue(info)
                 }
@@ -315,22 +320,22 @@ class Ft8cnActivity : AppCompatActivity() {
                 }
 
                 override fun afterGet(count: Int, info: String) {
-                    input.close()
                     mainViewModel.mutableShareInfo.postValue(info)
                     mainViewModel.mutableImportShareRunning.postValue(false)
                 }
 
                 override fun onShareFailed(info: String) {
-                    input.close()
                     mainViewModel.mutableShareInfo.postValue(info)
                     mainViewModel.mutableImportShareRunning.postValue(false)
                     ToastMessage.show(info)
                 }
-            })
-        }.onFailure {
-            input.close()
-            mainViewModel.mutableImportShareRunning.postValue(false)
-            ToastMessage.show("导入失败：${it.message}")
+                        })
+                    }
+                }
+            }.onFailure {
+                mainViewModel.mutableImportShareRunning.postValue(false)
+                ToastMessage.show("导入失败：${it.message}")
+            }
         }
     }
 

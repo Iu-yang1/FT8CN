@@ -50,6 +50,7 @@ data class QsoRecord(
 interface QsoLogRepository {
     fun observeRecent(limit: Int): Flow<List<QsoRecord>>
     suspend fun listAll(): List<QsoRecord>
+    suspend fun listExportPage(offset: Int, limit: Int): List<QsoRecord>
     suspend fun upsert(record: QsoRecord): Long
     suspend fun findByStableId(stableId: String): QsoRecord?
     suspend fun delete(id: Long): Int
@@ -71,6 +72,14 @@ class FakeQsoLogRepository : QsoLogRepository {
     }
 
     override suspend fun listAll(): List<QsoRecord> = records.sortedByDescending { it.startedUtcMillis }
+
+    override suspend fun listExportPage(offset: Int, limit: Int): List<QsoRecord> {
+        require(offset >= 0) { "分页偏移不能为负数" }
+        require(limit in 1..1_000) { "分页数量必须在 1..1000 范围内" }
+        return records.sortedWith(compareBy<QsoRecord> { it.startedUtcMillis }.thenBy { it.stableId })
+            .drop(offset)
+            .take(limit)
+    }
 
     override suspend fun upsert(record: QsoRecord): Long {
         val index = records.indexOfFirst { it.stableId == record.stableId }

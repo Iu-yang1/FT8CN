@@ -8,6 +8,7 @@ import com.bg7yoz.ft8cn.data.local.LotwUploadJobEntity
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.StringWriter
 import java.util.zip.GZIPOutputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -79,6 +80,37 @@ class LotwWorkflowTest {
             expectedJobState = LotwJobState.SIGNED,
             expectedQsoState = LotwStatus.SIGNED,
         )
+    }
+
+    @Test
+    fun externalSigningExportPagesAcrossEntireRepository() = runBlocking {
+        val workflow = LotwWorkflow(context, repository, database.lotwUploadDao(), RecordingScheduler()) { 30_000L }
+        repeat(305) { index ->
+            repository.upsert(
+                QsoRecord(
+                    stableId = "stable-${index.toString().padStart(4, '0')}",
+                    startedUtcMillis = 1_775_000_000_000L + index * 15_000L,
+                    endedUtcMillis = 1_775_000_015_000L + index * 15_000L,
+                    mode = com.bg7yoz.ft8cn.core.model.FtxMode.FT8,
+                    stationCall = "BG7YOZ",
+                    stationGrid = "OL79",
+                    dxCall = "K1A$index",
+                    dxGrid = "FN20",
+                    frequencyHz = 14_074_000,
+                    reportSent = "-10",
+                    reportReceived = "-12",
+                ),
+            )
+        }
+
+        val output = StringWriter()
+        assertTrue(workflow.hasExternalSigningCandidates(pageSize = 37))
+        assertEquals(305, workflow.writeAllForExternalSigning(output, pageSize = 37))
+        val parsed = AdifCodec.import(output.toString())
+        assertEquals(305, parsed.records.size)
+        assertEquals(0, parsed.rejectedRecords)
+        assertEquals("K1A304", parsed.records.maxByOrNull { it.startedUtcMillis }?.dxCall)
+        assertTrue(repository.listAll().all { it.lotwStatus == LotwStatus.PENDING_SIGN })
     }
 
     private suspend fun assertCoordinatorOutcome(

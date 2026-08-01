@@ -14,6 +14,12 @@ class RoomQsoLogRepository(private val qsoDao: QsoDao) : QsoLogRepository {
 
     override suspend fun listAll(): List<QsoRecord> = qsoDao.listAll().map { it.toRecord() }
 
+    override suspend fun listExportPage(offset: Int, limit: Int): List<QsoRecord> {
+        require(offset >= 0) { "分页偏移不能为负数" }
+        require(limit in 1..1_000) { "分页数量必须在 1..1000" }
+        return qsoDao.listExportPage(offset, limit).map { it.toRecord() }
+    }
+
     override suspend fun upsert(record: QsoRecord): Long {
         val current = qsoDao.findByStableId(record.stableId)
         val merged = record.copy(
