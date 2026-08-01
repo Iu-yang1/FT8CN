@@ -23,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class CoreBoundariesTest {
@@ -51,6 +52,16 @@ class CoreBoundariesTest {
             assertEquals(3_600_000, FT8Common.getSamplesPerSlot(FT8Common.Q65_MODE))
         } finally {
             GeneralVariables.setQ65Configuration(originalSubmode, originalPeriod)
+        }
+    }
+
+    @Test
+    fun invalidQ65ConfigurationIsRejectedInsteadOfSilentlyUsingSixtySeconds() {
+        assertThrows(IllegalArgumentException::class.java) {
+            GeneralVariables.setQ65Configuration(FT8Common.Q65_SUBMODE_A, 45)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GeneralVariables.setQ65Configuration(FT8Common.Q65_SUBMODE_F, 60)
         }
     }
 

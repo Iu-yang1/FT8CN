@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.lifecycle.MutableLiveData;
@@ -1124,23 +1125,17 @@ public class FT8TransmitSignal {
         return boundedCount;
     }
 
-    private void waitForQ65PlaybackDrain(long generatedSamples, int sampleRate) {
+    private Q65PlaybackDrain.Result waitForQ65PlaybackDrain(long generatedSamples, int sampleRate) {
         if (audioTrack == null || generatedSamples <= 0L || sampleRate <= 0) {
-            return;
+            return Q65PlaybackDrain.Result.INVALID_INPUT;
         }
-        long deadline = System.currentTimeMillis() + 1500L;
-        while (!q65StreamCancelled && System.currentTimeMillis() < deadline) {
-            long played = Integer.toUnsignedLong(audioTrack.getPlaybackHeadPosition());
-            if (played >= generatedSamples) {
-                return;
-            }
-            try {
-                Thread.sleep(10L);
-            } catch (InterruptedException error) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
+        return Q65PlaybackDrain.await(
+                generatedSamples,
+                sampleRate,
+                () -> Integer.toUnsignedLong(audioTrack.getPlaybackHeadPosition()),
+                () -> q65StreamCancelled,
+                SystemClock::elapsedRealtime,
+                Thread::sleep);
     }
 
     /**
@@ -1229,8 +1224,12 @@ public class FT8TransmitSignal {
             } else if (generated != stream.getTotalSamples()) {
                 failureReason = "short-generation:" + generated + "/" + stream.getTotalSamples();
             } else {
-                waitForQ65PlaybackDrain(generated, sampleRate);
-                q65CurrentTransmitSucceeded = true;
+                Q65PlaybackDrain.Result drainResult = waitForQ65PlaybackDrain(generated, sampleRate);
+                if (drainResult == Q65PlaybackDrain.Result.DRAINED) {
+                    q65CurrentTransmitSucceeded = true;
+                } else {
+                    failureReason = drainResult.failureReason;
+                }
             }
             double rms = generated > 0L ? Math.sqrt(energy / generated) : 0.0;
             updateLastTransmitStatus(String.format(java.util.Locale.US,

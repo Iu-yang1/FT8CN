@@ -34,6 +34,7 @@ class EmeRadioTracker(
     private val coordinator: RadioTransactionCoordinator,
     private val limiter: FrequencyUpdateLimiter = FrequencyUpdateLimiter(minimumStepHz = 1L),
     private val readbackToleranceHz: Long = 10L,
+    private val automaticCatQualified: Boolean = MoonEphemeris.isAutomaticCatQualified(),
 ) {
     private val mutex = Mutex()
     private var initialState: RadioState? = null
@@ -42,6 +43,7 @@ class EmeRadioTracker(
 
     suspend fun start(policy: EmeRadioTrackingPolicy = EmeRadioTrackingPolicy()): Result<Unit> = mutex.withLock {
         runCatching {
+            check(automaticCatQualified) { "月面星历尚未通过 WSJT-X/JPL oracle，自动 CAT 已禁用" }
             check(initialState == null) { "EME 跟踪已经启动" }
             val state = coordinator.snapshotIdleState().getOrThrow()
             check(state.connected) { "电台未连接" }

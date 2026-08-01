@@ -56,6 +56,47 @@ public final class FtxStreamingResampler implements AutoCloseable {
         return written;
     }
 
+    public synchronized int process(float[] input,
+                                    int inputOffset,
+                                    int inputCount,
+                                    NativeFloatBuffer output,
+                                    int outputOffset,
+                                    int outputCapacity) {
+        ensureOpen();
+        if (finished || output == null) {
+            throw new IllegalStateException("resampler output is unavailable");
+        }
+        int written = FT8Resample.processFloatStreamToNative(
+                nativeHandle,
+                input,
+                inputOffset,
+                inputCount,
+                output.requireNativeHandle(),
+                outputOffset,
+                outputCapacity);
+        if (written < 0) {
+            throw new IllegalStateException("native streaming resampler failed: " + written);
+        }
+        return written;
+    }
+
+    public synchronized int finish(NativeFloatBuffer output, int outputOffset, int outputCapacity) {
+        ensureOpen();
+        if (finished) {
+            return 0;
+        }
+        int written = FT8Resample.finishFloatStreamToNative(
+                nativeHandle,
+                output.requireNativeHandle(),
+                outputOffset,
+                outputCapacity);
+        if (written < 0) {
+            throw new IllegalStateException("native streaming resampler finish failed: " + written);
+        }
+        finished = true;
+        return written;
+    }
+
     @Override
     public synchronized void close() {
         if (nativeHandle != 0L) {

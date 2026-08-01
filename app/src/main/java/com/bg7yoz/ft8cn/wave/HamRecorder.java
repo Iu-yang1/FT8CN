@@ -32,7 +32,7 @@ public class HamRecorder {
     private static final int audioFormat = AudioFormat.ENCODING_PCM_FLOAT;
 
     private volatile boolean isRunning = false;
-    private final CopyOnWriteArrayList<VoiceDataMonitor> voiceDataMonitorList =
+    private final CopyOnWriteArrayList<AudioMonitor> voiceDataMonitorList =
             new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<OnCaptureStateChanged> captureStateListeners =
             new CopyOnWriteArrayList<>();
@@ -53,6 +53,15 @@ public class HamRecorder {
 
     /** 供长期消费者持有并安全取消订阅，不暴露内部采样缓冲区。 */
     public interface VoiceDataSubscription {
+    }
+
+    /** 音频线程只面向这个最小接口分发数据，避免了解具体缓冲区所有权。 */
+    private interface AudioMonitor extends VoiceDataSubscription {
+        void consumeFromSource(float[] data, int size, int sourceSampleRate);
+
+        void cancel();
+
+        boolean isOneShot();
     }
 
     public void addCaptureStateListener(OnCaptureStateChanged listener) {
@@ -104,7 +113,7 @@ public class HamRecorder {
             notifyCaptureStateChanged();
         }
         // 录音热路径直接遍历稳定快照，避免每个音频块复制监听器列表。
-        for (VoiceDataMonitor monitor : voiceDataMonitorList) {
+        for (AudioMonitor monitor : voiceDataMonitorList) {
             if (monitor != null) {
                 monitor.consumeFromSource(buffer, bufferLen, currentInputSampleRate);
             }
@@ -163,10 +172,10 @@ public class HamRecorder {
     }
 
     public void deleteVoiceDataMonitor(VoiceDataSubscription subscription) {
-        if (!(subscription instanceof VoiceDataMonitor)) {
+        if (!(subscription instanceof AudioMonitor)) {
             return;
         }
-        VoiceDataMonitor monitor = (VoiceDataMonitor) subscription;
+        AudioMonitor monitor = (AudioMonitor) subscription;
         monitor.cancel();
         voiceDataMonitorList.remove(monitor);
         doDataMonitorChanged();
@@ -176,8 +185,23 @@ public class HamRecorder {
         return voiceDataMonitorList.size();
     }
 
+    /** 模式切换时只撤销解码用的一次性时隙，不影响频谱等长期订阅。 */
+    public void cancelPendingOneShotVoiceCaptures() {
+        for (AudioMonitor monitor : voiceDataMonitorList) {
+            if (monitor != null && monitor.isOneShot()) {
+                deleteVoiceDataMonitor(monitor);
+            }
+        }
+    }
+
     public ArrayList<VoiceDataMonitor> getVoiceDataMonitors() {
-        return new ArrayList<>(voiceDataMonitorList);
+        ArrayList<VoiceDataMonitor> result = new ArrayList<>();
+        for (AudioMonitor monitor : voiceDataMonitorList) {
+            if (monitor instanceof VoiceDataMonitor) {
+                result.add((VoiceDataMonitor) monitor);
+            }
+        }
+        return result;
     }
 
     public void stopRecord() {
@@ -189,7 +213,7 @@ public class HamRecorder {
     /** 终止录音并撤销所有未完成的时隙订阅，避免页面重建后继续持有 PCM 缓冲区。 */
     public void release() {
         stopRecord();
-        for (VoiceDataMonitor monitor : voiceDataMonitorList) {
+        for (AudioMonitor monitor : voiceDataMonitorList) {
             if (monitor != null) {
                 monitor.cancel();
             }
@@ -250,6 +274,36 @@ public class HamRecorder {
         }
     }
 
+    /**
+     * Q65 生产入口：完整 12 kHz 时隙只存在于 native，Java 仅处理 AudioRecord 小块。
+     * 回调取得缓冲区所有权，必须在解码结束或任务取消时关闭。
+     */
+    public VoiceDataSubscription getNativeVoiceDataAtSampleRate(
+            int duration,
+            int targetSampleRate,
+            boolean afterDoneRemove,
+            OnGetNativeVoiceDataDone getVoiceDataDone) {
+        if (!isRunning || getVoiceDataDone == null || !afterDoneRemove) {
+            return null;
+        }
+        final int inputSampleRate = getCurrentSampleRate();
+        try {
+            NativeVoiceDataMonitor monitor = new NativeVoiceDataMonitor(
+                    duration,
+                    inputSampleRate,
+                    targetSampleRate,
+                    this,
+                    getVoiceDataDone);
+            voiceDataMonitorList.add(monitor);
+            doDataMonitorChanged();
+            return monitor;
+        } catch (RuntimeException error) {
+            Log.e(TAG, "create native streaming voice monitor failed: inputRate="
+                    + inputSampleRate + ", targetRate=" + targetSampleRate, error);
+            return null;
+        }
+    }
+
     public int getCurrentSampleRate() {
         if (isMicRecord) {
             currentInputSampleRate = micRecorder.getCurrentSampleRate();
@@ -274,7 +328,7 @@ public class HamRecorder {
         }
     }
 
-    static class VoiceDataMonitor implements VoiceDataSubscription {
+    static class VoiceDataMonitor implements AudioMonitor {
         private final float[] voiceData;
         private int dataCount;
         private int inputDataCount;
@@ -362,7 +416,8 @@ public class HamRecorder {
             onHamRecord = (data, size) -> consumeFromSource(data, size, this.inputSampleRate);
         }
 
-        private void consumeFromSource(float[] data, int size, int sourceSampleRate) {
+        @Override
+        public void consumeFromSource(float[] data, int size, int sourceSampleRate) {
             if (sourceSampleRate != inputSampleRate) {
                 Log.w(TAG, "capture sample rate changed mid-slot: expected="
                         + inputSampleRate + ", actual=" + sourceSampleRate);
@@ -448,11 +503,152 @@ public class HamRecorder {
             }
         }
 
-        synchronized void cancel() {
+        @Override
+        public synchronized void cancel() {
             if (!closed) {
                 closed = true;
                 closeResampler();
             }
+        }
+
+        @Override
+        public boolean isOneShot() {
+            return afterDoneRemove;
+        }
+    }
+
+    /** Q65 一次性 native 时隙收集器，不创建完整 Java 输出数组。 */
+    private static final class NativeVoiceDataMonitor implements AudioMonitor {
+        private final int expectedInputSamples;
+        private final int expectedOutputSamples;
+        private final int inputSampleRate;
+        private final HamRecorder hamRecorder;
+        private final OnGetNativeVoiceDataDone callback;
+        private FtxStreamingResampler streamingResampler;
+        private NativeFloatBuffer output;
+        private int inputDataCount;
+        private boolean closed;
+
+        NativeVoiceDataMonitor(int duration,
+                               int inputSampleRate,
+                               int targetSampleRate,
+                               HamRecorder hamRecorder,
+                               OnGetNativeVoiceDataDone callback) {
+            this.inputSampleRate = inputSampleRate;
+            this.hamRecorder = hamRecorder;
+            this.callback = callback;
+            expectedInputSamples = VoiceDataMonitor.resolveVoiceBufferLength(
+                    duration, inputSampleRate);
+            expectedOutputSamples = VoiceDataMonitor.resolveVoiceBufferLength(
+                    duration, targetSampleRate);
+            output = new NativeFloatBuffer(expectedOutputSamples);
+            if (inputSampleRate != targetSampleRate) {
+                streamingResampler = new FtxStreamingResampler(inputSampleRate, targetSampleRate);
+            }
+            Log.d(TAG, String.format(
+                    "create native voice monitor: durationMs=%d, inputRate=%d, targetRate=%d, inputSamples=%d, outputSamples=%d, streaming=%s",
+                    duration,
+                    inputSampleRate,
+                    targetSampleRate,
+                    expectedInputSamples,
+                    expectedOutputSamples,
+                    streamingResampler == null ? "N" : "Y"));
+        }
+
+        @Override
+        public void consumeFromSource(float[] data, int size, int sourceSampleRate) {
+            if (sourceSampleRate != inputSampleRate) {
+                Log.w(TAG, "native capture sample rate changed mid-slot: expected="
+                        + inputSampleRate + ", actual=" + sourceSampleRate);
+                hamRecorder.deleteVoiceDataMonitor(this);
+                return;
+            }
+            consume(data, size);
+        }
+
+        private synchronized void consume(float[] data, int size) {
+            if (closed || output == null || data == null || size <= 0) {
+                return;
+            }
+            int accepted = Math.min(Math.min(size, data.length),
+                    expectedInputSamples - inputDataCount);
+            if (accepted <= 0) {
+                return;
+            }
+            try {
+                if (streamingResampler == null) {
+                    output.append(data, 0, accepted);
+                } else {
+                    int outputOffset = output.size();
+                    streamingResampler.process(
+                            data,
+                            0,
+                            accepted,
+                            output,
+                            outputOffset,
+                            output.capacity() - outputOffset);
+                }
+                inputDataCount += accepted;
+                if (inputDataCount == expectedInputSamples) {
+                    finishAndPublish();
+                }
+            } catch (RuntimeException error) {
+                Log.e(TAG, "native streaming voice monitor failed", error);
+                hamRecorder.deleteVoiceDataMonitor(this);
+            }
+        }
+
+        private void finishAndPublish() {
+            if (streamingResampler != null) {
+                int outputOffset = output.size();
+                streamingResampler.finish(
+                        output,
+                        outputOffset,
+                        output.capacity() - outputOffset);
+            }
+            if (output.size() != expectedOutputSamples) {
+                throw new IllegalStateException(
+                        "native stream output length mismatch: " + output.size()
+                                + " != " + expectedOutputSamples);
+            }
+            closeResampler();
+            NativeFloatBuffer completed = output;
+            output = null;
+            closed = true;
+            try {
+                callback.onGetDone(completed);
+            } catch (RuntimeException error) {
+                completed.close();
+                throw error;
+            } finally {
+                hamRecorder.deleteVoiceDataMonitor(this);
+            }
+        }
+
+        private void closeResampler() {
+            if (streamingResampler != null) {
+                streamingResampler.close();
+                streamingResampler = null;
+            }
+        }
+
+        @Override
+        public synchronized void cancel() {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            closeResampler();
+            if (output != null) {
+                output.close();
+                output = null;
+            }
+        }
+
+
+        @Override
+        public boolean isOneShot() {
+            return true;
         }
     }
 

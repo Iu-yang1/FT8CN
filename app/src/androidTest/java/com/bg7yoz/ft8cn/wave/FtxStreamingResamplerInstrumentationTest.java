@@ -3,6 +3,7 @@ package com.bg7yoz.ft8cn.wave;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
+import android.os.Debug;
 import android.util.Log;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
@@ -12,7 +13,6 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(AndroidJUnit4.class)
@@ -70,40 +70,47 @@ public class FtxStreamingResamplerInstrumentationTest {
     }
 
     @Test
-    public void q65ThreeHundredSecondCaptureNeverAllocatesFull48kSource() {
+    public void q65ThreeHundredSecondCaptureKeepsFinalSlotInNativeMemory() {
         final int durationMs = 300_000;
         final int sourceRate = 48_000;
         final int expectedOutput = durationMs / 1000 * TARGET_RATE;
         HamRecorder recorder = new HamRecorder(count -> { });
-        AtomicReference<float[]> completed = new AtomicReference<>();
-        AtomicInteger callbackCount = new AtomicInteger();
-        HamRecorder.VoiceDataMonitor monitor = new HamRecorder.VoiceDataMonitor(
-                durationMs,
-                sourceRate,
-                TARGET_RATE,
-                recorder,
-                true,
-                data -> {
-                    completed.set(data);
-                    callbackCount.incrementAndGet();
-                });
-        monitor.voiceDataMonitor = monitor;
+        recorder.setDataFromLan();
+        recorder.startRecord();
+        recorder.doOnWaveDataReceived(1, new float[]{0f}, sourceRate);
+        AtomicReference<NativeFloatBuffer> completed = new AtomicReference<>();
+        long javaHeapBefore = Runtime.getRuntime().totalMemory()
+                - Runtime.getRuntime().freeMemory();
+        long nativeHeapBefore = Debug.getNativeHeapAllocatedSize();
+        HamRecorder.VoiceDataSubscription subscription =
+                recorder.getNativeVoiceDataAtSampleRate(
+                        durationMs,
+                        TARGET_RATE,
+                        true,
+                        completed::set);
+        assertNotNull(subscription);
 
         float[] sourceChunk = new float[4096];
         int remaining = durationMs / 1000 * sourceRate;
         long startedAt = System.currentTimeMillis();
         while (remaining > 0) {
             int count = Math.min(sourceChunk.length, remaining);
-            monitor.onHamRecord.OnReceiveData(sourceChunk, count);
+            recorder.doOnWaveDataReceived(count, sourceChunk, sourceRate);
             remaining -= count;
         }
 
-        assertEquals(1, callbackCount.get());
         assertNotNull(completed.get());
-        assertEquals(expectedOutput, completed.get().length);
+        assertEquals(expectedOutput, completed.get().size());
+        long javaHeapAfter = Runtime.getRuntime().totalMemory()
+                - Runtime.getRuntime().freeMemory();
+        long nativeHeapAfter = Debug.getNativeHeapAllocatedSize();
         Log.i(TAG, "Q65 RX 300s sourceRate=48000 sourceChunk=4096 outputSamples="
-                + completed.get().length
-                + " sourceArraySamples=4096 elapsedMs="
-                + (System.currentTimeMillis() - startedAt));
+                + completed.get().size()
+                + " sourceArraySamples=4096 finalJavaArraySamples=0"
+                + " javaHeapDelta=" + (javaHeapAfter - javaHeapBefore)
+                + " nativeHeapDelta=" + (nativeHeapAfter - nativeHeapBefore)
+                + " elapsedMs=" + (System.currentTimeMillis() - startedAt));
+        completed.get().close();
+        recorder.release();
     }
 }

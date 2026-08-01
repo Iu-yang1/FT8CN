@@ -8,6 +8,7 @@
 #include <new>
 
 extern "C" {
+#include "common/native_float_buffer.h"
 #include "common/resampler.h"
 }
 
@@ -24,6 +25,10 @@ struct JavaResamplerStream {
 
 JavaResamplerStream *stream_from_handle(jlong handle) {
     return reinterpret_cast<JavaResamplerStream *>(static_cast<uintptr_t>(handle));
+}
+
+ftx_native_float_buffer_t *buffer_from_handle(jlong handle) {
+    return reinterpret_cast<ftx_native_float_buffer_t *>(static_cast<uintptr_t>(handle));
 }
 
 }  // namespace
@@ -218,6 +223,106 @@ Java_com_bg7yoz_ft8cn_wave_FT8Resample_finishFloatStream(JNIEnv *env,
         }
     }
     return (jint) written;
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_bg7yoz_ft8cn_wave_FT8Resample_processFloatStreamToNative(JNIEnv *env,
+                                                                  jclass,
+                                                                  jlong handle,
+                                                                  jfloatArray inputData,
+                                                                  jint inputOffset,
+                                                                  jint inputCount,
+                                                                  jlong outputHandle,
+                                                                  jint outputOffset,
+                                                                  jint outputCapacity) {
+    JavaResamplerStream *wrapper = stream_from_handle(handle);
+    ftx_native_float_buffer_t *output = buffer_from_handle(outputHandle);
+    if (wrapper == nullptr || wrapper->stream == nullptr || inputData == nullptr
+        || output == nullptr || inputOffset < 0 || inputCount <= 0
+        || outputOffset < 0 || outputCapacity < 0) {
+        return FTX_RESAMPLE_INVALID_ARGUMENT;
+    }
+    const jsize inputLength = env->GetArrayLength(inputData);
+    const size_t nativeCapacity = ftx_native_float_buffer_capacity(output);
+    if (static_cast<int64_t>(inputOffset) + inputCount > inputLength
+        || static_cast<size_t>(outputOffset) + static_cast<size_t>(outputCapacity) > nativeCapacity) {
+        return FTX_RESAMPLE_INVALID_ARGUMENT;
+    }
+
+    size_t consumed = 0;
+    size_t totalWritten = 0;
+    float *destination = ftx_native_float_buffer_data(output);
+    while (consumed < static_cast<size_t>(inputCount)) {
+        const size_t chunk = std::min(kStreamScratchSamples,
+                                      static_cast<size_t>(inputCount) - consumed);
+        env->GetFloatArrayRegion(inputData,
+                                 inputOffset + static_cast<jsize>(consumed),
+                                 static_cast<jsize>(chunk),
+                                 wrapper->input_scratch);
+        if (env->ExceptionCheck()) {
+            return FTX_RESAMPLE_INVALID_ARGUMENT;
+        }
+        const size_t remaining = static_cast<size_t>(outputCapacity) - totalWritten;
+        size_t written = 0;
+        const int status = ftx_resampler_stream_process(
+                wrapper->stream,
+                wrapper->input_scratch,
+                chunk,
+                destination + static_cast<size_t>(outputOffset) + totalWritten,
+                remaining,
+                &written);
+        if (status != FTX_RESAMPLE_OK || written > remaining) {
+            return status == FTX_RESAMPLE_OK ? FTX_RESAMPLE_OUTPUT_TOO_SMALL : status;
+        }
+        consumed += chunk;
+        totalWritten += written;
+    }
+    const size_t nextSize = std::max(
+            ftx_native_float_buffer_size(output),
+            static_cast<size_t>(outputOffset) + totalWritten);
+    if (ftx_native_float_buffer_set_size(output, nextSize) != 0
+        || totalWritten > static_cast<size_t>(INT_MAX)) {
+        return FTX_RESAMPLE_INVALID_ARGUMENT;
+    }
+    return static_cast<jint>(totalWritten);
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_bg7yoz_ft8cn_wave_FT8Resample_finishFloatStreamToNative(JNIEnv *,
+                                                                 jclass,
+                                                                 jlong handle,
+                                                                 jlong outputHandle,
+                                                                 jint outputOffset,
+                                                                 jint outputCapacity) {
+    JavaResamplerStream *wrapper = stream_from_handle(handle);
+    ftx_native_float_buffer_t *output = buffer_from_handle(outputHandle);
+    if (wrapper == nullptr || wrapper->stream == nullptr || output == nullptr
+        || outputOffset < 0 || outputCapacity < 0) {
+        return FTX_RESAMPLE_INVALID_ARGUMENT;
+    }
+    const size_t nativeCapacity = ftx_native_float_buffer_capacity(output);
+    if (static_cast<size_t>(outputOffset) + static_cast<size_t>(outputCapacity) > nativeCapacity) {
+        return FTX_RESAMPLE_INVALID_ARGUMENT;
+    }
+    size_t written = 0;
+    const int status = ftx_resampler_stream_finish(
+            wrapper->stream,
+            ftx_native_float_buffer_data(output) + static_cast<size_t>(outputOffset),
+            static_cast<size_t>(outputCapacity),
+            &written);
+    if (status != FTX_RESAMPLE_OK || written > static_cast<size_t>(outputCapacity)) {
+        return status == FTX_RESAMPLE_OK ? FTX_RESAMPLE_OUTPUT_TOO_SMALL : status;
+    }
+    const size_t nextSize = std::max(
+            ftx_native_float_buffer_size(output),
+            static_cast<size_t>(outputOffset) + written);
+    if (ftx_native_float_buffer_set_size(output, nextSize) != 0
+        || written > static_cast<size_t>(INT_MAX)) {
+        return FTX_RESAMPLE_INVALID_ARGUMENT;
+    }
+    return static_cast<jint>(written);
 }
 
 extern "C"

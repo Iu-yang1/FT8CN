@@ -97,6 +97,7 @@ import com.bg7yoz.ft8cn.timer.OnUtcTimer;
 import com.bg7yoz.ft8cn.timer.UtcTimer;
 import com.bg7yoz.ft8cn.ui.ToastMessage;
 import com.bg7yoz.ft8cn.wave.HamRecorder;
+import com.bg7yoz.ft8cn.wave.OnGetNativeVoiceDataDone;
 import com.bg7yoz.ft8cn.wave.OnGetVoiceDataDone;
 import com.bg7yoz.ft8cn.x6100.X6100Radio;
 import com.bg7yoz.ft8cn.pskreporter.PSKReporterManager;
@@ -496,6 +497,24 @@ public class MainViewModel extends ViewModel {
                         targetSampleRate,
                         afterDoneRemove,
                         getVoiceDataDone) != null;
+            }
+
+            @Override
+            public boolean getNativeVoiceDataAtSampleRate(
+                    int duration,
+                    int targetSampleRate,
+                    boolean afterDoneRemove,
+                    OnGetNativeVoiceDataDone getVoiceDataDone) {
+                return hamRecorder.getNativeVoiceDataAtSampleRate(
+                        duration,
+                        targetSampleRate,
+                        afterDoneRemove,
+                        getVoiceDataDone) != null;
+            }
+
+            @Override
+            public void cancelPendingOneShotVoiceCaptures() {
+                hamRecorder.cancelPendingOneShotVoiceCaptures();
             }
 
             @Override

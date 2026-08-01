@@ -13,8 +13,8 @@
 | 0 Git 安全、临时文件、工具链与基线 | 完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、第三方/仓库卫生 PASS；`BLOCKED_SANITIZER` | `91ea3f35` |
 | 1 native 生命周期、PTT 与安全 | 完成 | decoder release、PTT rollback、HTTP/Manifest、Gradle、oracle、device PASS；`BLOCKED_SANITIZER` | `c7172367` |
 | 2 NTP/GNSS 纪律化 UTC | 完成 | 时钟/slot/SNTP/GNSS、Gradle、oracle、Debug/Release device PASS；`BLOCKED_SANITIZER` | `13b16f20` |
-| 3 Hamlib/Split/Fake It 事务 | 完成 | 全局事务、backend 互斥、legacy fallback、EME/卫星 lease、APK/ELF、oracle/device PASS；硬件与 sanitizer 阻塞 | 本阶段提交 |
-| 4 Q65 流式内存与 EME | 待开始 | 待执行 | 待提交 |
+| 3 Hamlib/Split/Fake It 事务 | 完成 | 全局事务、backend 互斥、legacy fallback、EME/卫星 lease、APK/ELF、oracle/device PASS；硬件与 sanitizer 阻塞 | `1f8721b8` |
+| 4 Q65 流式内存与 EME | 完成 | native-owned 12 kHz slot、4096-sample RX/TX、A-E、oracle/device PASS；高精度 EME oracle 与 sanitizer 阻塞 | 本阶段提交 |
 | 5 卫星与 Doppler | 待开始 | 待执行 | 待提交 |
 | 6 QSO/LoTW/导入/HTTP | 待开始 | 待执行 | 待提交 |
 | 7 FT8/FT4 呼叫与自动化 | 待开始 | 待执行 | 待提交 |
@@ -51,6 +51,15 @@
 - Debug/Release APK 均包含动态 LGPL `libhamlib.so`，CMake 支持显式 rigctld-only；非 Windows 构建不再静默改变 native Hamlib 能力。
 - Host O2 p50/p95：FT8 523.449/527.804 ms，FT4 260.707/271.663 ms，Q65A/60 221.370/229.083 ms；固定结果哈希和官方 `jt9` 20/20、16/16 不变。
 - 真机 Debug/Release、12/24/48 kHz 与 Q65 4096-sample 流式门禁通过；实体电台、安全假负载和 sanitizer 分别保持明确阻塞。
+
+### 2026-08-01 阶段 4 加固记录
+
+- Q65 24/48 kHz 实时录音以 4096-sample chunk 直接写入 native-owned 12 kHz slot；生产链路不再创建完整源数组或最终 Java `float[]`。
+- 300 秒、48 kHz 真机门禁确认最终输出 3,600,000 samples，Debug/Release 的 native heap 增量约 14.6/14.7 MB；旧模型约 57.6 MB 源数组加 14.4 MB Java 输出的双持有已消除。
+- Q65 A-E TX 保持 `AudioTrack.MODE_STREAM` 和 4096-sample 有界块；drain 超时、取消或初始化失败不再伪报成功。周期只接受 15/30/60/120/300 秒，Q65F 保持诊断限定。
+- EME 自动 CAT 只在高精度天文实现通过 oracle 后才允许；当前显示级 `MoonEphemeris` 明确保持 `BLOCKED_EME_EPHEMERIS_ORACLE`。
+- Host O2 p50/p95：FT8 527.540/536.749 ms，FT4 262.565/270.460 ms，Q65A/60 231.910/241.937 ms；固定哈希和官方 `jt9` FT8 20/20、FT4 16/16 不变。
+- 完整门禁为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`；详见 `docs/verification/q65-eme-hardening-2026-08-01.md`。
 
 - 仓库：`H:/iu_yang1/study/FT8CN/ft8cn`
 - 产品分支：`wsjtx-ft8ft4-core-port`

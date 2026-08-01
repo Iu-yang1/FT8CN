@@ -16,7 +16,7 @@ class EmeRadioTrackerTest {
             it.setFrequency(144_120_000L, 144_120_000L).getOrThrow()
         }
         val coordinator = RadioTransactionCoordinator(radio)
-        val tracker = EmeRadioTracker(coordinator)
+        val tracker = EmeRadioTracker(coordinator, automaticCatQualified = true)
 
         assertTrue(tracker.start(EmeRadioTrackingPolicy(restoreFrequencyOnStop = true)).isSuccess)
         assertTrue(tracker.apply(EmeFrequencyTarget(1_000L, 144_119_850L, 144_120_150L), 1_000L).getOrThrow())
@@ -38,7 +38,7 @@ class EmeRadioTrackerTest {
             it.setFrequency(432_065_000L, 432_065_000L).getOrThrow()
         }
         val coordinator = RadioTransactionCoordinator(radio)
-        val tracker = EmeRadioTracker(coordinator)
+        val tracker = EmeRadioTracker(coordinator, automaticCatQualified = true)
         tracker.start().getOrThrow()
         radio.failNext("frequency")
 
@@ -55,7 +55,7 @@ class EmeRadioTrackerTest {
             it.setFrequency(144_120_000L, 144_120_000L).getOrThrow()
         }
         val coordinator = RadioTransactionCoordinator(radio)
-        val tracker = EmeRadioTracker(coordinator)
+        val tracker = EmeRadioTracker(coordinator, automaticCatQualified = true)
         val policy = EmeRadioTrackingPolicy(
             maximumCorrectionHz = 500.0,
             minimumElevationDegrees = 10.0,
@@ -92,12 +92,26 @@ class EmeRadioTrackerTest {
             it.setFrequency(144_120_000L, 144_120_000L).getOrThrow()
         }
         val coordinator = RadioTransactionCoordinator(radio)
-        val tracker = EmeRadioTracker(coordinator)
+        val tracker = EmeRadioTracker(coordinator, automaticCatQualified = true)
         tracker.start(EmeRadioTrackingPolicy(updateIntervalMillis = 10_000L)).getOrThrow()
 
         assertTrue(tracker.apply(EmeFrequencyTarget(1_000L, 144_119_900L, 144_120_100L), 1_000L).getOrThrow())
         assertFalse(tracker.apply(EmeFrequencyTarget(5_000L, 144_119_800L, 144_120_200L), 5_000L).getOrThrow())
         assertTrue(tracker.apply(EmeFrequencyTarget(11_000L, 144_119_800L, 144_120_200L), 11_000L).getOrThrow())
+        coordinator.close()
+    }
+
+    @Test
+    fun productionTrackerRejectsUnqualifiedDisplayEphemeris() = runBlocking {
+        val radio = FakeRadioController().also {
+            it.connect(1).getOrThrow()
+            it.setFrequency(144_120_000L, 144_120_000L).getOrThrow()
+        }
+        val coordinator = RadioTransactionCoordinator(radio)
+
+        assertTrue(EmeRadioTracker(coordinator).start().isFailure)
+        assertEquals(144_120_000L, radio.state.value.rxFrequencyHz)
+        assertFalse(radio.state.value.transmitting)
         coordinator.close()
     }
 }

@@ -480,11 +480,13 @@ public class GeneralVariables {
     }
 
     public static boolean setQ65Configuration(int submode, int trPeriodSeconds) {
-        int normalizedSubmode = FT8Common.normalizeQ65Submode(submode);
-        int normalizedTrPeriod = FT8Common.normalizeQ65TrPeriodSeconds(trPeriodSeconds);
-        boolean changed = normalizedSubmode != q65Submode || normalizedTrPeriod != q65TrPeriodSeconds;
-        q65Submode = normalizedSubmode;
-        q65TrPeriodSeconds = normalizedTrPeriod;
+        if (submode < FT8Common.Q65_SUBMODE_A || submode > FT8Common.Q65_SUBMODE_E) {
+            throw new IllegalArgumentException("正式 Q65 子模式仅支持 A-E");
+        }
+        int requiredTrPeriod = FT8Common.requireQ65TrPeriodSeconds(trPeriodSeconds);
+        boolean changed = submode != q65Submode || requiredTrPeriod != q65TrPeriodSeconds;
+        q65Submode = submode;
+        q65TrPeriodSeconds = requiredTrPeriod;
         if (changed && signalMode == FT8Common.Q65_MODE) {
             mutableSignalMode.postValue(signalMode);
             mutableSignalModeChanged.postValue(signalMode);

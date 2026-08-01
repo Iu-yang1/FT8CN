@@ -41,16 +41,16 @@ static int normalizeQ65Submode(int q65Submode) {
     return q65Submode;
 }
 
-static int normalizeQ65TrPeriodSeconds(int q65TrPeriodSeconds) {
+static bool isSupportedQ65TrPeriodSeconds(int q65TrPeriodSeconds) {
     switch (q65TrPeriodSeconds) {
         case 15:
         case 30:
         case 60:
         case 120:
         case 300:
-            return q65TrPeriodSeconds;
+            return true;
         default:
-            return 60;
+            return false;
     }
 }
 
@@ -122,10 +122,11 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
                                    jint sampleRate,
                                    jint q65Submode,
                                    jint q65TrPeriodSeconds) {
-    if (messageText == nullptr || messageText[0] == '\0' || sampleRate <= 0) {
+    if (messageText == nullptr || messageText[0] == '\0' || sampleRate <= 0
+        || !isSupportedQ65TrPeriodSeconds(q65TrPeriodSeconds)) {
         LOGE("Q65 TX waveform generation failed: reason=invalid-input mode=Q65 submode=%c trPeriod=%d sampleRate=%d freq=%.1f text=%s",
              'A' + normalizeQ65Submode(q65Submode),
-             normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds),
+             q65TrPeriodSeconds,
              sampleRate,
              frequency,
              messageText == nullptr ? "<null>" : messageText);
@@ -133,7 +134,6 @@ static jfloatArray generateQ65Wave(JNIEnv *env,
     }
 
     q65Submode = normalizeQ65Submode(q65Submode);
-    q65TrPeriodSeconds = normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds);
 
     size_t capacitySize = 0;
     if (!ftx_q65_required_samples(q65TrPeriodSeconds, sampleRate, &capacitySize)
@@ -210,10 +210,8 @@ JNIEXPORT jlong JNICALL
 Java_com_bg7yoz_ft8cn_ft8transmit_Q65WaveStream_requiredSamplesNative(
         JNIEnv *, jclass, jint q65TrPeriodSeconds, jint sampleRate) {
     size_t required = 0;
-    if (!ftx_q65_required_samples(
-            normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds),
-            sampleRate,
-            &required)
+    if (!isSupportedQ65TrPeriodSeconds(q65TrPeriodSeconds)
+        || !ftx_q65_required_samples(q65TrPeriodSeconds, sampleRate, &required)
         || required > static_cast<size_t>(INT64_MAX)) {
         return 0;
     }
@@ -230,11 +228,11 @@ Java_com_bg7yoz_ft8cn_ft8transmit_Q65WaveStream_createNative(
         jint sampleRate,
         jint q65Submode,
         jint q65TrPeriodSeconds) {
-    if (message == nullptr || sampleRate <= 0 || !std::isfinite(frequency)) {
+    if (message == nullptr || sampleRate <= 0 || !std::isfinite(frequency)
+        || !isSupportedQ65TrPeriodSeconds(q65TrPeriodSeconds)) {
         return 0;
     }
     q65Submode = normalizeQ65Submode(q65Submode);
-    q65TrPeriodSeconds = normalizeQ65TrPeriodSeconds(q65TrPeriodSeconds);
     size_t required = 0;
     if (!ftx_q65_required_samples(q65TrPeriodSeconds, sampleRate, &required)
         || required == 0 || required % Q65_TONE_COUNT != 0) {

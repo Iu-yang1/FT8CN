@@ -58,6 +58,19 @@ public final class FT8Resample {
                                         int outputOffset,
                                         int outputCapacity);
 
+    static native int processFloatStreamToNative(long handle,
+                                                  float[] inputData,
+                                                  int inputOffset,
+                                                  int inputCount,
+                                                  long outputHandle,
+                                                  int outputOffset,
+                                                  int outputCapacity);
+
+    static native int finishFloatStreamToNative(long handle,
+                                                 long outputHandle,
+                                                 int outputOffset,
+                                                 int outputCapacity);
+
     static native void destroyFloatStream(long handle);
 
     /**

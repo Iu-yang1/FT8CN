@@ -38,6 +38,7 @@ import com.bg7yoz.ft8cn.FT8Common
 import com.bg7yoz.ft8cn.GeneralVariables
 import com.bg7yoz.ft8cn.MainViewModel
 import com.bg7yoz.ft8cn.core.FeatureAppGraph
+import com.bg7yoz.ft8cn.core.time.DisciplinedClockRegistry
 import com.bg7yoz.ft8cn.data.settings.FeatureSettings
 import com.bg7yoz.ft8cn.eme.EmeDopplerCalculator
 import com.bg7yoz.ft8cn.eme.EmeRadioTracker
@@ -107,9 +108,7 @@ fun EmeScreen(mainViewModel: MainViewModel) {
     var maximumCorrectionText by rememberSaveable { mutableStateOf(GeneralVariables.emeMaxCorrectionHz.toString()) }
     var updateIntervalText by rememberSaveable { mutableStateOf(GeneralVariables.emeUpdateIntervalSeconds.toString()) }
     var minimumElevationText by rememberSaveable { mutableStateOf(GeneralVariables.emeMinElevationDeg.toString()) }
-    var allowWhileTransmitting by rememberSaveable {
-        mutableStateOf(GeneralVariables.emeAllowCorrectionWhileTransmitting)
-    }
+    val automaticCatQualified = remember { MoonEphemeris.isAutomaticCatQualified() }
     var restoreFrequencyOnStop by rememberSaveable {
         mutableStateOf(GeneralVariables.emeRestoreFrequencyOnDisable)
     }
@@ -128,6 +127,11 @@ fun EmeScreen(mainViewModel: MainViewModel) {
                 cleanupScope.cancel()
             }
         }
+    }
+
+    LaunchedEffect(Unit) {
+        GeneralVariables.emeAllowCorrectionWhileTransmitting = false
+        persistConfig("emeAllowCorrectionWhileTransmitting", "0")
     }
 
     fun applyQ65Configuration(submode: Int, period: Int) {
@@ -212,21 +216,20 @@ fun EmeScreen(mainViewModel: MainViewModel) {
         maximumCorrectionHz,
         updateIntervalSeconds,
         minimumElevationDegrees,
-        allowWhileTransmitting,
         restoreFrequencyOnStop,
     ) {
         EmeRadioTrackingPolicy(
             maximumCorrectionHz = maximumCorrectionHz,
             minimumElevationDegrees = minimumElevationDegrees,
             updateIntervalMillis = updateIntervalSeconds * 1_000L,
-            allowWhileTransmitting = allowWhileTransmitting,
+            allowWhileTransmitting = false,
             restoreFrequencyOnStop = restoreFrequencyOnStop,
         )
     }
 
     LaunchedEffect(updateIntervalSeconds) {
         while (true) {
-            nowMillis = System.currentTimeMillis()
+            nowMillis = DisciplinedClockRegistry.nowMillis()
             delay(updateIntervalSeconds * 1_000L)
         }
     }
@@ -268,6 +271,11 @@ fun EmeScreen(mainViewModel: MainViewModel) {
                 activeTrackingPolicy = null
             }
             trackingStatus = "自动调频未启用"
+            return@LaunchedEffect
+        }
+        if (!automaticCatQualified) {
+            automaticTracking = false
+            trackingStatus = "自动 CAT 已锁定：月面星历尚未通过 WSJT-X/JPL oracle"
             return@LaunchedEffect
         }
         val currentTarget = target
@@ -464,7 +472,7 @@ fun EmeScreen(mainViewModel: MainViewModel) {
                         },
                     ) { Text("Clear Avg") }
                 }
-                Text("包含Q65A-E/15s-120s模式", style = MaterialTheme.typography.bodySmall)
+                Text("包含 Q65A-E / 15–300 s 模式", style = MaterialTheme.typography.bodySmall)
             }
         }
         item {
@@ -570,11 +578,7 @@ fun EmeScreen(mainViewModel: MainViewModel) {
                     singleLine = true,
                     label = { Text("Min elevation °") },
                 )
-                EmeSwitchRow("PTT 时继续调频", allowWhileTransmitting) {
-                    allowWhileTransmitting = it
-                    GeneralVariables.emeAllowCorrectionWhileTransmitting = it
-                    persistConfig("emeAllowCorrectionWhileTransmitting", if (it) "1" else "0")
-                }
+                EmeSwitchRow("PTT 时继续调频", checked = false, enabled = false) { }
                 EmeSwitchRow("停止时恢复 dial", restoreFrequencyOnStop) {
                     restoreFrequencyOnStop = it
                     GeneralVariables.emeRestoreFrequencyOnDisable = it
@@ -587,7 +591,7 @@ fun EmeScreen(mainViewModel: MainViewModel) {
                     }
                     Switch(
                         checked = automaticTracking,
-                        enabled = emeModeEnabled && radioState.connected && target != null &&
+                        enabled = automaticCatQualified && emeModeEnabled && radioState.connected && target != null &&
                             correctionWithinLimit &&
                             (localMoon?.elevationDeg ?: -90.0) >= minimumElevationDegrees,
                         onCheckedChange = { enabled ->
@@ -601,7 +605,8 @@ fun EmeScreen(mainViewModel: MainViewModel) {
                     )
                 }
                 Text(
-                    if (radioState.connected) "显式开启后才调整 RX/TX；读回失败会回滚，停止恢复由上方选项控制，永不自动 PTT。"
+                    if (!automaticCatQualified) "${MoonEphemeris.getSourceLabel()}仅用于显示；高精度星历 oracle 完成前禁止自动 CAT。"
+                    else if (radioState.connected) "显式开启后才调整 RX/TX；读回失败会回滚，停止恢复由上方选项控制，永不自动 PTT。"
                     else "请先从底部“电台”图标连接 Hamlib。",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (radioState.connected) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
@@ -681,10 +686,15 @@ private fun SelectionButton(selected: Boolean, label: String, onClick: () -> Uni
 }
 
 @Composable
-private fun EmeSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun EmeSwitchRow(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, enabled = enabled, onCheckedChange = onCheckedChange)
     }
 }
 

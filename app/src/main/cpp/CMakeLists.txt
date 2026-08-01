@@ -64,6 +64,7 @@ add_library(
         diagnostics/ap_regression.cpp
         diagnostics/sample_decode.cpp
         ft8Resample.cpp
+        nativeFloatBuffer.cpp
         ft8Listener.cpp
         ft8Spectrum.cpp
         experimentalCodec.cpp

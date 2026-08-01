@@ -1,6 +1,7 @@
 package com.bg7yoz.ft8cn.eme;
 
 public final class MoonEphemeris {
+    private static final String SOURCE_LABEL = "FT8CN 低精度月面显示模型";
     private static final double J2000 = 2451545.0;
     private static final double UNIX_EPOCH_JD = 2440587.5;
     private static final double EARTH_RADIUS_KM = 6378.137;
@@ -29,6 +30,17 @@ public final class MoonEphemeris {
 
     public static MoonEphemeris unavailable(long validTimeMillis) {
         return new MoonEphemeris(Double.NaN, Double.NaN, Double.NaN, Double.NaN, validTimeMillis, false);
+    }
+
+    public static String getSourceLabel() {
+        return SOURCE_LABEL;
+    }
+
+    /**
+     * 当前模型只用于方位显示；完成 WSJT-X/JPL golden oracle 前禁止驱动自动 CAT。
+     */
+    public static boolean isAutomaticCatQualified() {
+        return false;
     }
 
     public static MoonEphemeris calculate(ObserverLocation observerLocation, long validTimeMillis) {

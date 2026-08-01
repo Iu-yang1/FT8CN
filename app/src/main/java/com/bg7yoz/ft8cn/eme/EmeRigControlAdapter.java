@@ -22,7 +22,7 @@ public final class EmeRigControlAdapter {
     }
 
     public boolean canSetMainFrequency() {
-        return isAvailable();
+        return false;
     }
 
     public boolean supportsSplitFrequency() {
@@ -67,85 +67,13 @@ public final class EmeRigControlAdapter {
                                                   boolean allowWhileTransmitting) {
         long beforeFrequencyHz = getCachedMainFrequencyHz();
         boolean transmitting = isTransmitting();
-        if (rig == null) {
-            return EmeRigControlResult.failure(
-                    "set-main-frequency",
-                    getRigName(),
-                    beforeFrequencyHz,
-                    targetFrequencyHz,
-                    correctionHz,
-                    transmitting,
-                    "rig-unavailable");
-        }
-        if (!rig.isConnected()) {
-            return EmeRigControlResult.failure(
-                    "set-main-frequency",
-                    getRigName(),
-                    beforeFrequencyHz,
-                    targetFrequencyHz,
-                    correctionHz,
-                    transmitting,
-                    "rig-disconnected");
-        }
-        if (transmitting && !allowWhileTransmitting) {
-            return EmeRigControlResult.failure(
-                    "set-main-frequency",
-                    getRigName(),
-                    beforeFrequencyHz,
-                    targetFrequencyHz,
-                    correctionHz,
-                    true,
-                    "blocked-while-transmitting");
-        }
-        if (targetFrequencyHz <= 0L) {
-            return EmeRigControlResult.failure(
-                    "set-main-frequency",
-                    getRigName(),
-                    beforeFrequencyHz,
-                    targetFrequencyHz,
-                    correctionHz,
-                    transmitting,
-                    "invalid-target-frequency");
-        }
-
-        try {
-            rig.setFreq(targetFrequencyHz);
-            rig.setFreqToRig();
-            EmeRigControlResult result = EmeRigControlResult.success(
-                    "set-main-frequency",
-                    getRigName(),
-                    beforeFrequencyHz,
-                    targetFrequencyHz,
-                    correctionHz,
-                    transmitting);
-            Log.i(TAG, "EME CAT command sent: " + result.toSummary());
-            return result;
-        } catch (Exception e) {
-            boolean restored = false;
-            try {
-                if (beforeFrequencyHz > 0L) {
-                    rig.setFreq(beforeFrequencyHz);
-                    restored = true;
-                }
-            } catch (Exception restoreException) {
-                Log.w(TAG, "EME CAT local cache restore failed: rig="
-                        + getRigName()
-                        + " before="
-                        + beforeFrequencyHz
-                        + " reason="
-                        + restoreException.getMessage());
-            }
-            EmeRigControlResult result = EmeRigControlResult.failure(
-                    "set-main-frequency",
-                    getRigName(),
-                    beforeFrequencyHz,
-                    targetFrequencyHz,
-                    correctionHz,
-                    transmitting,
-                    "command-exception:" + e.getMessage()
-                            + (restored ? ":local-cache-restored" : ":local-cache-may-be-stale"));
-            Log.e(TAG, "EME CAT command failed: " + result.toSummary());
-            return result;
-        }
+        return EmeRigControlResult.failure(
+                "set-main-frequency",
+                getRigName(),
+                beforeFrequencyHz,
+                targetFrequencyHz,
+                correctionHz,
+                transmitting,
+                "legacy-eme-cat-disabled-use-radio-transaction");
     }
 }

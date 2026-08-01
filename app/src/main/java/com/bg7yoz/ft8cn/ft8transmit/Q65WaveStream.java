@@ -25,6 +25,7 @@ public final class Q65WaveStream implements AutoCloseable {
         if (submode < FT8Common.Q65_SUBMODE_A || submode > FT8Common.Q65_SUBMODE_E) {
             throw new IllegalArgumentException("Q65F is diagnostic-only");
         }
+        FT8Common.requireQ65TrPeriodSeconds(trPeriodSeconds);
         totalSamples = requiredSamplesNative(trPeriodSeconds, sampleRate);
         if (totalSamples <= 0L || totalSamples > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("unsupported Q65 period/sample rate");
@@ -41,6 +42,7 @@ public final class Q65WaveStream implements AutoCloseable {
     }
 
     public static long requiredSamples(int trPeriodSeconds, int sampleRate) {
+        FT8Common.requireQ65TrPeriodSeconds(trPeriodSeconds);
         return requiredSamplesNative(trPeriodSeconds, sampleRate);
     }
 

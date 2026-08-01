@@ -75,6 +75,22 @@ public final class FT8Common {
         return Q65_DEFAULT_TR_PERIOD_SECONDS;
     }
 
+    public static boolean isSupportedQ65TrPeriodSeconds(int trPeriodSeconds) {
+        for (int supported : Q65_SUPPORTED_TR_PERIODS) {
+            if (supported == trPeriodSeconds) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static int requireQ65TrPeriodSeconds(int trPeriodSeconds) {
+        if (!isSupportedQ65TrPeriodSeconds(trPeriodSeconds)) {
+            throw new IllegalArgumentException("Q65 周期仅支持 15/30/60/120/300 秒");
+        }
+        return trPeriodSeconds;
+    }
+
     public static String getQ65SubmodeLabel(int submode) {
         return Q65_SUBMODE_LABELS[normalizeQ65Submode(submode)];
     }

@@ -651,7 +651,7 @@ if ($SkipDeviceGate) {
 
 if ($q65StreamingPassed) {
     Add-Gate 'Q65 long-period streaming' 'PASS' `
-        'production RX uses 4096-sample chunks into the final 12 kHz frame; TX uses bounded MODE_STREAM chunks'
+        'production RX uses 4096-sample chunks and a native-owned final 12 kHz frame with no final Java array; TX uses bounded MODE_STREAM chunks'
 } else {
     Add-Gate 'Q65 long-period streaming' 'BLOCKED_Q65_STREAMING' `
         'production code and internal tests exist, but Debug/Release device evidence is unavailable'

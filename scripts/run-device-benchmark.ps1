@@ -235,6 +235,17 @@ function Invoke-Q65StreamingGate([string]$Variant) {
     if ($memoryLines.Count -lt 2) {
         throw "Q65 streaming gate $Variant returned no bounded-memory evidence."
     }
+    $rxEvidence = @($memoryLines | Where-Object { $_ -match 'Q65 RX 300s' })
+    $txEvidence = @($memoryLines | Where-Object { $_ -match 'Q65 TX 300s' })
+    if ($rxEvidence.Count -ne 1
+            -or $rxEvidence[0] -notmatch 'sourceChunk=4096'
+            -or $rxEvidence[0] -notmatch 'outputSamples=3600000'
+            -or $rxEvidence[0] -notmatch 'finalJavaArraySamples=0') {
+        throw "Q65 RX evidence does not prove native-owned bounded streaming: $($rxEvidence -join '; ')"
+    }
+    if ($txEvidence.Count -ne 1 -or $txEvidence[0] -notmatch 'chunkSamples=4096') {
+        throw "Q65 TX evidence does not prove bounded streaming: $($txEvidence -join '; ')"
+    }
     return [pscustomobject]@{
         passed = $true
         variant = $Variant
@@ -337,7 +348,7 @@ try {
         schema_version = 1
         passed = $true
         generated_at_utc = [DateTime]::UtcNow.ToString('o')
-        device_serial = (($devices[0] -split "\s+")[0])
+        device_serial = '[redacted]'
         variant_filter = $VariantFilter
         debug = $debugReport
         release = $releaseReport
