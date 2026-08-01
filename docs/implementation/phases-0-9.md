@@ -14,8 +14,8 @@
 | 1 native 生命周期、PTT 与安全 | 完成 | decoder release、PTT rollback、HTTP/Manifest、Gradle、oracle、device PASS；`BLOCKED_SANITIZER` | `c7172367` |
 | 2 NTP/GNSS 纪律化 UTC | 完成 | 时钟/slot/SNTP/GNSS、Gradle、oracle、Debug/Release device PASS；`BLOCKED_SANITIZER` | `13b16f20` |
 | 3 Hamlib/Split/Fake It 事务 | 完成 | 全局事务、backend 互斥、legacy fallback、EME/卫星 lease、APK/ELF、oracle/device PASS；硬件与 sanitizer 阻塞 | `1f8721b8` |
-| 4 Q65 流式内存与 EME | 完成 | native-owned 12 kHz slot、4096-sample RX/TX、A-E、oracle/device PASS；高精度 EME oracle 与 sanitizer 阻塞 | 本阶段提交 |
-| 5 卫星与 Doppler | 待开始 | 待执行 | 待提交 |
+| 4 Q65 流式内存与 EME | 完成 | native-owned 12 kHz slot、4096-sample RX/TX、A-E、oracle/device PASS；高精度 EME oracle 与 sanitizer 阻塞 | `02faa29a` |
+| 5 卫星与 Doppler | 完成 | 逐条 TLE、绝对 age、过境缓存、纪律化 UTC、oracle/device PASS；硬件与 sanitizer 阻塞 | 本阶段提交 |
 | 6 QSO/LoTW/导入/HTTP | 待开始 | 待执行 | 待提交 |
 | 7 FT8/FT4 呼叫与自动化 | 待开始 | 待执行 | 待提交 |
 | 8 Compose/深色模式/性能 | 待开始 | 待执行 | 待提交 |
@@ -60,6 +60,14 @@
 - EME 自动 CAT 只在高精度天文实现通过 oracle 后才允许；当前显示级 `MoonEphemeris` 明确保持 `BLOCKED_EME_EPHEMERIS_ORACLE`。
 - Host O2 p50/p95：FT8 527.540/536.749 ms，FT4 262.565/270.460 ms，Q65A/60 231.910/241.937 ms；固定哈希和官方 `jt9` FT8 20/20、FT4 16/16 不变。
 - 完整门禁为 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_SANITIZER`；详见 `docs/verification/q65-eme-hardening-2026-08-01.md`。
+
+### 2026-08-01 阶段 5 加固记录
+
+- TLE 目录改为逐条容错，异常未来 epoch 被拒绝；stale age 使用纪律化 UTC 的绝对差。
+- 24 小时过境和极坐标轨迹按完整 TLE/观察站缓存 15 分钟或至当前 pass 结束，实时 observation 与 Doppler 保持 1 秒更新。
+- 页面倒计时、目录刷新、导入和 CAT target age 均统一使用 `DisciplinedClockRegistry`；CAT 继续通过 radio transaction 且永不触发 PTT。
+- 完整 host/oracle/Gradle/真机门禁通过。FT8/FT4 p50/p95 为 527.928/534.156、262.298/267.334 ms；Q65 追加 15 次复测为 228.076/235.666 ms，固定哈希均不变。
+- 外部实体电台和 sanitizer 分别保持 `BLOCKED_HARDWARE_RIG`、`BLOCKED_SANITIZER`；详见 `docs/verification/satellite-hardening-2026-08-01.md`。
 
 - 仓库：`H:/iu_yang1/study/FT8CN/ft8cn`
 - 产品分支：`wsjtx-ft8ft4-core-port`

@@ -24,6 +24,19 @@ class SatelliteCatalogTest {
     }
 
     @Test
+    fun parserSkipsOnlyDamagedRecordAndRejectsImplausibleFutureEpoch() {
+        val valid = "VANGUARD 1\n${Sgp4OrbitPropagatorTest.LINE_1}\n${Sgp4OrbitPropagatorTest.LINE_2}"
+        val damaged = "BROKEN\n1 invalid\n2 invalid"
+        val fetched = Sgp4OrbitPropagatorTest.testPropagator().record.epochUtcMillis
+
+        val records = TleCatalogParser.parse("$damaged\n$valid", "test", fetched)
+
+        assertEquals(1, records.size)
+        assertEquals(5, records.single().catalogNumber)
+        assertTrue(TleCatalogParser.parse(valid, "test", fetched - 8L * 24L * 60L * 60L * 1_000L).isEmpty())
+    }
+
+    @Test
     fun celestrakUsesExplicitTleFormatAndConditionalHeaders() = runBlocking {
         var requestedUrl = ""
         var requestedHeaders = emptyMap<String, String>()

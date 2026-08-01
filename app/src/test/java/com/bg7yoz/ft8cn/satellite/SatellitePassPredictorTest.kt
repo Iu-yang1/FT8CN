@@ -64,6 +64,20 @@ class SatellitePassPredictorTest {
         assertTrue(passes.all(SatellitePass::tleStale))
     }
 
+    @Test
+    fun marksImplausiblyFutureElementsAsStale() {
+        val propagator = Sgp4OrbitPropagatorTest.testPropagator()
+        val start = propagator.record.epochUtcMillis - 20L * 24L * 60L * 60L * 1_000L
+        val passes = SatellitePassPredictor(
+            propagator,
+            ObserverPosition(0.0, 0.0),
+            coarseStepMillis = 60_000L,
+        ).predict(start, start + 24L * 60L * 60L * 1_000L)
+
+        assertTrue(passes.isNotEmpty())
+        assertTrue(passes.all(SatellitePass::tleStale))
+    }
+
     private fun assertWithin(actualMillis: Long, expectedIso: String, toleranceMillis: Long) {
         assertTrue(abs(actualMillis - Instant.parse(expectedIso).toEpochMilli()) <= toleranceMillis)
     }

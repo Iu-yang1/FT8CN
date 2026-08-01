@@ -1,5 +1,7 @@
 package com.bg7yoz.ft8cn.satellite
 
+import kotlin.math.abs
+
 /** 有界的过境搜索；细化 AOS/LOS 时不会改变 SGP4 的传播精度。 */
 class SatellitePassPredictor(
     private val propagator: Sgp4OrbitPropagator,
@@ -58,7 +60,7 @@ class SatellitePassPredictor(
                     aosAzimuthDegrees = aosAzimuth,
                     losAzimuthDegrees = los.azimuthDegrees,
                     ongoingAtWindowStart = ongoing && aosTime == startUtcMillis,
-                    tleStale = startUtcMillis - propagator.record.epochUtcMillis > staleAfterMillis,
+                    tleStale = abs(startUtcMillis - propagator.record.epochUtcMillis) > staleAfterMillis,
                 )
                 inPass = false
             }

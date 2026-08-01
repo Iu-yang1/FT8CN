@@ -40,6 +40,7 @@ import com.bg7yoz.ft8cn.FT8Common
 import com.bg7yoz.ft8cn.GeneralVariables
 import com.bg7yoz.ft8cn.MainViewModel
 import com.bg7yoz.ft8cn.core.FeatureAppGraph
+import com.bg7yoz.ft8cn.core.time.DisciplinedClockRegistry
 import com.bg7yoz.ft8cn.data.settings.FeatureSettings
 import com.bg7yoz.ft8cn.eme.ObserverLocation
 import com.bg7yoz.ft8cn.feature.shell.Ft8cnPageHeader
@@ -50,7 +51,7 @@ import com.bg7yoz.ft8cn.satellite.SatelliteDopplerPlanner
 import com.bg7yoz.ft8cn.satellite.SatelliteFrequencyTarget
 import com.bg7yoz.ft8cn.satellite.SatelliteObservation
 import com.bg7yoz.ft8cn.satellite.SatellitePass
-import com.bg7yoz.ft8cn.satellite.SatellitePassPredictor
+import com.bg7yoz.ft8cn.satellite.SatellitePassPlanCache
 import com.bg7yoz.ft8cn.satellite.SatelliteRefreshResult
 import com.bg7yoz.ft8cn.satellite.SatelliteRadioTracker
 import com.bg7yoz.ft8cn.satellite.SatelliteTransponder
@@ -94,6 +95,7 @@ fun SatelliteScreen(mainViewModel: MainViewModel) {
     val radioTracker = remember(graph.radioTransactionCoordinator) {
         SatelliteRadioTracker(graph.radioTransactionCoordinator)
     }
+    val passPlanCache = remember { SatellitePassPlanCache() }
     val cleanupScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     val satellites by repository.observeSatellites().collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = rememberCoroutineScope()
@@ -205,16 +207,17 @@ fun SatelliteScreen(mainViewModel: MainViewModel) {
         while (true) {
             val loaded = loadDetail(
                 repository,
+                passPlanCache,
                 catalogNumber,
                 station,
-                System.currentTimeMillis(),
+                DisciplinedClockRegistry.nowMillis(),
                 selectedTransponderKey,
             )
             detail = loaded
             if (loaded?.selectedTransponderKey != selectedTransponderKey) {
                 selectedTransponderKey = loaded?.selectedTransponderKey
             }
-            delay(5_000L)
+            delay(1_000L)
         }
     }
 
@@ -249,7 +252,7 @@ fun SatelliteScreen(mainViewModel: MainViewModel) {
             }
             trackerStarted = true
         }
-        trackingStatus = radioTracker.apply(target, System.currentTimeMillis()).fold(
+        trackingStatus = radioTracker.apply(target, DisciplinedClockRegistry.nowMillis()).fold(
             onSuccess = { applied -> if (applied) "Hamlib 已按 Doppler 更新频率" else "频率变化未达到更新步长" },
             onFailure = {
                 trackerStarted = false
@@ -335,7 +338,7 @@ fun SatelliteScreen(mainViewModel: MainViewModel) {
                     Button(onClick = {
                         scope.launch {
                             status = runCatching {
-                                repository.refreshCelesTrakGroup("amateur", System.currentTimeMillis())
+                                repository.refreshCelesTrakGroup("amateur", DisciplinedClockRegistry.nowMillis())
                                     .displayText()
                             }.getOrElse { "刷新失败：${it.message}" }
                         }
@@ -346,7 +349,7 @@ fun SatelliteScreen(mainViewModel: MainViewModel) {
                             val selected = selectedCatalogNumber ?: return@OutlinedButton
                             scope.launch {
                                 status = runCatching {
-                                    repository.refreshSatNogsTransmitters(selected, System.currentTimeMillis())
+                                    repository.refreshSatNogsTransmitters(selected, DisciplinedClockRegistry.nowMillis())
                                         .displayText("转发器")
                                 }.getOrElse { "SatNOGS 失败：${it.message}" }
                             }
@@ -375,7 +378,7 @@ fun SatelliteScreen(mainViewModel: MainViewModel) {
                     onClick = {
                         scope.launch {
                             status = runCatching {
-                                val count = repository.importTle(manualTle, "manual-ui", System.currentTimeMillis())
+                                val count = repository.importTle(manualTle, "manual-ui", DisciplinedClockRegistry.nowMillis())
                                 manualTle = ""
                                 "已导入 $count 颗卫星"
                             }.getOrElse { "导入失败：${it.message}" }
@@ -441,12 +444,13 @@ private fun SatelliteDetail(
         )
         val pass = detail.passes.firstOrNull()
         val countdown = pass?.let {
-            val target = if (System.currentTimeMillis() < it.aosUtcMillis) it.aosUtcMillis else it.losUtcMillis
-            formatCountdown(target - System.currentTimeMillis())
+            val nowUtcMillis = DisciplinedClockRegistry.nowMillis()
+            val target = if (nowUtcMillis < it.aosUtcMillis) it.aosUtcMillis else it.losUtcMillis
+            formatCountdown(target - nowUtcMillis)
         } ?: "--:--:--"
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column {
-                Text(if (pass != null && System.currentTimeMillis() >= pass.aosUtcMillis) "LOS" else "AOS")
+                Text(if (pass != null && DisciplinedClockRegistry.nowMillis() >= pass.aosUtcMillis) "LOS" else "AOS")
                 Text(countdown, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.secondary)
             }
             Column {
@@ -469,7 +473,7 @@ private fun SatelliteDetail(
             observation.subpointLongitudeDegrees,
             observation.altitudeKilometers,
         ))
-        val ageDays = (System.currentTimeMillis() - detail.tleEpochUtcMillis) / 86_400_000.0
+        val ageDays = kotlin.math.abs(DisciplinedClockRegistry.nowMillis() - detail.tleEpochUtcMillis) / 86_400_000.0
         Text(
             String.format(Locale.US, "TLE age %.1f 天%s", ageDays, if (ageDays > 14.0) "（过期警告）" else ""),
             color = if (ageDays > 14.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
@@ -659,6 +663,7 @@ private fun SatelliteCard(title: String, content: @Composable ColumnScope.() -> 
 
 private suspend fun loadDetail(
     repository: SatelliteCatalogRepository,
+    passPlanCache: SatellitePassPlanCache,
     catalogNumber: Int,
     observer: ObserverPosition,
     nowUtcMillis: Long,
@@ -666,19 +671,9 @@ private suspend fun loadDetail(
 ): SatelliteDetailState? = withContext(Dispatchers.Default) {
     val propagator = repository.latestPropagator(catalogNumber) ?: return@withContext null
     val observation = propagator.observe(observer, nowUtcMillis)
-    val passes = SatellitePassPredictor(propagator, observer).predict(
-        nowUtcMillis,
-        nowUtcMillis + 24L * 60L * 60L * 1_000L,
-        maximumPasses = 16,
-    )
-    val firstPass = passes.firstOrNull()
-    val polarTrack = if (firstPass == null) emptyList() else sampleObservations(
-        propagator,
-        observer,
-        firstPass.aosUtcMillis,
-        firstPass.losUtcMillis,
-        MAXIMUM_POLAR_POINTS,
-    )
+    val passPlan = passPlanCache.load(propagator, observer, nowUtcMillis)
+    val passes = passPlan.passes
+    val polarTrack = passPlan.polarTrack
     val transponders = repository.transponders(catalogNumber).take(MAXIMUM_TRANSPONDERS)
     val usableTransponders = transponders.filter(SatelliteTransponder::hasCompleteFrequencyPlan)
     val usable = usableTransponders.firstOrNull { it.stableKey() == selectedTransponderKey }
@@ -699,25 +694,6 @@ private suspend fun loadDetail(
         frequencyTarget,
         propagator.record.epochUtcMillis,
     )
-}
-
-private fun sampleObservations(
-    propagator: com.bg7yoz.ft8cn.satellite.Sgp4OrbitPropagator,
-    observer: ObserverPosition,
-    start: Long,
-    end: Long,
-    maximumPoints: Int,
-): List<SatelliteObservation> {
-    if (end <= start || maximumPoints < 2) return emptyList()
-    val step = maxOf(1L, (end - start) / (maximumPoints - 1))
-    return buildList(maximumPoints) {
-        var time = start
-        while (time < end && size < maximumPoints - 1) {
-            add(propagator.observe(observer, time))
-            time += step
-        }
-        add(propagator.observe(observer, end))
-    }
 }
 
 private fun SatelliteRefreshResult.displayText(prefix: String = "目录"): String = when (this) {
@@ -761,5 +737,4 @@ private fun formatFrequencyRange(lowHz: Long?, highHz: Long?): String {
 
 private const val MAXIMUM_VISIBLE_SATELLITES = 250
 private const val MAXIMUM_MANUAL_TLE_CHARS = 64 * 1024
-private const val MAXIMUM_POLAR_POINTS = 64
 private const val MAXIMUM_TRANSPONDERS = 32

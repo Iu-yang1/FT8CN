@@ -237,10 +237,12 @@ function Invoke-Q65StreamingGate([string]$Variant) {
     }
     $rxEvidence = @($memoryLines | Where-Object { $_ -match 'Q65 RX 300s' })
     $txEvidence = @($memoryLines | Where-Object { $_ -match 'Q65 TX 300s' })
-    if ($rxEvidence.Count -ne 1
-            -or $rxEvidence[0] -notmatch 'sourceChunk=4096'
-            -or $rxEvidence[0] -notmatch 'outputSamples=3600000'
-            -or $rxEvidence[0] -notmatch 'finalJavaArraySamples=0') {
+    if (
+        ($rxEvidence.Count -ne 1) -or
+        ($rxEvidence[0] -notmatch 'sourceChunk=4096') -or
+        ($rxEvidence[0] -notmatch 'outputSamples=3600000') -or
+        ($rxEvidence[0] -notmatch 'finalJavaArraySamples=0')
+    ) {
         throw "Q65 RX evidence does not prove native-owned bounded streaming: $($rxEvidence -join '; ')"
     }
     if ($txEvidence.Count -ne 1 -or $txEvidence[0] -notmatch 'chunkSamples=4096') {
