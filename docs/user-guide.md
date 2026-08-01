@@ -3,7 +3,7 @@
 ## 首次配置
 
 1. 在 Settings/Time 设置呼号、网格、音频采样率和解码策略。
-2. 检查时间来源、offset、uncertainty 和样本 age。RX 始终可用；自动 TX/CQ 要求 uncertainty 不超过 500 ms 且同步样本不超过 30 分钟。
+2. 检查时间来源、offset、uncertainty 和样本 age。RX 始终可用；自动 TX/CQ 的默认 uncertainty 上限分别为 FT4 250 ms、FT8 500 ms、Q65 1000 ms，且同步样本不得超过 30 分钟。
 3. 在 Radio 选择连接方式并先验证频率、模式、VFO 与 PTT 读回。没有安全天线/假负载时不要测试发射。
 
 ## Call：FT8/FT4
@@ -37,4 +37,4 @@
 - `RIG_SPLIT`：使用电台原生 RX/TX VFO 分离。
 - `FAKE_IT`：发射前临时移动 dial，使音频保持在配置的清洁通带，结束或失败后恢复。它只能降低音频链产生杂散的风险，不能承诺消除谐波。
 
-现代 Material 3 工作台正在渐进接管完整操作台；当前保留 legacy fallback，避免迁移期间丢失成熟功能。发布和已知限制见 `docs/verification/feature-release-2026-07-29.md` 与 `blocked-2026-07-29.md`。
+Material 3 界面保持 FT8CN 原有配色、信息密度与底部图标导航；成熟 JNI/DSP 路径继续由类型安全入口调用，不为语言统一而重写。当前发布门禁和已知限制见 `docs/verification/full-hardening-2026-08-01.md`。

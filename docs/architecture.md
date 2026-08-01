@@ -44,3 +44,10 @@ FT8/FT4 仍使用官方核心所需的完整 slot。Q65 24/48 kHz 生产录音�
 - Settings/Time：DataStore、NTP/GNSS health 与解码策略。
 
 现代 Compose shell 与完整 legacy fallback 目前并存；在 Compose 功能和真机交互门禁全部完成前，不删除成熟操作路径。
+
+## 专题文档
+
+- [纪律化 UTC 与时隙调度](architecture/time-discipline.md)
+- [电台事务、Split 与安全 PTT](architecture/radio-transaction.md)
+- [QSO、ADIF 与 LoTW 数据流](architecture/qso-lotw-data-flow.md)
+- [威胁模型](security/threat-model.md)

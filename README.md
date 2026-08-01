@@ -24,7 +24,7 @@ powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 
 门禁明确区分 `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、`BLOCKED_ORACLE`、`BLOCKED_DEVICE`、`BLOCKED_SANITIZER` 和 `FAIL`。缺少官方工具或设备不会被写成通过。机器负载明显变化时，可通过 `-PerformanceBaselinePath` 指定同电源状态、同工具链、同语料生成的基线 JSON；3% p95 阈值本身不会被放宽。
 
-当前功能边界、操作安全和数据处理方式分别见 [用户使用说明](docs/user-guide.md)、[架构说明](docs/architecture.md) 与 [隐私说明](docs/privacy.md)。阶段 0-9 的逐阶段证据见 [实施台账](docs/implementation/phases-0-9.md)，最终发布门禁见 `docs/verification/feature-release-2026-07-29.md`。
+当前功能边界、操作安全和数据处理方式分别见 [用户使用说明](docs/user-guide.md)、[架构说明](docs/architecture.md) 与 [隐私说明](docs/privacy.md)。阶段 0-9 的逐阶段证据见 [实施台账](docs/implementation/phases-0-9.md)，最终发布门禁见 [完整加固报告](docs/verification/full-hardening-2026-08-01.md)。
 
 ## 使用说明
 

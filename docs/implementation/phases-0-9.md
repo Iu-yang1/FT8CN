@@ -23,8 +23,8 @@
 | 5 卫星与 Doppler | 完成 | TLE/pass/cache/UTC/oracle/device PASS | `94ce7da6` |
 | 6 QSO、LoTW、导入与 HTTP | 完成 | Room 主写、旧库兼容镜像、全库分页导出、受限导入、oracle/device PASS | `a244c28b` |
 | 7 FT8/FT4 呼叫与自动化 | 完成 | 有限 CQ、会话 generation、slot 去重、oracle/device PASS | `963ec8b8` |
-| 8 Compose、深色模式与性能 | 完成，待提交 | 录音/频谱、八入口、日志统计、Hamlib 型号目录、oracle/device PASS | 本阶段提交 |
-| 9 最终门禁、文档与推送 | 待开始 | 待执行 | - |
+| 8 Compose、深色模式与性能 | 完成 | 录音/频谱、八入口、日志统计、Hamlib 型号目录、oracle/device PASS | `006706b6` |
+| 9 最终门禁、文档与推送 | 完成（有外部阻塞） | Host/oracle/Debug device PASS；Release signing/sanitizer 等明确阻塞 | `d0f9fa26`、`9d1ba537`、`4d23885c`、本文档提交 |
 
 ## 固定正确性基线
 
@@ -96,6 +96,15 @@
 - 统一验证：`HOST_RC_PASS,BLOCKED_SANITIZER,DEVICE_RELEASE_PASS`；完整证据见 `docs/verification/ui-audio-hardening-2026-08-01.md`。
 - 阶段 8 O2 p50/p95：FT8 523.480/535.973 ms，FT4 260.136/269.125 ms，Q65A/60 230.326/233.704 ms。
 
+### 阶段 9
+
+- Release 构建日期改为 `SOURCE_DATE_EPOCH` 或 Git commit 时间；`versionCode 5`、`versionName b5` 保留用户原有版本升级，默认配置不再使用 debug signing。
+- 正式签名只从环境变量或忽略的本地 `release-signing.properties` 读取；缺少完整凭据时生成 unsigned Release 并明确返回 `BLOCKED_RELEASE_SIGNING`。
+- 验证脚本通过 Gradle output metadata 定位 APK，校验签名、结果哈希、ELF 依赖并区分 Host、Debug device、Release device 和外部阻塞。
+- 内部 benchmark 的 foreground test session 在类级 teardown 关闭；Q65 300 秒 RX/TX Debug 真机 7 项通过，页面退出后不遗留前台测试会话。
+- 最终 O2 p50/p95：FT8 514.359/517.692 ms，FT4 258.589/259.603 ms，Q65A/60 215.573/217.856 ms；结果数和固定哈希不变。
+- 完整证据：`docs/verification/full-hardening-2026-08-01.md`。没有 `FAIL`；当前状态是 `HOST_RC_PASS,BLOCKED_SANITIZER,BLOCKED_Q65_STREAMING,BLOCKED_RELEASE_SIGNING`。
+
 ## 外部阻塞
 
 - `BLOCKED_SANITIZER`：当前 MSYS2 未发现与 host 构建兼容的 ASan/UBSan runtime；其余门禁不冒充 sanitizer PASS。
@@ -103,5 +112,9 @@
 - `BLOCKED_EME_EPHEMERIS_ORACLE`：当前月面星历仅显示级，未解除自动 CAT。
 - `BLOCKED_TQSL_EMBEDDED_SIGNING`：APK 不保存证书私钥或密码，采用外部 TQSL `.tq8` 流程。
 - `BLOCKED_LOTW_ACCOUNT`：未使用真实账户凭据执行上传。
+- `BLOCKED_RELEASE_SIGNING`：未提供未提交的正式 keystore 和口令，当前 Release APK 有意保持 unsigned。
+- `BLOCKED_Q65_STREAMING`：Debug 300 秒流式路径已通过，但当前 Release 设备半边受签名阻塞。
+- `BLOCKED_ANDROID_UTP`：本机 AGP/UTP protobuf 冲突发生在 0 tests 前；相同 test APK 已用直接 instrumentation 执行。
+- `BLOCKED_DEVICE_UI_KEYGUARD`：最终 UI 复测时设备处于安全锁屏，未尝试绕过用户 PIN；阶段 8 已解锁真机证据保留。
 
 历史实现细节与原始测量保留在 `docs/verification/` 和 Git 历史中；本台账不改写既有测量结果。
