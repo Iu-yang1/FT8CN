@@ -37,6 +37,19 @@
 /red.dat
 /@*
 
+# Codex and upstream inspection workspaces
+**/.tmp_wsjtx_lib_inspect/
+**/.tmp_ft8cn_*/
+**/.codex-tmp/
+**/.upstream-inspect/
+**/.apk-inspect/
+**/.elf-inspect/
+
+# Local analysis output
+**/.sanitizer-output/
+**/.benchmark-raw/
+**/.python-env/
+
 # IDE / OS metadata
 *.icloud
 .DS_Store

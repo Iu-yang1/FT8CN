@@ -1,5 +1,29 @@
 # FT8CN 阶段 0-9 实施台账
 
+## 2026-08-01 加固接续
+
+- 本轮起始本地/远程 SHA：`4cae0d5b7a071a7404a674dcb6e43ec81ed25a7c`
+- 仓库外备份：`H:/tools/ft8cn-backups/20260801-160056`
+- 本地备份分支：`backup/wsjtx-hardening-20260801-160056-4cae0d5`
+- 起始工作区：1679 tracked / 6 modified / 0 staged / 0 untracked / 66 ignored
+- 当前用户资产：`versionName b4 -> b5` 与五处 UI 文案/测试调整；不还原，按语义归入阶段 8/9。
+
+| 加固阶段 | 状态 | 本轮门禁 | 提交 SHA |
+|---|---|---|---|
+| 0 Git 安全、临时文件、工具链与基线 | 完成 | `HOST_RC_PASS`、`DEVICE_RELEASE_PASS`、第三方/仓库卫生 PASS；`BLOCKED_SANITIZER` | 待本阶段提交 |
+| 1 native 生命周期、PTT 与安全 | 进行中 | 待执行 | 待提交 |
+| 2 NTP/GNSS 纪律化 UTC | 待开始 | 待执行 | 待提交 |
+| 3 Hamlib/Split/Fake It 事务 | 待开始 | 待执行 | 待提交 |
+| 4 Q65 流式内存与 EME | 待开始 | 待执行 | 待提交 |
+| 5 卫星与 Doppler | 待开始 | 待执行 | 待提交 |
+| 6 QSO/LoTW/导入/HTTP | 待开始 | 待执行 | 待提交 |
+| 7 FT8/FT4 呼叫与自动化 | 待开始 | 待执行 | 待提交 |
+| 8 Compose/深色模式/性能 | 待开始 | 待执行 | 待提交 |
+| 9 最终门禁、文档与推送 | 待开始 | 待执行 | 待提交 |
+
+本轮基线证据见 `docs/verification/hardening-baseline-2026-08-01.md`。以下内容保留
+2026-07-26 至 2026-07-29 原始阶段历史，不能用本轮结果改写历史测量。
+
 - 仓库：`H:/iu_yang1/study/FT8CN/ft8cn`
 - 产品分支：`wsjtx-ft8ft4-core-port`
 - 开始 SHA：`10b2c62e4c75021eb559825c3da85f77b10a052d`

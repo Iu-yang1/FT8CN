@@ -2,6 +2,9 @@
 
 记录日期：2026-07-26。路径由 `scripts/check-toolchain.ps1` 的显式参数、环境变量、`local.properties` 和候选目录发现，不作为构建源码默认值。
 
+2026-08-01 复核：下列版本与可执行文件 SHA256 均未变化；完整加固基线见
+`docs/verification/hardening-baseline-2026-08-01.md`。
+
 | 工具 | 固定版本 | 可执行文件 SHA256 |
 |---|---|---|
 | JDK | Eclipse Temurin 17.0.19+10 | `b3afe83e1ab067da4c56f1a7b2ba4c14ec832d694333f35b2b45178e9ac596ef` |
