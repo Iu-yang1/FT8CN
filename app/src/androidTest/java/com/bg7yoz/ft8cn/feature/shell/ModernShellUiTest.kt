@@ -58,9 +58,11 @@ class ModernShellUiTest {
 
     @Test
     fun primaryAndSupportingNavigationRemainAccessible() {
-        listOf("解码", "FT8 / FT4 呼叫", "频谱").forEach { description ->
+        FeatureDestination.values().forEach { destination ->
+            val description = destination.label
             assertNotNull(findAccessibilityNode(description = description))
         }
+        assertNotNull(findAccessibilityNode(description = "当前模式录音槽位进度"))
 
         launchDestination(FeatureDestination.EME)
         assertNotNull(accessibilitySnapshot(), findAccessibilityNode(text = "Q65 / EME"))
@@ -69,12 +71,14 @@ class ModernShellUiTest {
         launchDestination(FeatureDestination.LOGBOOK)
         assertNotNull(findAccessibilityNode(text = "通联日志"))
         launchDestination(FeatureDestination.RADIO)
-        assertNotNull(findAccessibilityNode(text = "Hamlib 电台"))
+        assertNotNull(findAccessibilityNode(text = "电台"))
         assertNotNull(findAccessibilityNode(text = "工作频率"))
         launchDestination(FeatureDestination.SETTINGS)
-        assertNotNull(findAccessibilityNode(text = "NTP / GNSS 时间纪律"))
-        assertNotNull(findAccessibilityNode(text = "工作频率"))
-        assertNotNull(findAccessibilityNode(description = "展开浮动工具栏"))
+        assertNotNull(findAccessibilityNode(text = "时间同步"))
+        val toolbarButton = findAccessibilityNode(description = "展开浮动工具栏")
+        assertNotNull(toolbarButton)
+        assertTrue(toolbarButton!!.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        assertNotNull(findAccessibilityNode(description = "选择工作频率"))
     }
 
     @Test

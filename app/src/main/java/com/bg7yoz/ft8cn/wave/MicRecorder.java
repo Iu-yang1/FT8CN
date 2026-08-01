@@ -33,6 +33,7 @@ public class MicRecorder {
 
     private int bufferSize = 0;
     private volatile int currentSampleRateInHz = DEFAULT_SAMPLE_RATE_IN_HZ;
+    private volatile int currentEncoding = audioFormat;
     private final Object recorderLock = new Object();
     private volatile AudioRecord audioRecord = null;
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
@@ -65,28 +66,53 @@ public class MicRecorder {
 
         releaseAudioRecord();
         currentSampleRateInHz = desiredSampleRate;
-        bufferSize = AudioRecord.getMinBufferSize(currentSampleRateInHz, channelConfig, audioFormat);
-        if (bufferSize <= 0) {
-            Log.e(TAG, "ensureAudioRecord: invalid bufferSize=" + bufferSize
-                    + ", sampleRate=" + currentSampleRateInHz);
-            return false;
-        }
-
-        audioRecord = new AudioRecord(
-                MediaRecorder.AudioSource.DEFAULT,
-                currentSampleRateInHz,
-                channelConfig,
-                audioFormat,
-                bufferSize
-        );
-        if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "ensureAudioRecord: AudioRecord init failed, sampleRate=" + currentSampleRateInHz);
-            releaseAudioRecord();
+        if (!createAudioRecord(AudioFormat.ENCODING_PCM_FLOAT)
+                && !createAudioRecord(AudioFormat.ENCODING_PCM_16BIT)) {
+            Log.e(TAG, "ensureAudioRecord: AudioRecord init failed, sampleRate="
+                    + currentSampleRateInHz + ", float/pcm16 both unavailable");
             return false;
         }
         preferExternalInput(audioRecord);
         updateInputStatus(audioRecord, true);
         return true;
+    }
+
+    /** 优先使用 float；少数设备不支持时退回 PCM16，并在固定缓冲内转换。 */
+    @SuppressLint("MissingPermission")
+    private boolean createAudioRecord(int encoding) {
+        releaseAudioRecord();
+        final int candidateBufferSize = AudioRecord.getMinBufferSize(
+                currentSampleRateInHz, channelConfig, encoding);
+        if (candidateBufferSize <= 0) {
+            return false;
+        }
+        AudioRecord candidate = null;
+        try {
+            candidate = new AudioRecord(
+                    MediaRecorder.AudioSource.DEFAULT,
+                    currentSampleRateInHz,
+                    channelConfig,
+                    encoding,
+                    candidateBufferSize);
+            if (candidate.getState() != AudioRecord.STATE_INITIALIZED) {
+                candidate.release();
+                return false;
+            }
+            audioRecord = candidate;
+            bufferSize = candidateBufferSize;
+            currentEncoding = encoding;
+            return true;
+        } catch (RuntimeException error) {
+            if (candidate != null) {
+                try {
+                    candidate.release();
+                } catch (RuntimeException ignored) {
+                    // 构造失败后的对象只做 best-effort 清理。
+                }
+            }
+            Log.w(TAG, "AudioRecord encoding unavailable: " + encoding, error);
+            return false;
+        }
     }
 
     /**
@@ -156,6 +182,7 @@ public class MicRecorder {
     public boolean start() {
         final AudioRecord recorder;
         final int readBufferSize;
+        final int encoding;
         synchronized (recorderLock) {
             if (isRunning.get()) {
                 return true;
@@ -168,7 +195,9 @@ public class MicRecorder {
                 return false;
             }
             recorder = audioRecord;
-            readBufferSize = Math.max(1, bufferSize / 4);
+            encoding = currentEncoding;
+            final int bytesPerSample = encoding == AudioFormat.ENCODING_PCM_FLOAT ? 4 : 2;
+            readBufferSize = Math.max(1, bufferSize / bytesPerSample);
             try {
                 recorder.startRecording();
             } catch (Exception e) {
@@ -183,12 +212,13 @@ public class MicRecorder {
             isRunning.set(true);
             updateInputStatus(recorder, true);
             Log.i(TAG, "录音已启动，sampleRate=" + currentSampleRateInHz
+                    + "，encoding=" + encoding
                     + "，route=" + inputRouteDescription
                     + "，systemSilenced=" + systemSilenced);
         }
 
         Thread recordThread = new Thread(
-                () -> recordLoop(recorder, new float[readBufferSize]),
+                () -> recordLoop(recorder, readBufferSize, encoding),
                 "FT8CN-AudioRecord");
         recordThread.start();
         return true;
@@ -204,7 +234,10 @@ public class MicRecorder {
         stopAndRelease(recorder);
     }
 
-    private void recordLoop(AudioRecord recorder, float[] buffer) {
+    private void recordLoop(AudioRecord recorder, int readBufferSize, int encoding) {
+        final float[] floatBuffer = new float[readBufferSize];
+        final short[] pcm16Buffer = encoding == AudioFormat.ENCODING_PCM_16BIT
+                ? new short[readBufferSize] : null;
         try {
             // 录音重启后，旧线程只能退出自己的 recorder，不能干扰新会话。
             while (isRunning.get() && audioRecord == recorder) {
@@ -215,16 +248,22 @@ public class MicRecorder {
                             currentSampleRateInHz));
                     break;
                 }
-                final int count = recorder.read(
-                        buffer,
-                        0,
-                        buffer.length,
-                        AudioRecord.READ_BLOCKING);
+                final int count;
+                if (pcm16Buffer == null) {
+                    count = recorder.read(
+                            floatBuffer, 0, floatBuffer.length, AudioRecord.READ_BLOCKING);
+                } else {
+                    count = recorder.read(
+                            pcm16Buffer, 0, pcm16Buffer.length, AudioRecord.READ_BLOCKING);
+                    if (count > 0) {
+                        pcm16ToFloat(pcm16Buffer, floatBuffer, count);
+                    }
+                }
                 updateInputStatus(recorder, false);
                 final OnDataListener listener = onDataListener;
                 if (listener != null && count > 0
                         && isRunning.get() && audioRecord == recorder) {
-                    listener.onDataReceived(buffer, count);
+                    listener.onDataReceived(floatBuffer, count);
                 }
             }
         } catch (RuntimeException error) {
@@ -243,6 +282,16 @@ public class MicRecorder {
             if (releaseRecorder) {
                 stopAndRelease(recorder);
             }
+        }
+    }
+
+    static void pcm16ToFloat(short[] source, float[] destination, int sampleCount) {
+        if (source == null || destination == null || sampleCount < 0
+                || sampleCount > source.length || sampleCount > destination.length) {
+            throw new IllegalArgumentException("invalid PCM16 conversion range");
+        }
+        for (int index = 0; index < sampleCount; index++) {
+            destination[index] = source[index] / 32768.0f;
         }
     }
 

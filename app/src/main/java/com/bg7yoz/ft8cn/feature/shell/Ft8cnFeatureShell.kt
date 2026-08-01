@@ -235,14 +235,15 @@ private fun SlotCaptureProgress(mainViewModel: MainViewModel, recording: Boolean
                 transmitSlot = mainViewModel.ft8TransmitSignal.isActivated &&
                     mainViewModel.ft8TransmitSignal.sequential == UtcTimer.getNowSequential(slotTenths)
             }
-            delay(50L)
+            // 10 Hz 足以表现 7.5 秒 FT4 时隙，同时避免所有页面常驻 20 Hz 重组。
+            delay(100L)
         }
     }
     LinearProgressIndicator(
         progress = progress,
         modifier = Modifier
             .fillMaxWidth()
-            .height(6.dp)
+            .height(7.dp)
             .semantics { contentDescription = "当前模式录音槽位进度" },
         color = when {
             !recording -> MaterialTheme.colorScheme.error
@@ -256,6 +257,7 @@ private fun SlotCaptureProgress(mainViewModel: MainViewModel, recording: Boolean
 @Composable
 private fun RuntimeStatusOverlay(mainViewModel: MainViewModel, recording: Boolean) {
     val debug = rememberLiveDataValue(GeneralVariables.mutableDebugMessage, "")
+    var visibleDebug by remember { mutableStateOf("") }
     val transmitting = rememberLiveDataValue(mainViewModel.ft8TransmitSignal.mutableIsTransmitting, false)
     val transmittingMessage = rememberLiveDataValue(
         mainViewModel.ft8TransmitSignal.mutableTransmittingMessage,
@@ -265,6 +267,16 @@ private fun RuntimeStatusOverlay(mainViewModel: MainViewModel, recording: Boolea
     val importInfo = rememberLiveDataValue(mainViewModel.mutableShareInfo, "")
     val importPosition = rememberLiveDataValue(mainViewModel.mutableSharePosition, 0)
     val importCount = rememberLiveDataValue(mainViewModel.mutableShareCount, 0)
+
+    LaunchedEffect(debug) {
+        if (debug.isBlank()) {
+            visibleDebug = ""
+        } else {
+            visibleDebug = debug
+            delay(4_000L)
+            if (visibleDebug == debug) visibleDebug = ""
+        }
+    }
 
     Column(Modifier.fillMaxWidth()) {
         if (!recording) {
@@ -282,8 +294,8 @@ private fun RuntimeStatusOverlay(mainViewModel: MainViewModel, recording: Boolea
                 MaterialTheme.colorScheme.primaryContainer,
             )
         }
-        if (debug.isNotBlank()) {
-            RuntimeBanner(debug, MaterialTheme.colorScheme.primaryContainer)
+        if (visibleDebug.isNotBlank()) {
+            RuntimeBanner(visibleDebug, MaterialTheme.colorScheme.primaryContainer)
         }
     }
 }

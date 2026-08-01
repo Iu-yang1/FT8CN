@@ -7,10 +7,12 @@ import android.util.Log;
 
 import com.bg7yoz.ft8cn.rigs.BaseRigOperation;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.regex.Pattern;
 
 /**
  * 用于读取可用的载波波段列表，文件保存在assets/bands.txt中
@@ -20,6 +22,7 @@ import java.util.ArrayList;
 
 public class OperationBand {
     private static final String TAG="OperationBand";
+    private static final int MAX_BAND_FILE_BYTES = 256 * 1024;
     private final Context context;
     private static OperationBand operationBand = null;
 
@@ -86,15 +89,19 @@ public class OperationBand {
         AssetManager assetManager = context.getAssets();
         try {
             bandList.clear();
-            InputStream inputStream= assetManager.open("bands.txt");
-            String[] st=getLinesFromInputStream(inputStream,"\n");
-            for (int i = 0; i <st.length ; i++) {
-                if (!st[i].contains(":")){
-                    continue;
+            try (InputStream inputStream = assetManager.open("bands.txt")) {
+                String[] lines = getLinesFromInputStream(inputStream,"\n");
+                for (String line : lines) {
+                    if (!line.contains(":")) {
+                        continue;
+                    }
+                    try {
+                        bandList.add(new Band(line.trim()));
+                    } catch (IllegalArgumentException malformed) {
+                        Log.w(TAG, "跳过无效波段记录: " + line);
+                    }
                 }
-               bandList.add(new Band(st[i]));
             }
-            inputStream.close();
         } catch (IOException e) {
             e.printStackTrace();
             Log.e(TAG, "从波段列表文件提取数据出错："+e.getMessage() );
@@ -115,12 +122,32 @@ public class OperationBand {
      * @return String 返回字符串,如果失败，返回null
      */
     public static String[] getLinesFromInputStream(InputStream inputStream, String deLimited) {
+        if (inputStream == null || deLimited == null || deLimited.isEmpty()) {
+            return new String[0];
+        }
         try {
-            byte[] bytes = new byte[inputStream.available()];
-            inputStream.read(bytes);
-            return (new String(bytes, StandardCharsets.UTF_8)).split(deLimited);
+            ByteArrayOutputStream output = new ByteArrayOutputStream(4096);
+            byte[] buffer = new byte[4096];
+            int total = 0;
+            while (true) {
+                int count = inputStream.read(buffer);
+                if (count < 0) {
+                    break;
+                }
+                if (count == 0) {
+                    continue;
+                }
+                total += count;
+                if (total > MAX_BAND_FILE_BYTES) {
+                    throw new IOException("band file exceeds bounded size");
+                }
+                output.write(buffer, 0, count);
+            }
+            return output.toString(StandardCharsets.UTF_8.name())
+                    .split(Pattern.quote(deLimited));
         }catch (IOException e){
-            return null;
+            Log.e(TAG, "读取波段列表失败: " + e.getMessage());
+            return new String[0];
         }
     }
     public static long getBandFreq(int index){

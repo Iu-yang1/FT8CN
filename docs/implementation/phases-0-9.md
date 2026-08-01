@@ -22,8 +22,8 @@
 | 4 Q65 流式内存与 EME 门禁 | 完成 | 300 秒 RX/TX、A-E、oracle/device PASS | `02faa29a` |
 | 5 卫星与 Doppler | 完成 | TLE/pass/cache/UTC/oracle/device PASS | `94ce7da6` |
 | 6 QSO、LoTW、导入与 HTTP | 完成 | Room 主写、旧库兼容镜像、全库分页导出、受限导入、oracle/device PASS | `a244c28b` |
-| 7 FT8/FT4 呼叫与自动化 | 完成，待提交 | 有限 CQ、会话 generation、slot 去重、oracle/device PASS | 本阶段提交 |
-| 8 Compose、深色模式与性能 | 待开始 | 待执行 | - |
+| 7 FT8/FT4 呼叫与自动化 | 完成 | 有限 CQ、会话 generation、slot 去重、oracle/device PASS | `963ec8b8` |
+| 8 Compose、深色模式与性能 | 完成，待提交 | 录音/频谱、八入口、日志统计、Hamlib 型号目录、oracle/device PASS | 本阶段提交 |
 | 9 最终门禁、文档与推送 | 待开始 | 待执行 | - |
 
 ## 固定正确性基线
@@ -86,6 +86,15 @@
 - 1000 个确定性随机种子验证同一会话/时隙最多认领一次发射，Q65 独立状态机不受影响。
 - 统一验证：`HOST_RC_PASS,BLOCKED_SANITIZER,DEVICE_RELEASE_PASS`。
 - 阶段 7 O2 p50/p95：FT8 518.012/524.740 ms，FT4 258.692/260.046 ms，Q65A/60 221.585/229.733 ms。
+
+### 阶段 8
+
+- 相同采样率配置不再重启 AudioRecord；设备不支持 PCM float 时使用固定缓冲的 PCM16 fallback，频谱和 decoder 仍接收归一化 float PCM。
+- 波段资源改为有界、分块读取，避免 `available()` 和单次 `read()` 造成常用频率只加载一条；Hamlib 型号选择器改为 LazyColumn，不再一次组合全部型号。
+- 底部八个入口、顶部模式槽位进度、设置浮动栏、旧日志统计和 Hamlib native 型号目录均完成真机门禁。
+- 全仓文本严格 UTF-8 扫描无非法文件或替换字符；此前终端乱码属于 Windows 控制台解码，不对源码做破坏性重写。
+- 统一验证：`HOST_RC_PASS,BLOCKED_SANITIZER,DEVICE_RELEASE_PASS`；完整证据见 `docs/verification/ui-audio-hardening-2026-08-01.md`。
+- 阶段 8 O2 p50/p95：FT8 523.480/535.973 ms，FT4 260.136/269.125 ms，Q65A/60 230.326/233.704 ms。
 
 ## 外部阻塞
 

@@ -4,6 +4,8 @@ import android.annotation.SuppressLint;
 import android.media.AudioFormat;
 import android.util.Log;
 
+import com.bg7yoz.ft8cn.GeneralVariables;
+
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
@@ -316,10 +318,18 @@ public class HamRecorder {
      * Mic 会重新创建 AudioRecord；网络源只刷新采样率标记。
      */
     public void refreshCurrentAudioSource() {
+        final int requestedSampleRate = normalizeInputSampleRate(GeneralVariables.audioSampleRate);
+        if (isMicRecord
+                && isRunning
+                && currentInputSampleRate == requestedSampleRate
+                && micRecorder.getCurrentSampleRate() == requestedSampleRate) {
+            // 数据库配置加载完成时通常仍是相同采样率，不应打断正在收集的时隙。
+            return;
+        }
         final boolean wasRunning = isRunning;
         stopRecord();
         if (isMicRecord) {
-            currentInputSampleRate = micRecorder.getCurrentSampleRate();
+            currentInputSampleRate = requestedSampleRate;
         } else {
             currentInputSampleRate = DEFAULT_SAMPLE_RATE_IN_HZ;
         }

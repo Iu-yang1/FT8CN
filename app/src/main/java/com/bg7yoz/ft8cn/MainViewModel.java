@@ -1345,6 +1345,12 @@ public class MainViewModel extends ViewModel {
     public void refreshRecorderSampleRate() {
         if (hamRecorder != null) {
             hamRecorder.refreshCurrentAudioSource();
+            if (!hamRecorder.isRunning()
+                    && ContextCompat.checkSelfPermission(
+                    GeneralVariables.getMainContext(),
+                    Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                hamRecorder.startRecord();
+            }
         }
     }
 

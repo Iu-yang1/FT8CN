@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -18,6 +19,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,7 +32,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bg7yoz.ft8cn.GeneralVariables
 import com.bg7yoz.ft8cn.MainViewModel
@@ -257,19 +261,44 @@ fun RadioScreen(mainViewModel: MainViewModel) {
                                 maxLines = 1,
                             )
                         }
-                        DropdownMenu(
-                            expanded = modelMenuExpanded,
-                            onDismissRequest = { modelMenuExpanded = false },
-                        ) {
-                            visibleModels.forEach { model ->
-                                DropdownMenuItem(
-                                    text = { Text("${model.manufacturer} ${model.model} (#${model.id})") },
-                                    onClick = {
-                                        selectedModelId = model.id
-                                        selectedModelName = "${model.manufacturer} ${model.model}".trim()
-                                        modelMenuExpanded = false
-                                    },
-                                )
+                    }
+                    if (modelMenuExpanded) {
+                        Dialog(onDismissRequest = { modelMenuExpanded = false }) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().testTag("radio-model-picker"),
+                                shape = MaterialTheme.shapes.large,
+                                tonalElevation = 6.dp,
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        "选择电台型号 · ${visibleModels.size}",
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        items(visibleModels, key = { it.id }) { model ->
+                                            OutlinedButton(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                onClick = {
+                                                    selectedModelId = model.id
+                                                    selectedModelName =
+                                                        "${model.manufacturer} ${model.model}".trim()
+                                                    modelMenuExpanded = false
+                                                },
+                                            ) {
+                                                Text(
+                                                    "${model.manufacturer} ${model.model} (#${model.id})",
+                                                    maxLines = 2,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

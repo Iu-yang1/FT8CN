@@ -46,12 +46,9 @@ import com.bg7yoz.ft8cn.data.settings.FeatureSettings
 import com.bg7yoz.ft8cn.ft8signal.FT8Package
 import com.bg7yoz.ft8cn.feature.shell.Ft8cnPageHeader
 import com.bg7yoz.ft8cn.feature.shell.Ft8cnPanel
-import com.bg7yoz.ft8cn.grid_tracker.GridTrackerMainActivity
 import com.bg7yoz.ft8cn.log.ThirdPartyService
 import com.bg7yoz.ft8cn.ui.ClearCacheDataDialog
-import com.bg7yoz.ft8cn.ui.FreqDialog
 import com.bg7yoz.ft8cn.ui.HelpDialog
-import com.bg7yoz.ft8cn.ui.SetVolumeDialog
 import com.bg7yoz.ft8cn.timer.UtcTimer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -146,39 +143,11 @@ fun SettingsScreen(mainViewModel: MainViewModel) {
             )
         }
         item {
-            SettingsCard("常用操作") {
-                Text(
-                    "保留旧版浮动栏的生产能力，入口统一收纳到底部设置页。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    OutlinedButton(
-                        onClick = { FreqDialog(context, mainViewModel).show() },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("工作频率", maxLines = 1, style = MaterialTheme.typography.bodySmall) }
-                    OutlinedButton(
-                        onClick = { SetVolumeDialog(context, mainViewModel).show() },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("发射音量", maxLines = 1, style = MaterialTheme.typography.bodySmall) }
-                    OutlinedButton(
-                        onClick = {
-                            context.startActivity(Intent(context, GridTrackerMainActivity::class.java))
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("网格追踪", maxLines = 1, style = MaterialTheme.typography.bodySmall) }
-                }
-            }
-        }
-        item {
-            SettingsCard("NTP / GNSS 时间纪律") {
+            SettingsCard("时间同步") {
                 ClockStatus(clock, DisciplinedClockRegistry.isAutomaticTransmitAllowed())
                 SwitchRow(
                     title = "NTP 对时",
-                    subtitle = "多服务器校验后校准应用内 UTC，不修改系统时钟",
+                    subtitle = "校准应用内UTC时间",
                     checked = ntpEnabled,
                 ) { enabled ->
                     ntpEnabled = enabled
@@ -219,7 +188,7 @@ fun SettingsScreen(mainViewModel: MainViewModel) {
                 }
                 SwitchRow(
                     title = "GNSS 时间",
-                    subtitle = "有可信 GNSS clock 时参与融合；位置权限拒绝时自动降级",
+                    subtitle = "辅助NTP校准时间",
                     checked = featureSettings.gnssTimeEnabled,
                 ) { scope.launch { graph.settings.setGnssTimeEnabled(it) } }
                 Button(
@@ -237,7 +206,7 @@ fun SettingsScreen(mainViewModel: MainViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     label = { Text("手动时钟微调（ms）") },
-                    supportingText = { Text("-7500…7500；仅用于现场临时校准") },
+                    supportingText = { Text("范围:-7500…7500") },
                 )
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),
@@ -595,7 +564,7 @@ fun SettingsScreen(mainViewModel: MainViewModel) {
                         persist("audioBits", "1")
                     }
                 }
-                Text("24/48 kHz 在进入官方 decoder 前使用有界重采样到 12 kHz；频谱坐标固定为 0–3000 Hz。", style = MaterialTheme.typography.bodySmall)
+                Text("24/48kHz输入后重采样到12KHz", style = MaterialTheme.typography.bodySmall)
             }
         }
         item {
@@ -620,7 +589,7 @@ fun SettingsScreen(mainViewModel: MainViewModel) {
                     GeneralVariables.saveSWL_QSO = it
                     persist("saveSWLQSO", if (it) "1" else "0")
                 }
-                SwitchRow("PSK Reporter", "后台批量上报接收报告，不阻塞解码线程", pskReporterEnabled) {
+                SwitchRow("PSK Reporter", "后台批量上报接收报告", pskReporterEnabled) {
                     pskReporterEnabled = it
                     GeneralVariables.enablePskReporter = it
                     persist("enablePskReporter", if (it) "1" else "0")
