@@ -80,6 +80,8 @@ public class FT8TransmitSignal {
     private Ft8Message lastAutoIncomingMessage = null;
     private long lastAutomationTransmitSlot = Long.MIN_VALUE;
     private int lastAutomationTransmitMode = -1;
+    private long lastAutomationTransmitBand = -1L;
+    private long lastAutomationSessionGeneration = -1L;
     private int lastTransmittedFunctionOrder = -1;
     private Ft8Message lastTransmittedMessage = null;
     private MultiSlotTransmitPlan lastTransmitPlan = null;
@@ -704,18 +706,25 @@ public class FT8TransmitSignal {
 
         int automationMode = transmitMode;
         long automationSlot = getCurrentFullSlot(automationMode);
+        long automationBand = GeneralVariables.band;
+        String automationTarget = getAutomationTarget();
+        long automationSessionGeneration = -1L;
         if (!manualRequest && isAutomaticFtxMode(automationMode)) {
             if (!automationController.tryClaimTransmit(
                     automationMode,
                     automationSlot,
-                    functionOrder)) {
+                    functionOrder,
+                    automationBand)) {
                 Log.d(TAG, "doTransmit ignored: automatic action already claimed for slot "
                         + automationSlot);
                 updateTransmittingState(false);
                 return;
             }
+            automationSessionGeneration = automationController.currentSessionGeneration();
             lastAutomationTransmitMode = automationMode;
             lastAutomationTransmitSlot = automationSlot;
+            lastAutomationTransmitBand = automationBand;
+            lastAutomationSessionGeneration = automationSessionGeneration;
         } else if (!manualRequest && automationMode == FT8Common.Q65_MODE) {
             int currentSequence = UtcTimer.getNowSequential(GeneralVariables.getCurrentSlotTimeM());
             if (!q65AutomationController.tryClaim(automationSlot, currentSequence)) {
@@ -730,8 +739,14 @@ public class FT8TransmitSignal {
         Log.d(TAG, "doTransmit: start transmit");
         long generation = transmitGeneration.incrementAndGet();
         try {
-            doTransmitThreadPool.execute(
-                    new DoTransmitRunnable(this, manualRequest, generation, transmitMode));
+            doTransmitThreadPool.execute(new DoTransmitRunnable(
+                    this,
+                    manualRequest,
+                    generation,
+                    transmitMode,
+                    automationBand,
+                    automationTarget,
+                    automationSessionGeneration));
         } catch (RejectedExecutionException e) {
             Log.e(TAG, "doTransmit rejected: " + e.getMessage());
             if (!manualRequest && isAutomaticFtxMode(automationMode)) {
@@ -739,7 +754,13 @@ public class FT8TransmitSignal {
                         automationMode,
                         automationSlot,
                         functionOrder,
-                        false);
+                        false,
+                        automationBand,
+                        automationSessionGeneration);
+                lastAutomationTransmitSlot = Long.MIN_VALUE;
+                lastAutomationTransmitMode = -1;
+                lastAutomationTransmitBand = -1L;
+                lastAutomationSessionGeneration = -1L;
             } else if (!manualRequest
                     && automationMode == FT8Common.Q65_MODE
                     && lastQ65AutomationSlot != Long.MIN_VALUE) {
@@ -1779,9 +1800,13 @@ public class FT8TransmitSignal {
                     lastAutomationTransmitMode,
                     lastAutomationTransmitSlot,
                     transmittedOrder,
-                    transmittedOrder == 5);
+                    transmittedOrder == 5,
+                    lastAutomationTransmitBand,
+                    lastAutomationSessionGeneration);
             lastAutomationTransmitSlot = Long.MIN_VALUE;
             lastAutomationTransmitMode = -1;
+            lastAutomationTransmitBand = -1L;
+            lastAutomationSessionGeneration = -1L;
         }
         notifyAfterTransmit(transmittedOrder);
         ArrayList<DxpeditionFoxSlotScheduler.CompletedContact> completedContacts =
@@ -2687,7 +2712,8 @@ public class FT8TransmitSignal {
                     acceptedMessage.signalFormat,
                     acceptedMessage.getFullSequenceIndex(),
                     newOrder,
-                    getAutomationTarget())) {
+                    getAutomationTarget(),
+                    autoSession.getBand())) {
                 Log.d(TAG, "parseMessageToFunction ignored: duplicate or stale automatic transition");
                 return;
             }
@@ -2841,7 +2867,10 @@ public class FT8TransmitSignal {
         lastNoReplySessionKey = sessionKey;
         autoSession.increaseNoReplyCount();
         if (activated && isAutomaticFtxMode(autoSession.getSignalFormat())) {
-            automationController.recordNoReplySlot(autoSession.getSignalFormat(), sequenceIndex);
+            automationController.recordNoReplySlot(
+                    autoSession.getSignalFormat(),
+                    sequenceIndex,
+                    autoSession.getBand());
         }
         syncNoReplyCount();
     }
@@ -2890,6 +2919,8 @@ public class FT8TransmitSignal {
         if (this.activated) {
             synchronizeAutomationSession();
         } else {
+            // 使正在 late-decode 等待或尚未生成音频的旧任务立即失效。
+            transmitGeneration.incrementAndGet();
             q65StreamCancelled = true;
             automationController.stopSession("自动通联已停止");
             if (q65AutomationController.getState().getValue().getArmed()) {
@@ -2897,6 +2928,8 @@ public class FT8TransmitSignal {
             }
             lastAutomationTransmitSlot = Long.MIN_VALUE;
             lastAutomationTransmitMode = -1;
+            lastAutomationTransmitBand = -1L;
+            lastAutomationSessionGeneration = -1L;
             clearPendingDxpeditionMacro();
             deactivateAfterManualDxpeditionMacro = false;
             setTransmitting(false);
@@ -2967,7 +3000,8 @@ public class FT8TransmitSignal {
         if (activated && isAutomaticFtxMode(GeneralVariables.getSignalMode())) {
             automationController.resetToCq(
                     GeneralVariables.getSignalMode(),
-                    getCurrentFullSlot(GeneralVariables.getSignalMode()));
+                    getCurrentFullSlot(GeneralVariables.getSignalMode()),
+                    GeneralVariables.band);
         }
     }
 
@@ -2993,9 +3027,13 @@ public class FT8TransmitSignal {
                     lastAutomationTransmitMode,
                     lastAutomationTransmitSlot,
                     functionOrder,
-                    false);
+                    false,
+                    lastAutomationTransmitBand,
+                    lastAutomationSessionGeneration);
             lastAutomationTransmitSlot = Long.MIN_VALUE;
             lastAutomationTransmitMode = -1;
+            lastAutomationTransmitBand = -1L;
+            lastAutomationSessionGeneration = -1L;
         }
         if (lastQ65AutomationSlot != Long.MIN_VALUE) {
             q65AutomationController.markTransmitFinished(lastQ65AutomationSlot, false, reason);
@@ -3009,6 +3047,19 @@ public class FT8TransmitSignal {
         return !released.get()
                 && generation == transmitGeneration.get()
                 && !Thread.currentThread().isInterrupted();
+    }
+
+    private boolean isAutomationSessionCurrent(int signalMode,
+                                               long bandHz,
+                                               String targetCall,
+                                               long sessionGeneration) {
+        return GeneralVariables.getSignalMode() == signalMode
+                && GeneralVariables.band == bandHz
+                && automationController.isSessionCurrent(
+                signalMode,
+                targetCall,
+                bandHz,
+                sessionGeneration);
     }
 
     public void setTimer_sec(int sec) {
@@ -3065,11 +3116,11 @@ public class FT8TransmitSignal {
                 mode,
                 getAutomationTarget(),
                 getCurrentFullSlot(mode),
-                functionOrder);
+                functionOrder,
+                GeneralVariables.band);
     }
 
-    private long calculateLateDecodeHoldMs() {
-        int mode = GeneralVariables.getSignalMode();
+    private long calculateLateDecodeHoldMs(int mode) {
         int slotMs = FT8Common.getSlotTimeMillisecond(mode);
         long nowMs = UtcTimer.getSystemTime();
         long elapsedInSlotMs = nowMs % slotMs;
@@ -3106,15 +3157,24 @@ public class FT8TransmitSignal {
         private final boolean manualRequest;
         private final long generation;
         private final int signalMode;
+        private final long automationBand;
+        private final String automationTarget;
+        private final long automationSessionGeneration;
 
         public DoTransmitRunnable(FT8TransmitSignal transmitSignal,
                                    boolean manualRequest,
                                    long generation,
-                                   int signalMode) {
+                                   int signalMode,
+                                   long automationBand,
+                                   String automationTarget,
+                                   long automationSessionGeneration) {
             this.transmitSignal = transmitSignal;
             this.manualRequest = manualRequest;
             this.generation = generation;
             this.signalMode = signalMode;
+            this.automationBand = automationBand;
+            this.automationTarget = automationTarget;
+            this.automationSessionGeneration = automationSessionGeneration;
         }
 
         @SuppressLint("DefaultLocale")
@@ -3122,6 +3182,10 @@ public class FT8TransmitSignal {
         public void run() {
             if (!transmitSignal.isGenerationActive(generation)) {
                 transmitSignal.abortTransmitAttempt("发射任务已取消");
+                return;
+            }
+            if (!hasCurrentAutomationSession()) {
+                transmitSignal.abortTransmitAttempt("自动通联会话已变更");
                 return;
             }
             if (!transmitSignal.checkClockForTransmit(manualRequest, false, signalMode)) {
@@ -3135,7 +3199,7 @@ public class FT8TransmitSignal {
                 }
             }
 
-            long holdWindowMs = transmitSignal.calculateLateDecodeHoldMs();
+            long holdWindowMs = transmitSignal.calculateLateDecodeHoldMs(signalMode);
             if (holdWindowMs > 0L) {
                 try {
                     Thread.sleep(holdWindowMs);
@@ -3148,6 +3212,10 @@ public class FT8TransmitSignal {
 
             if (!transmitSignal.isGenerationActive(generation)) {
                 transmitSignal.abortTransmitAttempt("发射 generation 已失效");
+                return;
+            }
+            if (!hasCurrentAutomationSession()) {
+                transmitSignal.abortTransmitAttempt("late-decode 等待期间会话已变更");
                 return;
             }
             // 等待 late-decode 窗口期间时间源可能失效，真正生成/播放前再做一次自动门禁。
@@ -3180,7 +3248,21 @@ public class FT8TransmitSignal {
                 transmitSignal.abortTransmitAttempt("音频启动前任务已取消");
                 return;
             }
+            if (!hasCurrentAutomationSession()) {
+                transmitSignal.abortTransmitAttempt("音频启动前自动通联会话已变更");
+                return;
+            }
             transmitSignal.playTransmitPlan(plan);
+        }
+
+        private boolean hasCurrentAutomationSession() {
+            return manualRequest
+                    || !transmitSignal.isAutomaticFtxMode(signalMode)
+                    || transmitSignal.isAutomationSessionCurrent(
+                    signalMode,
+                    automationBand,
+                    automationTarget,
+                    automationSessionGeneration);
         }
     }
 }

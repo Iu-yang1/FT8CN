@@ -21,8 +21,8 @@
 | 3 Hamlib、Split 与 Fake It | 完成 | radio transaction/APK/ELF/oracle/device PASS | `1f8721b8` |
 | 4 Q65 流式内存与 EME 门禁 | 完成 | 300 秒 RX/TX、A-E、oracle/device PASS | `02faa29a` |
 | 5 卫星与 Doppler | 完成 | TLE/pass/cache/UTC/oracle/device PASS | `94ce7da6` |
-| 6 QSO、LoTW、导入与 HTTP | 完成，待提交 | Room 主写、旧库兼容镜像、全库分页导出、受限导入、oracle/device PASS | 本阶段提交 |
-| 7 FT8/FT4 呼叫与自动化 | 待开始 | 待执行 | - |
+| 6 QSO、LoTW、导入与 HTTP | 完成 | Room 主写、旧库兼容镜像、全库分页导出、受限导入、oracle/device PASS | `a244c28b` |
+| 7 FT8/FT4 呼叫与自动化 | 完成，待提交 | 有限 CQ、会话 generation、slot 去重、oracle/device PASS | 本阶段提交 |
 | 8 Compose、深色模式与性能 | 待开始 | 待执行 | - |
 | 9 最终门禁、文档与推送 | 待开始 | 待执行 | - |
 
@@ -77,6 +77,15 @@
 - 305 条分页导出、稳定 ID、FT4/Q65 映射、超限与损坏 UTF-8 单测通过。
 - 统一验证：`HOST_RC_PASS,BLOCKED_SANITIZER,DEVICE_RELEASE_PASS`。
 - 阶段 6 O2 p50/p95：FT8 517.488/527.289 ms，FT4 260.095/264.990 ms，Q65A/60 218.837/225.336 ms。
+
+### 阶段 7
+
+- FT8/FT4 自动通联以 `mode + band + target + session generation` 标识当前会话；换模式、波段、目标或停止后，旧任务不能修改新会话。
+- CAT/PTT 准备前、late-decode 等待后和音频启动前均复核会话；同一目标内的 early/full/deep 更新仍可推进消息序列。
+- 自动 CQ 默认连续 6 次后退避 2 个时隙，构造参数不再允许用 0 关闭安全上限。
+- 1000 个确定性随机种子验证同一会话/时隙最多认领一次发射，Q65 独立状态机不受影响。
+- 统一验证：`HOST_RC_PASS,BLOCKED_SANITIZER,DEVICE_RELEASE_PASS`。
+- 阶段 7 O2 p50/p95：FT8 518.012/524.740 ms，FT4 258.692/260.046 ms，Q65A/60 221.585/229.733 ms。
 
 ## 外部阻塞
 

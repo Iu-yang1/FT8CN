@@ -20,6 +20,8 @@ data class AutomationState(
     val phase: AutomationPhase = AutomationPhase.IDLE,
     val targetCall: String = "",
     val signalMode: Int = -1,
+    val bandHz: Long = -1L,
+    val sessionGeneration: Long = 0L,
     val armed: Boolean = false,
     val currentFunctionOrder: Int = 6,
     val slotsWithoutReply: Int = 0,
@@ -71,14 +73,22 @@ class FakeAutomationController : AutomationController {
 /**
  * FT8/FT4 自动通联的确定性门禁。
  *
- * 解码器可能在 early/full/deep 阶段重复回调同一时隙，本类保证同一会话每个
- * 时隙最多接受一次状态跃迁、最多认领一次自动发射。它不改变解码器参数，
- * 也不负责生成消息或控制 PTT。
+ * 解码器可能在 early/full/deep 阶段重复回调同一时隙。本类保证同一会话每个
+ * 时隙最多接受一次状态跃迁、最多认领一次自动发射，但不改变任何解码参数。
  */
 class OperatingAutomationController @JvmOverloads constructor(
-    private val maxConsecutiveCq: Int = 0,
-    private val cqBackoffSlots: Int = 1,
+    private val maxConsecutiveCq: Int = DEFAULT_MAX_CONSECUTIVE_CQ,
+    private val cqBackoffSlots: Int = DEFAULT_CQ_BACKOFF_SLOTS,
 ) {
+    init {
+        require(maxConsecutiveCq in 1..MAX_CONFIGURED_SLOTS) {
+            "maxConsecutiveCq 必须在 1..$MAX_CONFIGURED_SLOTS 范围内"
+        }
+        require(cqBackoffSlots in 1..MAX_CONFIGURED_SLOTS) {
+            "cqBackoffSlots 必须在 1..$MAX_CONFIGURED_SLOTS 范围内"
+        }
+    }
+
     private val mutableState = MutableStateFlow(AutomationState())
 
     val state: StateFlow<AutomationState> = mutableState.asStateFlow()
@@ -89,14 +99,10 @@ class OperatingAutomationController @JvmOverloads constructor(
         targetCall: String?,
         currentSlot: Long,
         currentFunctionOrder: Int,
+        bandHz: Long = 0L,
     ): Boolean {
-        if (!isSupportedMode(signalMode)) {
-            mutableState.value = mutableState.value.copy(
-                phase = AutomationPhase.ABORTED,
-                armed = false,
-                transmitting = false,
-                reason = "自动通联仅支持 FT8/FT4",
-            )
+        if (!isSupportedMode(signalMode) || currentFunctionOrder !in 1..6 || bandHz < 0L) {
+            abortCurrentSession("自动通联参数无效或模式不是 FT8/FT4")
             return false
         }
 
@@ -104,6 +110,7 @@ class OperatingAutomationController @JvmOverloads constructor(
         val previous = mutableState.value
         if (previous.armed &&
             previous.signalMode == signalMode &&
+            previous.bandHz == bandHz &&
             previous.targetCall == normalizedTarget
         ) {
             mutableState.value = previous.copy(
@@ -118,6 +125,8 @@ class OperatingAutomationController @JvmOverloads constructor(
             phase = phaseForFunctionOrder(currentFunctionOrder),
             targetCall = normalizedTarget,
             signalMode = signalMode,
+            bandHz = bandHz,
+            sessionGeneration = nextGeneration(previous.sessionGeneration),
             armed = true,
             currentFunctionOrder = currentFunctionOrder,
             nextEligibleCqSlot = currentSlot,
@@ -127,8 +136,11 @@ class OperatingAutomationController @JvmOverloads constructor(
 
     @Synchronized
     fun stopSession(reason: String?) {
-        mutableState.value = mutableState.value.copy(
+        val current = mutableState.value
+        if (!current.armed && !current.transmitting && current.phase == AutomationPhase.ABORTED) return
+        mutableState.value = current.copy(
             phase = AutomationPhase.ABORTED,
+            sessionGeneration = nextGeneration(current.sessionGeneration),
             armed = false,
             transmitting = false,
             reason = reason?.takeIf { it.isNotBlank() } ?: "用户停止",
@@ -141,12 +153,11 @@ class OperatingAutomationController @JvmOverloads constructor(
         slot: Long,
         incomingOrder: Int,
         targetCall: String?,
+        bandHz: Long = 0L,
     ): Boolean {
         val current = mutableState.value
-        if (!current.armed || current.signalMode != signalMode) return false
-        if (normalizeTarget(targetCall) != current.targetCall) return false
-        if (slot <= current.lastAcceptedSlot) return false
-        if (incomingOrder !in 1..5) return false
+        if (!matchesSession(current, signalMode, bandHz, targetCall)) return false
+        if (slot <= current.lastAcceptedSlot || incomingOrder !in 1..5) return false
 
         val nextOrder = (incomingOrder + 1).coerceAtMost(6)
         mutableState.value = current.copy(
@@ -163,16 +174,22 @@ class OperatingAutomationController @JvmOverloads constructor(
     }
 
     @Synchronized
-    fun tryClaimTransmit(signalMode: Int, slot: Long, functionOrder: Int): Boolean {
+    fun tryClaimTransmit(
+        signalMode: Int,
+        slot: Long,
+        functionOrder: Int,
+        bandHz: Long = 0L,
+    ): Boolean {
         val current = mutableState.value
-        if (!current.armed || current.signalMode != signalMode) return false
+        if (!current.armed || current.signalMode != signalMode || current.bandHz != bandHz) return false
+        if (functionOrder !in 1..6) return false
         if (slot <= current.lastTransmitSlot || current.transmitting) return false
         if (functionOrder == 6 && slot < current.nextEligibleCqSlot) return false
 
         var consecutiveCq = if (functionOrder == 6) current.consecutiveCqCount + 1 else 0
         var nextEligibleSlot = current.nextEligibleCqSlot
-        if (functionOrder == 6 && maxConsecutiveCq > 0 && consecutiveCq >= maxConsecutiveCq) {
-            nextEligibleSlot = checkedSlotAdd(slot, cqBackoffSlots.coerceAtLeast(1).toLong())
+        if (functionOrder == 6 && consecutiveCq >= maxConsecutiveCq) {
+            nextEligibleSlot = checkedSlotAdd(slot, cqBackoffSlots.toLong())
             consecutiveCq = 0
         }
 
@@ -194,9 +211,15 @@ class OperatingAutomationController @JvmOverloads constructor(
         slot: Long,
         functionOrder: Int,
         completed: Boolean,
+        bandHz: Long,
+        sessionGeneration: Long,
     ) {
         val current = mutableState.value
-        if (current.signalMode != signalMode || current.lastTransmitSlot != slot) return
+        if (current.signalMode != signalMode ||
+            current.bandHz != bandHz ||
+            current.sessionGeneration != sessionGeneration ||
+            current.lastTransmitSlot != slot
+        ) return
         mutableState.value = current.copy(
             phase = if (completed) AutomationPhase.COMPLETE else phaseForFunctionOrder(functionOrder),
             transmitting = false,
@@ -205,22 +228,31 @@ class OperatingAutomationController @JvmOverloads constructor(
     }
 
     @Synchronized
-    fun recordNoReplySlot(signalMode: Int, slot: Long) {
+    fun recordNoReplySlot(signalMode: Int, slot: Long, bandHz: Long = 0L) {
         val current = mutableState.value
-        if (!current.armed || current.signalMode != signalMode || slot <= current.lastNoReplySlot) return
+        if (!current.armed ||
+            current.signalMode != signalMode ||
+            current.bandHz != bandHz ||
+            slot <= current.lastNoReplySlot
+        ) return
         mutableState.value = current.copy(
-            slotsWithoutReply = current.slotsWithoutReply + 1,
+            slotsWithoutReply = if (current.slotsWithoutReply == Int.MAX_VALUE) {
+                Int.MAX_VALUE
+            } else {
+                current.slotsWithoutReply + 1
+            },
             lastNoReplySlot = slot,
         )
     }
 
     @Synchronized
-    fun resetToCq(signalMode: Int, currentSlot: Long) {
+    fun resetToCq(signalMode: Int, currentSlot: Long, bandHz: Long = 0L) {
         val current = mutableState.value
-        if (!current.armed || current.signalMode != signalMode) return
+        if (!current.armed || current.signalMode != signalMode || current.bandHz != bandHz) return
         mutableState.value = current.copy(
             phase = AutomationPhase.CALLING,
             targetCall = "CQ",
+            sessionGeneration = nextGeneration(current.sessionGeneration),
             currentFunctionOrder = 6,
             transmitting = false,
             slotsWithoutReply = 0,
@@ -231,6 +263,39 @@ class OperatingAutomationController @JvmOverloads constructor(
             reason = null,
         )
     }
+
+    @Synchronized
+    fun currentSessionGeneration(): Long = mutableState.value.sessionGeneration
+
+    @Synchronized
+    fun isSessionCurrent(
+        signalMode: Int,
+        targetCall: String?,
+        bandHz: Long,
+        sessionGeneration: Long,
+    ): Boolean = matchesSession(mutableState.value, signalMode, bandHz, targetCall) &&
+        mutableState.value.sessionGeneration == sessionGeneration
+
+    private fun abortCurrentSession(reason: String) {
+        val current = mutableState.value
+        mutableState.value = current.copy(
+            phase = AutomationPhase.ABORTED,
+            sessionGeneration = nextGeneration(current.sessionGeneration),
+            armed = false,
+            transmitting = false,
+            reason = reason,
+        )
+    }
+
+    private fun matchesSession(
+        current: AutomationState,
+        signalMode: Int,
+        bandHz: Long,
+        targetCall: String?,
+    ): Boolean = current.armed &&
+        current.signalMode == signalMode &&
+        current.bandHz == bandHz &&
+        current.targetCall == normalizeTarget(targetCall)
 
     private fun isSupportedMode(mode: Int): Boolean = mode == 0 || mode == 1
 
@@ -248,4 +313,12 @@ class OperatingAutomationController @JvmOverloads constructor(
 
     private fun checkedSlotAdd(slot: Long, delta: Long): Long =
         if (slot > Long.MAX_VALUE - delta) Long.MAX_VALUE else slot + delta
+
+    private fun nextGeneration(current: Long): Long = if (current == Long.MAX_VALUE) 1L else current + 1L
+
+    companion object {
+        const val DEFAULT_MAX_CONSECUTIVE_CQ = 6
+        const val DEFAULT_CQ_BACKOFF_SLOTS = 2
+        private const val MAX_CONFIGURED_SLOTS = 100
+    }
 }
