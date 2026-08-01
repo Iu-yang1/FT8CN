@@ -14,6 +14,7 @@ import com.bg7yoz.ft8cn.Ft8Message;
 import com.bg7yoz.ft8cn.GeneralVariables;
 import com.bg7yoz.ft8cn.diagnostics.InternalForegroundTestSession;
 
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -26,6 +27,11 @@ public class Q65WaveStreamInstrumentationTest {
     @BeforeClass
     public static void keepInstrumentationInForeground() {
         InternalForegroundTestSession.start();
+    }
+
+    @AfterClass
+    public static void closeForegroundSession() {
+        InternalForegroundTestSession.stop();
     }
 
     @Test

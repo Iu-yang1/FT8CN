@@ -23,4 +23,19 @@ public final class InternalForegroundTestSession {
                 DeviceBenchmarkActivity.buildStartIntent(instrumentation.getTargetContext()));
         instrumentation.waitForIdleSync();
     }
+
+    public static synchronized void stop() {
+        Activity current = activity;
+        activity = null;
+        if (current == null) {
+            return;
+        }
+        Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        instrumentation.runOnMainSync(() -> {
+            if (!current.isFinishing()) {
+                current.finish();
+            }
+        });
+        instrumentation.waitForIdleSync();
+    }
 }
